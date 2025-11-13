@@ -1,0 +1,13 @@
+ Running on CUDA
+/usr/local/lib/python3.12/dist-packages/huggingface_hub/utils/_auth.py:94: UserWarning: 
+The secret `HF_TOKEN` does not exist in your Colab secrets.
+To authenticate with the Hugging Face Hub, create a token in your settings tab (https://huggingface.co/settings/tokens), set it as secret in your Google Colab and restart your session.
+You will be able to reuse this secret in all of your notebooks.
+Please note that authentication is recommended but still optional to access public models or datasets.
+  warnings.warn(
+README.md:  10.5k/? [00:00<00:00, 900kB/s]wikitext-2-raw-v1/test-00000-of-00001.pa(…): 100% 733k/733k [00:00<00:00, 45.2kB/s]wikitext-2-raw-v1/train-00000-of-00001.p(…): 100% 6.36M/6.36M [00:00<00:00, 392kB/s]wikitext-2-raw-v1/validation-00000-of-00(…): 100% 657k/657k [00:00<00:00, 574kB/s]Generating test split: 100% 4358/4358 [00:00<00:00, 75619.63 examples/s]Generating train split: 100% 36718/36718 [00:00<00:00, 506845.26 examples/s]Generating validation split: 100% 3760/3760 [00:00<00:00, 152062.78 examples/s]Vocabulary Size: 76617
+--- (Final Step) Language Model 'Intelligence Test' ---
+Model Parameters: 10.16M
+Epoch 1/3 | Time: 81.51s | Avg Loss: 7.2078 | Perplexity: 1349.94
+Epoch 2/3 | Time: 80.21s | Avg Loss: 6.4247 | Perplexity: 616.91
+Epoch 3/3 | Time: 79.25s | Avg Loss: 6.0611 | Perplexity: 428.84
