@@ -12,6 +12,7 @@ from .koopman_layer import (
     KoopmanResNetBKBlock,
     KoopmanLanguageModel
 )
+from .physics_informed_layer import PhysicsInformedBKLayer
 
 __all__ = [
     'BKCoreFunction',
@@ -24,4 +25,5 @@ __all__ = [
     'KoopmanResNetBKLayer',
     'KoopmanResNetBKBlock',
     'KoopmanLanguageModel',
+    'PhysicsInformedBKLayer',
 ]

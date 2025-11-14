@@ -65,9 +65,10 @@ class KoopmanResNetBKLayer(nn.Module):
         )
         
         # Buffers for DMD computation (will be implemented in subtask 3.2)
-        # Store last 100 state pairs for streaming DMD
-        self.register_buffer('Z_current', torch.zeros(koopman_dim, 100))
-        self.register_buffer('Z_next', torch.zeros(koopman_dim, 100))
+        # Store last 500 state pairs for streaming DMD (increased from 100 for better estimation)
+        buffer_size = 500
+        self.register_buffer('Z_current', torch.zeros(koopman_dim, buffer_size))
+        self.register_buffer('Z_next', torch.zeros(koopman_dim, buffer_size))
         self.register_buffer('buffer_idx', torch.tensor(0, dtype=torch.long))
         self.register_buffer('buffer_filled', torch.tensor(False, dtype=torch.bool))
     
@@ -201,7 +202,8 @@ class KoopmanResNetBKLayer(nn.Module):
                 K_new = self.Z_next @ temp2  # (koopman_dim, koopman_dim)
                 
                 # Exponential moving average update
-                alpha = 0.1  # Learning rate for Koopman operator
+                # Increased from 0.1 to 0.3 for faster adaptation
+                alpha = 0.3  # Learning rate for Koopman operator
                 self.K.data = (1 - alpha) * self.K.data + alpha * K_new
                 
             except RuntimeError as e:

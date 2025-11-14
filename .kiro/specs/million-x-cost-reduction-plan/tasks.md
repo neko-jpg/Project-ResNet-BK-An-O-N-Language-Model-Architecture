@@ -163,32 +163,47 @@ This implementation plan converts the feature design into executable coding task
   - Visualize Koopman eigenvalues and eigenfunctions
   - _Requirements: 2.6, 2.7, 2.10_
 
-- [ ] 4. Step 2 Phase 3: Implement Physics-Informed Learning
-- [ ] 4.1 Implement Hamiltonian structure
+- [x] 4. Step 2 Phase 3: Implement Physics-Informed Learning
+
+
+
+
+- [x] 4.1 Implement Hamiltonian structure
+
+
   - Create `PhysicsInformedBKLayer` with kinetic and potential energy
   - Separate H = T + V in BK-Core
   - Implement energy computation function
   - _Requirements: 3.1, 3.3_
 
-- [ ] 4.2 Implement energy conservation constraint
+- [x] 4.2 Implement energy conservation constraint
+
+
   - Add L_energy = ||E(x_t) - E(x_{t-1})||^2
   - Implement Lagrange multiplier for automatic weight balancing
   - Monitor energy drift during training
   - _Requirements: 3.2, 3.6, 3.9_
 
-- [ ] 4.3 Implement symplectic integrator
+
+
+- [x] 4.3 Implement symplectic integrator
+
   - Create Störmer-Verlet update rule for parameters
   - Preserve Hamiltonian structure during optimization
+
   - _Requirements: 3.4_
 
-- [ ] 4.4 Implement equilibrium propagation
+- [x] 4.4 Implement equilibrium propagation
+
   - Create `EquilibriumPropagationTrainer` class
   - Implement free phase (relax to equilibrium)
   - Implement nudged phase (relax with target nudging)
   - Compute parameter updates from equilibrium difference
   - _Requirements: 3.2_
 
-- [ ] 4.5 Test Step 2 Phase 3 on Google Colab
+- [x] 4.5 Test Step 2 Phase 3 on Google Colab
+
+
   - Create Colab notebook for physics-informed learning
   - Train with energy conservation constraint
   - Monitor energy drift during training
