@@ -104,6 +104,10 @@ class HybridKoopmanTrainer:
         x_batch = x_batch.to(self.device)
         y_batch = y_batch.to(self.device)
         
+        # Flatten y_batch if needed (B, N) -> (B*N,)
+        if y_batch.ndim == 2:
+            y_batch = y_batch.view(-1)
+        
         # Phase 1: Standard forward pass with gradient-based learning
         # Get hidden states at each layer for Koopman operator updates
         hidden_states = []
@@ -275,6 +279,10 @@ class HybridKoopmanTrainer:
             for x_batch, y_batch in val_loader:
                 x_batch = x_batch.to(self.device)
                 y_batch = y_batch.to(self.device)
+                
+                # Flatten y_batch if needed (B, N) -> (B*N,)
+                if y_batch.ndim == 2:
+                    y_batch = y_batch.view(-1)
                 
                 # Forward pass
                 logits = self.model(x_batch, use_koopman=use_koopman)
