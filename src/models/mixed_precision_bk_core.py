@@ -204,7 +204,6 @@ def benchmark_mixed_precision(
     from .bk_core import BKCoreFunction
     
     # Setup inputs
-    he_diag = torch.randn(batch_size, seq_len, device=device)
     h0_super = torch.ones(batch_size, seq_len-1, device=device)
     h0_sub = torch.ones(batch_size, seq_len-1, device=device)
     z = torch.tensor(1.0j, dtype=torch.complex64, device=device)
@@ -218,6 +217,7 @@ def benchmark_mixed_precision(
     torch.cuda.synchronize() if device == 'cuda' else None
     start = time.time()
     for _ in range(num_trials):
+        he_diag = torch.randn(batch_size, seq_len, device=device, requires_grad=True)
         features_fp32 = BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
         features_fp32.backward(grad_output)
     torch.cuda.synchronize() if device == 'cuda' else None
@@ -229,6 +229,7 @@ def benchmark_mixed_precision(
     torch.cuda.synchronize() if device == 'cuda' else None
     start = time.time()
     for _ in range(num_trials):
+        he_diag = torch.randn(batch_size, seq_len, device=device, requires_grad=True)
         features_mixed = MixedPrecisionBKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
         features_mixed.backward(grad_output)
     torch.cuda.synchronize() if device == 'cuda' else None
@@ -238,6 +239,7 @@ def benchmark_mixed_precision(
     results['speedup'] = time_fp32 / time_mixed
     
     # Accuracy comparison
+    he_diag = torch.randn(batch_size, seq_len, device=device)
     features_fp32 = BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
     features_mixed = MixedPrecisionBKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
     

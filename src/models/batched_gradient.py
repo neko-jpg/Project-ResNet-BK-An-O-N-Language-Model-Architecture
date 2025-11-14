@@ -250,7 +250,6 @@ def profile_batched_gradient(
         print(f"Profiling batch_size={batch_size}...")
         
         # Setup inputs
-        he_diag = torch.randn(batch_size, seq_len, device=device)
         h0_super = torch.ones(batch_size, seq_len-1, device=device)
         h0_sub = torch.ones(batch_size, seq_len-1, device=device)
         z = torch.tensor(1.0j, dtype=torch.complex64, device=device)
@@ -260,6 +259,7 @@ def profile_batched_gradient(
         torch.cuda.synchronize() if device == 'cuda' else None
         start = time.time()
         for _ in range(num_trials):
+            he_diag = torch.randn(batch_size, seq_len, device=device, requires_grad=True)
             features = BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
             features.backward(grad_output)
         torch.cuda.synchronize() if device == 'cuda' else None
@@ -269,6 +269,7 @@ def profile_batched_gradient(
         torch.cuda.synchronize() if device == 'cuda' else None
         start = time.time()
         for _ in range(num_trials):
+            he_diag = torch.randn(batch_size, seq_len, device=device, requires_grad=True)
             features = BatchedAnalyticBKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
             features.backward(grad_output)
         torch.cuda.synchronize() if device == 'cuda' else None
@@ -278,6 +279,7 @@ def profile_batched_gradient(
         torch.cuda.synchronize() if device == 'cuda' else None
         start = time.time()
         for _ in range(num_trials):
+            he_diag = torch.randn(batch_size, seq_len, device=device, requires_grad=True)
             features = MemoryOptimizedBKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
             features.backward(grad_output)
         torch.cuda.synchronize() if device == 'cuda' else None
