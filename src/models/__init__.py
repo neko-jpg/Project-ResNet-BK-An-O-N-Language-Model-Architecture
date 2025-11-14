@@ -7,6 +7,11 @@ from .bk_core import BKCoreFunction, get_tridiagonal_inverse_diagonal
 from .moe import SparseMoELayer
 from .resnet_bk import MoEResNetBKLayer, ResNetBKBlock, LanguageModel
 from .configurable_resnet_bk import ConfigurableResNetBK
+from .koopman_layer import (
+    KoopmanResNetBKLayer,
+    KoopmanResNetBKBlock,
+    KoopmanLanguageModel
+)
 
 __all__ = [
     'BKCoreFunction',
@@ -16,4 +21,7 @@ __all__ = [
     'ResNetBKBlock',
     'LanguageModel',
     'ConfigurableResNetBK',
+    'KoopmanResNetBKLayer',
+    'KoopmanResNetBKBlock',
+    'KoopmanLanguageModel',
 ]

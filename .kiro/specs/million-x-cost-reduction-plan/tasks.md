@@ -109,30 +109,45 @@ This implementation plan converts the feature design into executable coding task
   - Generate performance report with plots
   - _Requirements: 1.2, 1.6_
 
-- [ ] 3. Step 2 Phase 2: Implement Koopman Operator Learning
-- [ ] 3.1 Implement Koopman lifting and operator
+- [x] 3. Step 2 Phase 2: Implement Koopman Operator Learning
+
+
+
+
+
+- [x] 3.1 Implement Koopman lifting and operator
+
+
   - Create `KoopmanResNetBKLayer` with phi (lifting) and psi (inverse lifting)
   - Initialize Koopman operator K as identity + small perturbation
   - Implement forward pass with Koopman prediction
   - _Requirements: 2.1, 2.2_
 
-- [ ] 3.2 Implement Dynamic Mode Decomposition (DMD)
+- [x] 3.2 Implement Dynamic Mode Decomposition (DMD)
+
+
   - Create buffer for storing state pairs (z_current, z_next)
   - Implement streaming DMD with SVD-based pseudoinverse
   - Add exponential moving average for K updates
   - Handle numerical stability (singular value thresholding)
   - _Requirements: 2.3, 2.8_
 
-- [ ] 3.3 Implement Koopman auxiliary loss
+
+- [x] 3.3 Implement Koopman auxiliary loss
+
   - Add L_koopman = ||ρEx_{t+1}) - K * ρEx_t)||^2
   - Implement loss weight scheduling (start low, increase gradually)
   - _Requirements: 2.3_
 
-- [ ] 3.4 Implement hybrid Koopman-gradient training
+- [x] 3.4 Implement hybrid Koopman-gradient training
+
+
   - Create `HybridKoopmanTrainer` class
   - Implement phased training: gradient warmup ↁEhybrid ↁEKoopman-dominant
   - Add automatic fallback to gradients if Koopman fails
   - _Requirements: 2.4, 2.5, 2.9_
+
+
 
 - [ ] 3.5 Test Step 2 Phase 2 on Google Colab
   - Create Colab notebook for Koopman learning
