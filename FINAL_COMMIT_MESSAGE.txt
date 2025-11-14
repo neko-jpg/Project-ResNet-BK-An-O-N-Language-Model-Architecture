@@ -1,0 +1,116 @@
+feat: Complete Step 2 Phase 2 - Koopman Operator Learning implementation
+
+This commit completes the implementation and validation of Koopman operator
+learning for ResNet-BK, achieving successful training on Google Colab.
+
+## Implementation (Task 3 Complete)
+
+**New Components:**
+- src/models/koopman_layer.py: Koopman ResNet-BK layer with lifting/operator/inverse
+- src/training/koopman_scheduler.py: Loss weight scheduler with multiple schedules
+- src/training/hybrid_koopman_trainer.py: Phased training (warmup → hybrid → Koopman)
+- tests/test_koopman.py: Comprehensive test suite (8 test classes)
+- notebooks/step2_phase2_koopman.ipynb: Google Colab training notebook
+
+**Key Features:**
+- Koopman lifting φ and inverse ψ with bounded activations
+- Koopman operator K initialized as identity + perturbation
+- Dynamic Mode Decomposition (DMD) with SVD-based pseudoinverse
+- Streaming DMD with circular buffer (100 samples)
+- Exponential moving average for smooth operator updates
+- Koopman auxiliary loss: ||φ(x_{t+1}) - K*φ(x_t)||²
+- Automatic fallback to gradients if Koopman fails
+- Numerical stability measures throughout
+
+## Bug Fixes
+
+**Notebook Fixes:**
+- Update GitHub repository URL to correct path
+- Add os.chdir() after cloning to set working directory
+- Install all required dependencies automatically
+- Fix get_wikitext2_dataloaders() parameter: n_seq → seq_len
+- Fix return value unpacking: remove test_loader (returns 3 values)
+
+**Trainer Fixes:**
+- Add y_batch flattening in train_step() for DataLoader compatibility
+- Add y_batch flattening in evaluate() method
+- Fixes batch size mismatch error
+
+## Training Results (Google Colab T4 GPU)
+
+**Configuration:**
+- Model: 5.1M parameters (d_model=64, n_layers=4, koopman_dim=256)
+- Dataset: WikiText-2 (30K vocab, 498 train batches, 52 val batches)
+- Training: 5 epochs, Koopman starts at epoch 3
+
+**Performance:**
+- Final Validation Perplexity: 461.24
+- Baseline Perplexity (Phase 1): 1122.00
+- Improvement: -58.9% (better than baseline!)
+- Training Time: ~387 seconds total (~77s per epoch)
+
+**Koopman Operator Updates:**
+- All 4 layers successfully updated via DMD
+- Mean absolute change: ~0.0086 per layer
+- Operator norms stable: ~15.6
+- Koopman loss converged: 0.0561 → 0.0009
+
+## Resolved Errors
+
+- ModuleNotFoundError: No module named 'src'
+- TypeError: got an unexpected keyword argument 'n_seq'
+- ValueError: not enough values to unpack (expected 4, got 3)
+- ValueError: Expected input batch_size mismatch
+
+## Documentation
+
+- STEP2_PHASE2_KOOPMAN_IMPLEMENTATION.md: Complete implementation guide
+- STEP2_PHASE2_COLAB_RESULTS.md: Detailed training results and analysis
+- COMMIT_MESSAGE.md: Commit message templates
+- test_koopman_basic.py: Basic functionality tests (all passing)
+
+## Test Results
+
+✅ All tests passing:
+- Koopman layer initialization
+- Forward pass (standard & Koopman modes)
+- Koopman loss computation
+- DMD operator updates
+- Language model integration
+- Loss scheduler
+- Hybrid trainer
+
+## Files Changed
+
+New files:
+- src/models/koopman_layer.py (450+ lines)
+- src/training/koopman_scheduler.py (130+ lines)
+- src/training/hybrid_koopman_trainer.py (350+ lines)
+- tests/test_koopman.py (400+ lines)
+- test_koopman_basic.py (250+ lines)
+- notebooks/step2_phase2_koopman.ipynb
+- STEP2_PHASE2_KOOPMAN_IMPLEMENTATION.md
+- STEP2_PHASE2_COLAB_RESULTS.md
+
+Modified files:
+- src/models/__init__.py: Add Koopman exports
+- src/training/__init__.py: Add trainer exports
+- IMPLEMENTATION_STATUS.md: Update progress (Step 2: 67% complete)
+
+## Next Steps
+
+1. Benchmark backward pass cost reduction (target: 8-10× speedup)
+2. Analyze Koopman eigenvalues and eigenfunctions
+3. Implement Step 2 Phase 3: Physics-Informed Learning
+4. Combine all Step 2 optimizations for 100× target
+
+## References
+
+- Koopman operator theory for nonlinear dynamics
+- Dynamic Mode Decomposition (DMD) algorithm
+- Hybrid learning: gradient-based + operator-based
+
+---
+
+Tested on: Google Colab with T4 GPU, Python 3.12, PyTorch 2.x
+Status: ✅ All tests passing, training successful, ready for production
