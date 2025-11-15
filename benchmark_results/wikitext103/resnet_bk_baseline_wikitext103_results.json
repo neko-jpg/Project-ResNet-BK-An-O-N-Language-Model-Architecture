@@ -1,0 +1,55 @@
+{
+  "model_name": "resnet_bk_baseline",
+  "dataset_name": "wikitext-103",
+  "config": {
+    "model_name": "resnet_bk_baseline",
+    "d_model": 64,
+    "n_layers": 4,
+    "n_seq": 128,
+    "batch_size": 16,
+    "epochs": 2,
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "grad_clip": 0.5,
+    "device": "cuda",
+    "seed": 42,
+    "data_limit": 10000000,
+    "use_analytic_gradient": false,
+    "use_koopman": false,
+    "use_physics_informed": false,
+    "use_quantization": false,
+    "use_pruning": false,
+    "use_mixed_precision": false,
+    "use_act": false,
+    "use_multi_scale": false,
+    "use_sparse_bk": false,
+    "use_early_exit": false,
+    "use_curriculum": false,
+    "use_active_learning": false
+  },
+  "final_loss": 6.889704037279147,
+  "final_perplexity": 982.1107060438062,
+  "best_perplexity": 982.1107060438062,
+  "training_time": 1898.489912033081,
+  "total_tokens": 10000000,
+  "vocab_size": 30000,
+  "forward_flops": 8143880192,
+  "backward_flops": 16284008448,
+  "optimizer_flops": 62191800,
+  "total_flops_per_step": 24490080440,
+  "total_training_flops": 239121145416160,
+  "peak_memory_mb": 1023.849609375,
+  "model_size_mb": 15.816192626953125,
+  "epoch_losses": [
+    6.926927951553326,
+    6.889704037279147
+  ],
+  "epoch_perplexities": [
+    1019.3576485279245,
+    982.1107060438062
+  ],
+  "epoch_times": [
+    921.7177042961121,
+    976.771852016449
+  ]
+}

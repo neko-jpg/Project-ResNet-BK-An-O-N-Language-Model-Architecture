@@ -1,0 +1,62 @@
+{
+  "model_config": {
+    "d_model": 64,
+    "n_layers": 4,
+    "seq_len": 128,
+    "batch_size": 32,
+    "vocab_size": 30000,
+    "num_experts": 4,
+    "top_k": 1
+  },
+  "total_flops": {
+    "forward": 16287760384,
+    "backward": 32568016896,
+    "optimizer": 62191800,
+    "total": 48917969080
+  },
+  "component_breakdown": {
+    "embedding": {
+      "forward": 262144,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 262144
+    },
+    "layer_0": {
+      "forward": 139386880,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 139386880
+    },
+    "layer_1": {
+      "forward": 139386880,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 139386880
+    },
+    "layer_2": {
+      "forward": 139386880,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 139386880
+    },
+    "layer_3": {
+      "forward": 139386880,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 139386880
+    },
+    "final_layernorm": {
+      "forward": 1310720,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 1310720
+    },
+    "lm_head": {
+      "forward": 15728640000,
+      "backward": 0,
+      "optimizer": 0,
+      "total": 15728640000
+    }
+  },
+  "optimizer": "adamw"
+}

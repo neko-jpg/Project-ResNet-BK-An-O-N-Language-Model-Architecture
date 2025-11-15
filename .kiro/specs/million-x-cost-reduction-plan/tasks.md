@@ -614,7 +614,14 @@ This implementation plan converts the feature design into executable coding task
 - [-] 9. Comprehensive Benchmarking and Validation
 
 
-- [ ] 9.1 Implement FLOPs counting infrastructure
+
+
+
+
+- [x] 9.1 Implement FLOPs counting infrastructure
+
+
+
 
 
   - Create `FLOPsCounter` class
@@ -622,73 +629,123 @@ This implementation plan converts the feature design into executable coding task
   - Track forward and backward FLOPs separately
   - _Requirements: 8.1_
 
-- [ ] 9.2 Benchmark on WikiText-2
+- [x] 9.2 Benchmark on WikiText-2
+
+
+
   - Train with all optimizations enabled
   - Measure final perplexity
   - Compare to Transformer baseline
   - _Requirements: 8.15, 9.1_
 
-- [ ] 9.3 Benchmark on WikiText-103
+- [x] 9.3 Benchmark on WikiText-103
+
+
+
+
+
+
   - Scale to larger dataset (10ÁEWikiText-2)
   - Measure perplexity and training time
   - _Requirements: 9.1_
 
-- [ ] 9.4 Benchmark on Penn Treebank
+- [x] 9.4 Benchmark on Penn Treebank
+
+
+
+
+
+
+
+
   - Evaluate on different domain
   - _Requirements: 9.2_
 
-- [ ] 9.5 Benchmark on C4
+
+
+
+
+- [x] 9.5 Benchmark on C4
+
+
+
+
+
   - Train on 100M tokens
   - Measure perplexity across domains
   - _Requirements: 9.3_
 
-- [ ] 9.6 Benchmark on The Pile
+-
+
+- [x] 9.6 Benchmark on The Pile
+
+
+
+
+
+
   - Train on 1B token subset
   - Evaluate domain-specific performance
   - _Requirements: 9.4_
 
-- [ ] 9.7 Scale model size experiments
+
+- [x] 9.7 Scale model size experiments
+
+
+
+
+
   - Train models with d_model ∁E{64, 128, 256, 512}
   - Train models with n_layers ∁E{4, 8, 12, 16}
   - Measure scaling laws
   - _Requirements: 9.5, 9.6, 9.20_
 
-- [ ] 9.8 Scale sequence length experiments
-  - Train with N ∁E{128, 256, 512, 1024, 2048, 4096}
-  - Measure speedup vs Transformer at each N
+
+- [x] 9.8 Scale sequence length experiments
+
+  - Add a sweep configuration (`seq_len_sweep.yaml`) that runs the exact same training config while varying N ∁E{128, 256, 512, 1024, 2048, 4096}
+  - For every run log throughput (tokens/sec), peak memory, and final perplexity for both ResNet-BK and Transformer baselines using the FLOPs counter from Task 9.1
+  - Produce a matplotlib plot of (speedup vs Transformer) and perplexity vs N, exporting CSV + PNG to `docs/benchmarks/seq_len_scaling/`
   - _Requirements: 9.7, 9.8_
 
-- [ ] 9.9 Implement downstream task evaluation
+
+- [x] 9.9 Implement downstream task evaluation
   - Finetune on GLUE benchmark (SST-2, MRPC, QQP)
-  - Measure accuracy on each task
+  - Build dataset/data loader helpers in `src/benchmarks/glue.py` plus a CLI entry that loads pretrained checkpoints and performs task-specific classification heads
+  - Train/fine-tune with identical hyperparameters for Transformer + ResNet-BK, log best validation accuracy, and export a comparison table
+  - Save each task checkpoint/metrics under `benchmarks/glue/<task>/` for reproducibility
   - _Requirements: 9.9, 9.10_
 
-- [ ] 9.10 Implement question answering evaluation
-  - Finetune on SQuAD
-  - Measure F1 and exact match scores
+- [x] 9.10 Implement question answering evaluation
+
+  - Integrate the Hugging Face SQuAD loader with BK tokenizer pipeline and add span-prediction heads on top of pooled outputs
+  - Finetune both architectures with identical schedules, evaluate EM/F1 on dev set, and store results + predictions JSON
+  - Plot training curves (loss, EM, F1) and include a short analysis in `docs/benchmarks/qa.md`
   - _Requirements: 9.11_
 
-- [ ] 9.11 Implement summarization evaluation
+
+- [x] 9.11 Implement summarization evaluation
   - Finetune on CNN/DailyMail
-  - Measure ROUGE scores
+  - Create seq2seq decoding wrapper for ResNet-BK (teacher forcing + beam search) and mirror Transformer baseline settings
+  - Evaluate ROUGE-1/ROUGE-2/ROUGE-L via `rouge-score`, log to CSV, and release best checkpoint text generations
   - _Requirements: 9.12_
 
-- [ ] 9.12 Implement statistical significance testing
+- [x] 9.12 Implement statistical significance testing
   - Run each experiment 5 times with different seeds
-  - Compute mean ± std for all metrics
-  - Perform paired t-tests
+  - Extend `metrics/summarize_results.py` to aggregate runs, compute mean ± std, 95% CI, and run paired t-tests between BK and Transformer variants
+  - Store statistical summaries next to the raw metrics for GLUE, SQuAD, CNN/DM, and the language modeling benchmarks
   - _Requirements: 9.13, 9.15, 9.16_
 
-- [ ] 9.13 Measure training cost breakdown
+- [x] 9.13 Measure training cost breakdown
   - FLOPs per forward pass, backward pass, optimizer step
-  - Wall-clock time breakdown
-  - Memory usage breakdown
+  - Instrument the training loop with PyTorch profiler to capture wall-clock time and CUDA memory for each stage; export as stacked bar charts
+  - Combine profiler output with FLOPs counter to produce a per-model spreadsheet summarizing cost per token
   - _Requirements: 9.17, 9.18_
 
-- [ ] 9.14 Implement scaling law analysis
+- [x] 9.14 Implement scaling law analysis
   - Plot perplexity vs model size
   - Plot perplexity vs training FLOPs
-  - Fit power law curves
+  - Build `analysis/scaling_laws.py` that ingests results from Tasks 9.7-9.13, fits power-law curves (Kaplan et al. style), and exports plots + regression coefficients
   - _Requirements: 9.19_
 
 - [ ]* 9.15 Generate comprehensive benchmark report
