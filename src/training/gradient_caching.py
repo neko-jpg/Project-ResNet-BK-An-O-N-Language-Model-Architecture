@@ -114,7 +114,10 @@ class GradientCachingTrainer:
         Returns:
             similarity: Scalar similarity score [0, 1]
         """
-        similarity = F.cosine_similarity(emb1.unsqueeze(0), emb2.unsqueeze(0), dim=1)
+        # Flatten to 2D to support scalar (0-dim) embeddings from fallback paths
+        emb1_flat = emb1.reshape(1, -1).float()
+        emb2_flat = emb2.reshape(1, -1).float()
+        similarity = F.cosine_similarity(emb1_flat, emb2_flat, dim=1)
         return similarity.item()
     
     def find_similar_cached(self, example_embedding: torch.Tensor) -> Optional[List[torch.Tensor]]:
