@@ -146,6 +146,30 @@ model = ConfigurableResNetBK(config).to(device)
 model = ConfigurableResNetBK(**config).to(device)  # TypeError
 ```
 
+### 6. Fixed Device Mismatch
+
+Data from DataLoader is on CPU but model is on CUDA, causing device mismatch error.
+
+**Error:**
+```
+RuntimeError: Expected all tensors to be on the same device, but got index is on cpu, different from other tensors on cuda:0
+```
+
+**Fix:** Move data to device before training step:
+```python
+for step, (x_batch, y_batch) in enumerate(train_loader):
+    # Move to device and flatten targets
+    x_batch = x_batch.to(device)
+    y_batch = y_batch.view(-1).to(device)
+    
+    result = trainer.train_step(x_batch, y_batch)
+```
+
+This was added to all training loops:
+- AMP training test
+- Gradient accumulation test
+- Dynamic batch sizing test
+
 ## Status
 
 ✅ **FIXED** - The notebook is now ready for Google Colab testing.
