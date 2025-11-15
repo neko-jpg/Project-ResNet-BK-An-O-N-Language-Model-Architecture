@@ -1,0 +1,122 @@
+# Step 5 Colab Notebook Fix
+
+## Issue
+
+The notebook `notebooks/step5_hardware_optimizations.ipynb` had an import error when running on Google Colab:
+
+```
+ImportError: cannot import name 'prepare_wikitext2_data' from 'src.utils.data_utils'
+```
+
+## Root Cause
+
+The function `prepare_wikitext2_data` does not exist in `src/utils/data_utils.py`. The correct function is `get_wikitext2_dataloaders`.
+
+## Changes Made
+
+### 1. Updated Import Statement
+
+**Before:**
+```python
+from src.utils.data_utils import prepare_wikitext2_data
+```
+
+**After:**
+```python
+from src.utils.data_utils import get_wikitext2_dataloaders
+```
+
+### 2. Updated Function Calls
+
+**Before:**
+```python
+train_loader, val_loader, vocab_size = prepare_wikitext2_data(
+    batch_size=8,
+    seq_len=128,
+    max_samples=1000
+)
+```
+
+**After:**
+```python
+train_loader, val_loader, vocab_size = get_wikitext2_dataloaders(
+    batch_size=8,
+    seq_len=128,
+    num_workers=0  # Set to 0 for Colab compatibility
+)
+```
+
+### 3. Added Target Flattening
+
+The `get_wikitext2_dataloaders` function returns targets as `(B, N)` tensors, but the training functions expect flattened `(B*N,)` tensors for `CrossEntropyLoss`.
+
+**Added before each training step:**
+```python
+# Flatten targets for CrossEntropyLoss
+y_batch = y_batch.view(-1)
+```
+
+This was added in 4 locations:
+1. AMP training test (Section 3)
+2. Gradient accumulation test (Section 4)
+3. CPU offloading test (Section 5)
+4. Dynamic batch sizing test (Section 6)
+
+### 4. Updated Repository URL
+
+**Before:**
+```python
+!git clone https://github.com/your-repo/resnet-bk.git
+%cd resnet-bk
+```
+
+**After:**
+```python
+!git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
+%cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
+```
+
+## Testing
+
+The notebook should now work correctly on Google Colab. To test:
+
+1. Open `notebooks/step5_hardware_optimizations.ipynb` in Google Colab
+2. Run all cells
+3. Verify:
+   - Data loads successfully
+   - All training tests complete without errors
+   - GPU memory usage is reported
+   - No import errors
+
+## Function Signature Reference
+
+### get_wikitext2_dataloaders
+
+```python
+def get_wikitext2_dataloaders(
+    batch_size=32,
+    seq_len=128,
+    num_workers=2,
+    vocab_size_limit=30000
+):
+    """
+    Create PyTorch DataLoaders for WikiText-2 dataset.
+    
+    Returns:
+        train_loader: DataLoader yielding (x, y) where x, y are (B, N) tensors
+        val_loader: DataLoader yielding (x, y) where x, y are (B, N) tensors
+        vocab_size: int, vocabulary size
+    """
+```
+
+### Data Format
+
+- **Input (x)**: `(batch_size, seq_len)` - Token IDs
+- **Target (y)**: `(batch_size, seq_len)` - Next token IDs
+- **For CrossEntropyLoss**: Flatten y to `(batch_size * seq_len,)`
+
+## Status
+
+✅ **FIXED** - The notebook is now ready for Google Colab testing.
+
+All import errors have been resolved and the data format is correctly handled throughout the notebook.
