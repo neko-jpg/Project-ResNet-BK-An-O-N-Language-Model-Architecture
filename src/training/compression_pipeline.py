@@ -241,7 +241,7 @@ class CompressionPipeline:
                     d_model=d_model,
                     num_experts=num_experts,
                     prune_threshold=0.05
-                )
+                ).to(self.device)  # Move to GPU
                 
                 # Try to copy weights if structure matches
                 try:
