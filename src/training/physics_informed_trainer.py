@@ -165,14 +165,14 @@ class PhysicsInformedTrainer:
         
         # Compile metrics
         metrics = {
-            'loss_total': loss_total.item(),
+            'total_loss': loss_total.item(),
             'loss_lm': loss_lm.item(),
             'loss_energy': loss_energy.item() if isinstance(loss_energy, torch.Tensor) else 0.0,
             **energy_metrics
         }
         
         # Track history
-        self.loss_history['total'].append(metrics['loss_total'])
+        self.loss_history['total'].append(metrics['total_loss'])
         self.loss_history['lm'].append(metrics['loss_lm'])
         self.loss_history['energy_conservation'].append(metrics['loss_energy'])
         
@@ -264,7 +264,7 @@ class PhysicsInformedTrainer:
         self.model.train()
         
         epoch_metrics = {
-            'loss_total': 0.0,
+            'total_loss': 0.0,
             'loss_lm': 0.0,
             'loss_energy': 0.0,
             'energy_drift': 0.0,
@@ -297,7 +297,7 @@ class PhysicsInformedTrainer:
             
             # Logging
             if (batch_idx + 1) % log_interval == 0:
-                avg_loss = epoch_metrics['loss_total'] / (batch_idx + 1)
+                avg_loss = epoch_metrics['total_loss'] / (batch_idx + 1)
                 avg_energy_loss = epoch_metrics['loss_energy'] / (batch_idx + 1)
                 drift_stats = self.monitor_energy_drift()
                 lambdas = self.get_lagrange_multipliers()
