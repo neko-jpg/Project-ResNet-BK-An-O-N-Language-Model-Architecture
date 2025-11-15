@@ -115,8 +115,43 @@ def get_wikitext2_dataloaders(
 - **Target (y)**: `(batch_size, seq_len)` - Next token IDs
 - **For CrossEntropyLoss**: Flatten y to `(batch_size * seq_len,)`
 
+### 5. Fixed Config Handling
+
+`BASELINE_CONFIG` is a `ResNetBKConfig` dataclass object, not a dictionary.
+
+**Before:**
+```python
+config = BASELINE_CONFIG.copy()  # AttributeError: no 'copy' method
+config['vocab_size'] = vocab_size
+```
+
+**After:**
+```python
+from dataclasses import replace
+config = replace(
+    BASELINE_CONFIG,
+    vocab_size=vocab_size,
+    d_model=64,
+    n_layers=2,
+    n_seq=128
+)
+```
+
+**Model instantiation:**
+```python
+# Correct: pass config object
+model = ConfigurableResNetBK(config).to(device)
+
+# Wrong: unpack as kwargs
+model = ConfigurableResNetBK(**config).to(device)  # TypeError
+```
+
 ## Status
 
 ✅ **FIXED** - The notebook is now ready for Google Colab testing.
 
-All import errors have been resolved and the data format is correctly handled throughout the notebook.
+All errors have been resolved:
+- ✅ Import errors fixed
+- ✅ Data format handled correctly
+- ✅ Config handling fixed
+- ✅ Model instantiation corrected
