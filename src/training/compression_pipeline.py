@@ -243,13 +243,34 @@ class CompressionPipeline:
                     prune_threshold=0.05
                 )
                 
-                # Copy weights if possible
-                if hasattr(old_moe, 'experts') and hasattr(pruned_moe, 'experts'):
-                    for i in range(min(len(old_moe.experts), len(pruned_moe.experts))):
-                        pruned_moe.experts[i].load_state_dict(old_moe.experts[i].state_dict())
-                
-                if hasattr(old_moe, 'gating') and hasattr(pruned_moe, 'gating'):
-                    pruned_moe.gating.load_state_dict(old_moe.gating.state_dict())
+                # Try to copy weights if structure matches
+                try:
+                    if hasattr(old_moe, 'gating') and hasattr(pruned_moe, 'gating'):
+                        # Copy gating weights (should be compatible)
+                        pruned_moe.gating.weight.data.copy_(old_moe.gating.weight.data)
+                        if old_moe.gating.bias is not None and pruned_moe.gating.bias is not None:
+                            pruned_moe.gating.bias.data.copy_(old_moe.gating.bias.data)
+                        print(f"  Block {block_idx}: Copied gating weights")
+                    
+                    # Copy expert weights (skip if structure doesn't match)
+                    if hasattr(old_moe, 'experts') and hasattr(pruned_moe, 'experts'):
+                        for i in range(min(len(old_moe.experts), len(pruned_moe.experts))):
+                            old_expert = old_moe.experts[i]
+                            new_expert = pruned_moe.experts[i]
+                            
+                            # Copy layer by layer (skip Dropout layers)
+                            old_layers = [m for m in old_expert if isinstance(m, nn.Linear)]
+                            new_layers = [m for m in new_expert if isinstance(m, nn.Linear)]
+                            
+                            for old_layer, new_layer in zip(old_layers, new_layers):
+                                if old_layer.weight.shape == new_layer.weight.shape:
+                                    new_layer.weight.data.copy_(old_layer.weight.data)
+                                    if old_layer.bias is not None and new_layer.bias is not None:
+                                        new_layer.bias.data.copy_(old_layer.bias.data)
+                        
+                        print(f"  Block {block_idx}: Copied expert weights")
+                except Exception as e:
+                    print(f"  Block {block_idx}: Could not copy weights ({e}), using random initialization")
                 
                 block.bk_layer.moe_ffn = pruned_moe
                 print(f"  Block {block_idx}: Replaced with PrunedMoELayer")
