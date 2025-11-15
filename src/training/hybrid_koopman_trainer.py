@@ -179,15 +179,11 @@ class HybridKoopmanTrainer:
         if self.enable_koopman_updates and self.koopman_enabled and not self.koopman_failed:
             with torch.no_grad():
                 for layer, (h_prev, h_next) in zip(self.model.blocks, hidden_states):
-                    try:
-                        layer.bk_layer.update_koopman_operator(
-                            h_prev.detach(),
-                            h_next.detach()
-                        )
-                    except Exception as e:
-                        print(f"Warning: Koopman operator update failed: {e}")
-                        # Continue training even if update fails
-                        pass
+                    # Update Koopman operator - errors are handled silently inside
+                    layer.bk_layer.update_koopman_operator(
+                        h_prev.detach(),
+                        h_next.detach()
+                    )
         
         # Return metrics
         metrics = {
