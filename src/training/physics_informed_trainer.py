@@ -36,13 +36,21 @@ class PhysicsInformedTrainer:
         criterion: nn.Module,
         lambda_energy_init: float = 0.1,
         lambda_energy_lr: float = 0.01,
-        energy_target_drift: float = 0.1
+        energy_target_drift: float = 0.1,
+        physics_start_epoch: int = 4,
+        device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
     ):
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
         self.lambda_energy_lr = lambda_energy_lr
         self.energy_target_drift = energy_target_drift
+        self.physics_start_epoch = physics_start_epoch
+        self.device = device
+        
+        # Current epoch tracking
+        self.current_epoch = 0
+        self.physics_enabled = False
         
         # Initialize Lagrange multipliers for all physics-informed layers
         self._initialize_lagrange_multipliers(lambda_energy_init)
@@ -58,6 +66,9 @@ class PhysicsInformedTrainer:
             'energy_conservation': [],
             'energy_drift': []
         }
+        
+        # Move model to device
+        self.model.to(device)
     
     def _initialize_lagrange_multipliers(self, lambda_init: float):
         """Initialize Lagrange multipliers for all physics-informed layers."""
@@ -84,17 +95,21 @@ class PhysicsInformedTrainer:
         """
         self.optimizer.zero_grad()
         
+        # Flatten y_batch if needed
+        if y_batch.ndim == 2:
+            y_batch = y_batch.view(-1)
+        
         # Forward pass
         logits = self.model(x_batch)  # (B, N, vocab_size)
         
         # Language modeling loss
         loss_lm = self.criterion(logits.view(-1, logits.size(-1)), y_batch)
         
-        # Energy conservation loss (if previous batch available)
+        # Energy conservation loss (if physics enabled and previous batch available)
         loss_energy = torch.tensor(0.0, device=x_batch.device)
         energy_metrics = {}
         
-        if x_prev_batch is not None:
+        if self.physics_enabled and x_prev_batch is not None:
             # Get embeddings for current and previous batches
             x_embed = self.model.token_embedding(x_batch)  # (B, N, D)
             x_prev_embed = self.model.token_embedding(x_prev_batch)  # (B, N, D)
@@ -223,7 +238,7 @@ class PhysicsInformedTrainer:
     def train_epoch(
         self,
         train_loader,
-        epoch: int,
+        epoch: Optional[int] = None,
         log_interval: int = 100
     ) -> Dict[str, float]:
         """
@@ -231,19 +246,30 @@ class PhysicsInformedTrainer:
         
         Args:
             train_loader: DataLoader for training data
-            epoch: current epoch number
+            epoch: current epoch number (if None, use internal counter)
             log_interval: steps between logging
         
         Returns:
             epoch_metrics: dict with average metrics for the epoch
         """
+        if epoch is not None:
+            self.current_epoch = epoch
+        else:
+            self.current_epoch += 1
+        
+        # Enable physics after warmup
+        if self.current_epoch >= self.physics_start_epoch:
+            self.physics_enabled = True
+        
         self.model.train()
         
         epoch_metrics = {
             'loss_total': 0.0,
             'loss_lm': 0.0,
             'loss_energy': 0.0,
-            'energy_drift': 0.0
+            'energy_drift': 0.0,
+            'lambda_energy': 0.0,
+            'physics_enabled': self.physics_enabled
         }
         
         x_prev_batch = None
@@ -285,15 +311,21 @@ class PhysicsInformedTrainer:
         # Average metrics over epoch
         num_batches = len(train_loader)
         for key in epoch_metrics.keys():
-            epoch_metrics[key] /= num_batches
+            if key != 'physics_enabled':  # Don't average boolean
+                epoch_metrics[key] /= num_batches
+        
+        # Get average lambda
+        lambdas = self.get_lagrange_multipliers()
+        if lambdas:
+            epoch_metrics['lambda_energy'] = np.mean(lambdas)
         
         return epoch_metrics
     
     def evaluate(
         self,
         val_loader,
-        compute_energy_metrics: bool = True
-    ) -> Dict[str, float]:
+        compute_energy_metrics: bool = False
+    ) -> tuple:
         """
         Evaluate model on validation set.
         
@@ -340,12 +372,7 @@ class PhysicsInformedTrainer:
                 x_prev_batch = x_batch
                 num_batches += 1
         
-        val_metrics = {
-            'val_loss': total_loss / num_batches,
-            'val_perplexity': torch.exp(torch.tensor(total_loss / num_batches)).item(),
-        }
+        avg_loss = total_loss / num_batches
+        perplexity = torch.exp(torch.tensor(avg_loss)).item()
         
-        if compute_energy_metrics:
-            val_metrics['val_energy_drift'] = total_energy_drift / num_batches
-        
-        return val_metrics
+        return avg_loss, perplexity

@@ -226,3 +226,172 @@ class PhysicsInformedBKLayer(nn.Module):
         }
         
         return loss, loss_dict
+
+
+class PhysicsInformedLanguageModel(nn.Module):
+    """
+    ResNet-BK Language Model with Physics-Informed Learning.
+    
+    Architecture:
+        Token Embedding + Position Embedding
+        -> PhysicsInformedBKLayer × n_layers
+        -> LayerNorm
+        -> LM Head
+    """
+    
+    def __init__(
+        self,
+        vocab_size,
+        d_model=64,
+        n_layers=4,
+        n_seq=128,
+        num_experts=4,
+        top_k=1,
+        dropout_p=0.1,
+        use_energy_conservation=True
+    ):
+        """
+        Initialize physics-informed language model.
+        
+        Args:
+            vocab_size: vocabulary size
+            d_model: hidden dimension
+            n_layers: number of ResNet-BK blocks
+            n_seq: sequence length
+            num_experts: number of MoE experts
+            top_k: number of experts to route to
+            dropout_p: dropout probability
+            use_energy_conservation: whether to use energy conservation
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.n_seq = n_seq
+        self.n_layers = n_layers
+        self.use_energy_conservation = use_energy_conservation
+        
+        self.token_embedding = nn.Embedding(vocab_size, d_model)
+        self.position_embedding = nn.Embedding(n_seq, d_model)
+        
+        self.blocks = nn.ModuleList([
+            PhysicsInformedBKBlock(
+                d_model=d_model,
+                n_seq=n_seq,
+                num_experts=num_experts,
+                dropout_p=dropout_p
+            )
+            for _ in range(n_layers)
+        ])
+        
+        self.layer_norm_final = nn.LayerNorm(d_model)
+        self.lm_head = nn.Linear(d_model, vocab_size)
+    
+    def forward(self, x, return_energy=False):
+        """
+        Forward pass.
+        
+        Args:
+            x: (batch_size, n_seq) token indices
+            return_energy: if True, return energy information
+        
+        Returns:
+            logits: (batch_size, n_seq, vocab_size)
+            energy_dict: dict with energy info (if return_energy=True)
+        """
+        batch_size, n_seq = x.shape
+        assert n_seq == self.n_seq, f"n_seq mismatch: expected {self.n_seq}, got {n_seq}"
+        
+        # Embeddings
+        tok_emb = self.token_embedding(x)  # (B, N, D)
+        pos = torch.arange(0, n_seq, dtype=torch.long, device=x.device).unsqueeze(0)
+        pos_emb = self.position_embedding(pos)  # (1, N, D)
+        h = tok_emb + pos_emb
+        
+        # Store states for energy computation
+        states = [h]
+        energies = []
+        
+        # Forward through blocks
+        for block in self.blocks:
+            if return_energy and self.use_energy_conservation:
+                h, energy_dict = block(h, x_prev=states[-1], return_energy=True)
+                energies.append(energy_dict)
+            else:
+                h = block(h)
+            states.append(h)
+        
+        # Output
+        h = self.layer_norm_final(h)
+        logits = self.lm_head(h)  # (B, N, vocab_size)
+        
+        if return_energy:
+            return logits, {'states': states, 'energies': energies}
+        
+        return logits
+    
+    def get_hidden_states(self, x):
+        """
+        Get hidden states at each layer for analysis.
+        
+        Args:
+            x: (batch_size, n_seq) token indices
+        
+        Returns:
+            hidden_states: list of (B, N, D) tensors, one per layer
+        """
+        batch_size, n_seq = x.shape
+        
+        # Embeddings
+        tok_emb = self.token_embedding(x)
+        pos = torch.arange(0, n_seq, dtype=torch.long, device=x.device).unsqueeze(0)
+        pos_emb = self.position_embedding(pos)
+        h = tok_emb + pos_emb
+        
+        hidden_states = []
+        for block in self.blocks:
+            h = block(h)
+            hidden_states.append(h)
+        
+        return hidden_states
+
+
+class PhysicsInformedBKBlock(nn.Module):
+    """
+    ResNet-BK Block with Physics-Informed structure.
+    
+    Architecture:
+        Input -> PhysicsInformedBKLayer -> Add(Input) -> Output
+    """
+    
+    def __init__(self, d_model, n_seq, num_experts=4, dropout_p=0.1):
+        """
+        Initialize physics-informed ResNet-BK block.
+        
+        Args:
+            d_model: hidden dimension
+            n_seq: sequence length
+            num_experts: number of MoE experts
+            dropout_p: dropout probability
+        """
+        super().__init__()
+        self.bk_layer = PhysicsInformedBKLayer(
+            d_model, n_seq, num_experts, dropout_p
+        )
+    
+    def forward(self, x, x_prev=None, return_energy=False):
+        """
+        Forward pass with residual structure.
+        
+        Args:
+            x: (B, N, D) input tensor
+            x_prev: (B, N, D) previous state (optional)
+            return_energy: if True, return energy information
+        
+        Returns:
+            output: (B, N, D) output tensor
+            energy_dict: dict with energy info (if return_energy=True)
+        """
+        if return_energy:
+            bk_out, energy_dict = self.bk_layer(x, x_prev, return_energy=True)
+            return x + bk_out, energy_dict
+        else:
+            return x + self.bk_layer(x, x_prev, return_energy=False)
