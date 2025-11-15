@@ -101,6 +101,9 @@ class KoopmanLossScheduler:
     
     def get_weight(self):
         """Get current Koopman loss weight."""
+        # Return 0 if weight is negligible to skip computation
+        if self.current_weight < 1e-6:
+            return 0.0
         return self.current_weight
     
     def state_dict(self):

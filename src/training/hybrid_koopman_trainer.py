@@ -79,6 +79,16 @@ class HybridKoopmanTrainer:
         self.koopman_enabled = False
         self.koopman_failed = False
         
+        # Warning control - only warn once per epoch
+        self.last_warning_epoch = -1
+        self.warning_count = 0
+        self.max_warnings_per_epoch = 1
+        
+        # Koopman weight decay tracking
+        self.koopman_weight_decay_active = False
+        self.koopman_weight_decay_counter = 0
+        self.koopman_weight_decay_duration = 10  # Keep reduced weight for N batches
+        
         # Move model to device
         self.model.to(device)
     
@@ -135,7 +145,11 @@ class HybridKoopmanTrainer:
         loss_koopman = torch.tensor(0.0, device=self.device)
         koopman_weight = 0.0
         
-        if self.koopman_enabled and not self.koopman_failed:
+        # Get scheduled weight
+        scheduled_weight = self.koopman_scheduler.get_weight()
+        
+        # Skip Koopman computation entirely if weight is negligible
+        if self.koopman_enabled and not self.koopman_failed and scheduled_weight > 1e-6:
             try:
                 # Compute Koopman loss for each layer
                 koopman_losses = []
@@ -147,18 +161,46 @@ class HybridKoopmanTrainer:
                 
                 # Check for numerical issues
                 if torch.isnan(loss_koopman) or torch.isinf(loss_koopman):
-                    print("Warning: Koopman loss is NaN/Inf, falling back to gradients only")
+                    # Only warn once per epoch
+                    if self.last_warning_epoch != self.current_epoch:
+                        print(f"[Epoch {self.current_epoch}] Warning: Koopman loss is NaN/Inf, disabling Koopman for this epoch")
+                        self.last_warning_epoch = self.current_epoch
                     self.koopman_failed = True
                     loss_koopman = torch.tensor(0.0, device=self.device)
                     koopman_weight = 0.0
+                    
                 elif loss_koopman.item() > self.fallback_threshold:
-                    print(f"Warning: Koopman loss too high ({loss_koopman.item():.2f}), reducing weight")
-                    koopman_weight = self.koopman_scheduler.get_weight() * 0.1
+                    # Activate weight decay for multiple batches
+                    if not self.koopman_weight_decay_active:
+                        # Only warn once when decay starts
+                        if self.last_warning_epoch != self.current_epoch or self.warning_count < self.max_warnings_per_epoch:
+                            print(f"[Epoch {self.current_epoch}] Koopman loss high ({loss_koopman.item():.2f}), reducing weight for next {self.koopman_weight_decay_duration} batches")
+                            self.last_warning_epoch = self.current_epoch
+                            self.warning_count += 1
+                        self.koopman_weight_decay_active = True
+                        self.koopman_weight_decay_counter = 0
+                    
+                    # Apply reduced weight
+                    koopman_weight = scheduled_weight * 0.01  # More aggressive reduction
+                    self.koopman_weight_decay_counter += 1
+                    
+                    # Reset decay after duration
+                    if self.koopman_weight_decay_counter >= self.koopman_weight_decay_duration:
+                        self.koopman_weight_decay_active = False
+                        self.koopman_weight_decay_counter = 0
                 else:
-                    koopman_weight = self.koopman_scheduler.get_weight()
+                    # Normal case: use scheduled weight
+                    koopman_weight = scheduled_weight
+                    # Reset decay if loss is back to normal
+                    if self.koopman_weight_decay_active:
+                        self.koopman_weight_decay_active = False
+                        self.koopman_weight_decay_counter = 0
             
             except Exception as e:
-                print(f"Warning: Koopman loss computation failed: {e}")
+                # Only warn once per epoch
+                if self.last_warning_epoch != self.current_epoch:
+                    print(f"[Epoch {self.current_epoch}] Warning: Koopman loss computation failed: {e}")
+                    self.last_warning_epoch = self.current_epoch
                 self.koopman_failed = True
                 loss_koopman = torch.tensor(0.0, device=self.device)
                 koopman_weight = 0.0
@@ -176,7 +218,9 @@ class HybridKoopmanTrainer:
         self.optimizer.step()
         
         # Phase 3: Update Koopman operators (no gradients)
-        if self.enable_koopman_updates and self.koopman_enabled and not self.koopman_failed:
+        # Only update if weight is significant (not in decay mode)
+        if (self.enable_koopman_updates and self.koopman_enabled and 
+            not self.koopman_failed and koopman_weight > 1e-4):
             with torch.no_grad():
                 for layer, (h_prev, h_next) in zip(self.model.blocks, hidden_states):
                     # Update Koopman operator - errors are handled silently inside
@@ -220,9 +264,22 @@ class HybridKoopmanTrainer:
         # Update Koopman scheduler
         self.koopman_scheduler.step(self.current_epoch)
         
-        # Enable Koopman learning after warmup
+        # Enable Koopman learning after warmup (with 1 epoch buffer for stability)
+        # Warmup period: completely disable Koopman to let LM stabilize
         if self.current_epoch >= self.koopman_start_epoch:
             self.koopman_enabled = True
+            # Reset failure flag at start of each epoch
+            self.koopman_failed = False
+        else:
+            # During warmup, ensure Koopman is completely disabled
+            self.koopman_enabled = False
+        
+        # Reset warning counter at start of each epoch
+        self.warning_count = 0
+        
+        # Reset weight decay at start of each epoch
+        self.koopman_weight_decay_active = False
+        self.koopman_weight_decay_counter = 0
         
         # Accumulate metrics
         total_loss_lm = 0.0
