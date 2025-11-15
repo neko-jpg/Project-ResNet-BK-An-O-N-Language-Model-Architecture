@@ -14,11 +14,13 @@ from typing import Tuple, Optional
 from .bk_core import get_tridiagonal_inverse_diagonal, vmapped_get_diag
 
 
-class QuantizedBKCore(nn.Module):
+class QuantizedBKCore:
     """
     INT8 quantized BK-Core with dynamic range calibration.
     
     Implements fake quantization during training to learn quantization-robust parameters.
+    
+    Note: This is a callable class (not nn.Module) to match the interface of BKCoreFunction.apply
     """
     
     def __init__(self, n_seq: int, enable_quantization: bool = True):
@@ -27,27 +29,17 @@ class QuantizedBKCore(nn.Module):
             n_seq: Sequence length
             enable_quantization: If True, apply quantization; else use FP32
         """
-        super().__init__()
         self.n_seq = n_seq
         self.enable_quantization = enable_quantization
+        self.training = True  # Track training mode
         
         # Quantization parameters (learned during calibration)
-        self.register_buffer('v_scale', torch.tensor(1.0))
-        self.register_buffer('v_zero_point', torch.tensor(0, dtype=torch.int32))
-        self.register_buffer('G_real_scale', torch.tensor(1.0))
-        self.register_buffer('G_real_zero_point', torch.tensor(0, dtype=torch.int32))
-        self.register_buffer('G_imag_scale', torch.tensor(1.0))
-        self.register_buffer('G_imag_zero_point', torch.tensor(0, dtype=torch.int32))
-        
-        # Base Hamiltonian (stored in FP32, quantized on-the-fly)
-        h0_diag_fp32 = torch.full((n_seq,), -2.0)
-        self.register_buffer('h0_diag', h0_diag_fp32)
-        
-        h0_sub_fp32 = torch.full((n_seq-1,), 1.0)
-        self.register_buffer('h0_sub', h0_sub_fp32)
-        
-        h0_super_fp32 = torch.full((n_seq-1,), 1.0)
-        self.register_buffer('h0_super', h0_super_fp32)
+        self.v_scale = torch.tensor(1.0)
+        self.v_zero_point = torch.tensor(0, dtype=torch.int32)
+        self.G_real_scale = torch.tensor(1.0)
+        self.G_real_zero_point = torch.tensor(0, dtype=torch.int32)
+        self.G_imag_scale = torch.tensor(1.0)
+        self.G_imag_zero_point = torch.tensor(0, dtype=torch.int32)
         
         self.z = torch.tensor(1.0j, dtype=torch.complex128)
         
@@ -176,38 +168,41 @@ class QuantizedBKCore(nn.Module):
         G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
         return G_ii
     
-    def forward(self, v_fp32: torch.Tensor) -> torch.Tensor:
+    def __call__(self, he_diag: torch.Tensor, h0_super: torch.Tensor, 
+                 h0_sub: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
         Forward pass with optional quantization.
         
+        This matches the interface of BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
+        
         Args:
-            v_fp32: (B, N) - potential in FP32
+            he_diag: (B, N) - effective Hamiltonian diagonal (h0_diag + v)
+            h0_super: (B, N-1) - super-diagonal
+            h0_sub: (B, N-1) - sub-diagonal
+            z: complex scalar - spectral shift
         
         Returns:
             features: (B, N, 2) - [real(G_ii), imag(G_ii)] in FP32
         """
-        B, N = v_fp32.shape
-        device = v_fp32.device
+        # Extract potential v from he_diag (assuming h0_diag = -2.0)
+        # v = he_diag - h0_diag, but we'll work directly with he_diag
+        v_fp32 = he_diag + 2.0  # Approximate v (h0_diag is typically -2.0)
+        B, N = he_diag.shape
+        device = he_diag.device
         
         # Apply fake quantization to input (if enabled)
         if self.enable_quantization and self.training:
             v = self.fake_quantize(v_fp32, self.v_scale, self.v_zero_point)
+            # Recompute he_diag with quantized v
+            he_diag_quant = he_diag - v_fp32 + v
         else:
-            v = v_fp32
-        
-        # Expand base Hamiltonian to batch
-        h0_diag_batch = self.h0_diag.unsqueeze(0).expand(B, -1)
-        h0_sub_batch = self.h0_sub.unsqueeze(0).expand(B, -1)
-        h0_super_batch = self.h0_super.unsqueeze(0).expand(B, -1)
-        
-        # Effective Hamiltonian
-        he_diag = h0_diag_batch + v
+            he_diag_quant = he_diag
         
         # Clamp for numerical stability
-        he_diag = torch.clamp(he_diag, -10.0, 10.0)
+        he_diag_quant = torch.clamp(he_diag_quant, -10.0, 10.0)
         
-        # Compute BK-Core
-        G_ii = self._compute_bk_core(he_diag, h0_super_batch, h0_sub_batch, self.z)
+        # Compute BK-Core using existing implementation
+        G_ii = self._compute_bk_core(he_diag_quant, h0_super, h0_sub, z)
         
         # Extract real and imaginary parts
         G_real = G_ii.real.to(torch.float32)
@@ -234,6 +229,14 @@ class QuantizedBKCore(nn.Module):
         features = torch.stack([G_real, G_imag], dim=-1)
         
         return features
+    
+    def train(self):
+        """Set to training mode."""
+        self.training = True
+    
+    def eval(self):
+        """Set to evaluation mode."""
+        self.training = False
     
     def to_int8_inference(self):
         """

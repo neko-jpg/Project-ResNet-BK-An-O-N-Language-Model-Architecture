@@ -160,8 +160,10 @@ class CompressionPipeline:
         # Replace BK-Core in each block
         for block_idx, block in enumerate(actual_model.blocks):
             if hasattr(block, 'bk_layer') and hasattr(block.bk_layer, 'bk_core'):
-                n_seq = block.bk_layer.bk_core.n_seq if hasattr(block.bk_layer.bk_core, 'n_seq') else 128
+                # Get n_seq from the layer
+                n_seq = block.bk_layer.n_seq if hasattr(block.bk_layer, 'n_seq') else 128
                 quantized_core = QuantizedBKCore(n_seq=n_seq, enable_quantization=True)
+                quantized_core.train()  # Set to training mode
                 block.bk_layer.bk_core = quantized_core
                 print(f"  Block {block_idx}: Replaced with QuantizedBKCore")
         

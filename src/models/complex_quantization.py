@@ -13,7 +13,7 @@ from typing import Tuple, Optional
 from .bk_core import vmapped_get_diag
 
 
-class ComplexQuantizer(nn.Module):
+class ComplexQuantizer:
     """
     Quantizer for complex-valued tensors with separate real/imaginary scales.
     
@@ -26,21 +26,21 @@ class ComplexQuantizer(nn.Module):
             num_channels: Number of channels (for per-channel quantization)
             per_channel: If True, use per-channel scales; else use per-tensor scale
         """
-        super().__init__()
         self.num_channels = num_channels
         self.per_channel = per_channel
+        self.training = True
         
         # Quantization parameters
         if per_channel:
-            self.register_buffer('real_scale', torch.ones(num_channels))
-            self.register_buffer('real_zero_point', torch.zeros(num_channels, dtype=torch.int32))
-            self.register_buffer('imag_scale', torch.ones(num_channels))
-            self.register_buffer('imag_zero_point', torch.zeros(num_channels, dtype=torch.int32))
+            self.real_scale = torch.ones(num_channels)
+            self.real_zero_point = torch.zeros(num_channels, dtype=torch.int32)
+            self.imag_scale = torch.ones(num_channels)
+            self.imag_zero_point = torch.zeros(num_channels, dtype=torch.int32)
         else:
-            self.register_buffer('real_scale', torch.tensor(1.0))
-            self.register_buffer('real_zero_point', torch.tensor(0, dtype=torch.int32))
-            self.register_buffer('imag_scale', torch.tensor(1.0))
-            self.register_buffer('imag_zero_point', torch.tensor(0, dtype=torch.int32))
+            self.real_scale = torch.tensor(1.0)
+            self.real_zero_point = torch.tensor(0, dtype=torch.int32)
+            self.imag_scale = torch.tensor(1.0)
+            self.imag_zero_point = torch.tensor(0, dtype=torch.int32)
         
         self.calibrated = False
     
@@ -175,11 +175,13 @@ class ComplexQuantizer(nn.Module):
         return x_dequant
 
 
-class PerChannelQuantizedBKCore(nn.Module):
+class PerChannelQuantizedBKCore:
     """
     BK-Core with per-channel quantization for complex outputs.
     
     Each sequence position gets its own quantization scale for better accuracy.
+    
+    Note: This is a callable class (not nn.Module) to match the interface of BKCoreFunction.apply
     """
     
     def __init__(self, n_seq: int, enable_quantization: bool = True):
@@ -188,26 +190,16 @@ class PerChannelQuantizedBKCore(nn.Module):
             n_seq: Sequence length (number of channels)
             enable_quantization: If True, apply quantization
         """
-        super().__init__()
         self.n_seq = n_seq
         self.enable_quantization = enable_quantization
+        self.training = True  # Track training mode
         
         # Complex quantizer for G_ii output
         self.complex_quantizer = ComplexQuantizer(num_channels=n_seq, per_channel=True)
         
         # Input quantization (per-tensor for potential v)
-        self.register_buffer('v_scale', torch.tensor(1.0))
-        self.register_buffer('v_zero_point', torch.tensor(0, dtype=torch.int32))
-        
-        # Base Hamiltonian
-        h0_diag_fp32 = torch.full((n_seq,), -2.0)
-        self.register_buffer('h0_diag', h0_diag_fp32)
-        
-        h0_sub_fp32 = torch.full((n_seq-1,), 1.0)
-        self.register_buffer('h0_sub', h0_sub_fp32)
-        
-        h0_super_fp32 = torch.full((n_seq-1,), 1.0)
-        self.register_buffer('h0_super', h0_super_fp32)
+        self.v_scale = torch.tensor(1.0)
+        self.v_zero_point = torch.tensor(0, dtype=torch.int32)
         
         self.z = torch.tensor(1.0j, dtype=torch.complex128)
         
@@ -250,37 +242,40 @@ class PerChannelQuantizedBKCore(nn.Module):
         G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
         return G_ii
     
-    def forward(self, v_fp32: torch.Tensor) -> torch.Tensor:
+    def __call__(self, he_diag: torch.Tensor, h0_super: torch.Tensor, 
+                 h0_sub: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
         """
         Forward pass with per-channel quantization.
         
+        This matches the interface of BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
+        
         Args:
-            v_fp32: (B, N) - potential in FP32
+            he_diag: (B, N) - effective Hamiltonian diagonal
+            h0_super: (B, N-1) - super-diagonal
+            h0_sub: (B, N-1) - sub-diagonal
+            z: complex scalar - spectral shift
         
         Returns:
             features: (B, N, 2) - [real(G_ii), imag(G_ii)] in FP32
         """
-        B, N = v_fp32.shape
-        device = v_fp32.device
+        # Extract potential v from he_diag
+        v_fp32 = he_diag + 2.0  # Approximate v (h0_diag is typically -2.0)
+        B, N = he_diag.shape
+        device = he_diag.device
         
         # Fake quantize input
         if self.enable_quantization and self.training:
             v_int8 = ComplexQuantizer.quantize_tensor(v_fp32, self.v_scale, self.v_zero_point)
             v = ComplexQuantizer.dequantize_tensor(v_int8, self.v_scale, self.v_zero_point)
+            # Recompute he_diag with quantized v
+            he_diag_quant = he_diag - v_fp32 + v
         else:
-            v = v_fp32
+            he_diag_quant = he_diag
         
-        # Expand base Hamiltonian
-        h0_diag_batch = self.h0_diag.unsqueeze(0).expand(B, -1)
-        h0_sub_batch = self.h0_sub.unsqueeze(0).expand(B, -1)
-        h0_super_batch = self.h0_super.unsqueeze(0).expand(B, -1)
+        he_diag_quant = torch.clamp(he_diag_quant, -10.0, 10.0)
         
-        # Effective Hamiltonian
-        he_diag = h0_diag_batch + v
-        he_diag = torch.clamp(he_diag, -10.0, 10.0)
-        
-        # Compute BK-Core
-        G_ii = self._compute_bk_core(he_diag, h0_super_batch, h0_sub_batch, self.z)
+        # Compute BK-Core using existing implementation
+        G_ii = self._compute_bk_core(he_diag_quant, h0_super, h0_sub, z)
         
         # Collect calibration samples
         if self.calibration_mode:
@@ -301,3 +296,13 @@ class PerChannelQuantizedBKCore(nn.Module):
         features = torch.stack([G_real, G_imag], dim=-1)
         
         return features
+    
+    def train(self):
+        """Set to training mode."""
+        self.training = True
+        self.complex_quantizer.training = True
+    
+    def eval(self):
+        """Set to evaluation mode."""
+        self.training = False
+        self.complex_quantizer.training = False
