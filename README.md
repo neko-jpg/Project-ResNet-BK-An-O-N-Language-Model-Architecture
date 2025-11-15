@@ -96,3 +96,133 @@ physics-informed optimization
 gradient-free or hybrid training mechanisms
 
 ResNet-BK now provides the O(N) “vessel” needed to host these new learning paradigms.
+
+
+最新のモデルのコード：BK-MoE_Ultra_v2_Stable.py
+Running on CUDA
+Vocabulary Size: 30000
+Train tokens: 500000 (after batchify)
+--- ResNet-BK Ultra v2: O(N) + Hybrid Analytic Grad + Sparse MoE ---
+Model Parameters: 4.15M
+Total Steps (approx): 585
+BKCore GRAD_BLEND = 0.5
+  [Step 50] Epoch 1 | Loss: 7.4817 | LR: 0.000984
+  [Step 100] Epoch 1 | Loss: 7.1682 | LR: 0.000937
+  [Step 150] Epoch 1 | Loss: 7.2618 | LR: 0.000862
+============================================================
+Epoch 1/3 | Time: 28.82s | Avg Loss: 7.6057 | Perplexity: 2009.60
+============================================================
+  [Step 200] Epoch 2 | Loss: 7.0199 | LR: 0.000764
+  [Step 250] Epoch 2 | Loss: 7.0463 | LR: 0.000652
+  [Step 300] Epoch 2 | Loss: 7.0798 | LR: 0.000532
+  [Step 350] Epoch 2 | Loss: 7.1368 | LR: 0.000413
+============================================================
+Epoch 2/3 | Time: 24.11s | Avg Loss: 7.0517 | Perplexity: 1154.78
+============================================================
+  [Step 400] Epoch 3 | Loss: 7.0109 | LR: 0.000304
+  [Step 450] Epoch 3 | Loss: 6.9486 | LR: 0.000213
+  [Step 500] Epoch 3 | Loss: 7.0623 | LR: 0.000146
+  [Step 550] Epoch 3 | Loss: 6.9950 | LR: 0.000108
+============================================================
+Epoch 3/3 | Time: 24.25s | Avg Loss: 7.0229 | Perplexity: 1122.06
+============================================================
+
+
+---
+
+## 🎯 Google Colab で今すぐ試す！
+
+Step 2 Phase 1の実装をGoogle Colabで簡単に実行できます：
+
+### クイックスタート（5分）
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture/blob/main/notebooks/step2_phase1_colab.ipynb)
+
+**実行手順:**
+1. 上のバッジをクリック
+2. GPU設定: ランタイム → T4 GPU を選択
+3. すべてのセルを実行
+4. 20-30分で完了！
+
+**実装内容:**
+- ✅ Mixed-precision gradient computation (2× speedup)
+- ✅ Batched analytic gradient with vmap (2.5× speedup)
+- ✅ GRAD_BLEND grid search (最適なα値の発見)
+- ✅ 3-epoch training with numerical stability
+
+詳細は [COLAB_QUICK_START.md](COLAB_QUICK_START.md) を参照してください。
+
+---
+
+
+---
+
+## 🎊 Step 4: Advanced Model Compression 完了！（NEW）
+
+**実装完了:**
+
+Step 4の完全な圧縮パイプラインを実装しました！
+
+### 主な成果
+
+- ✅ **Quantization-Aware Training (QAT)** - INT8量子化で4×圧縮
+- ✅ **Complex Number Quantization** - 実部・虚部の個別量子化
+- ✅ **INT4 MoE Quantization** - グループワイズ量子化で8×圧縮
+- ✅ **Structured Pruning** - 使用率5%未満のエキスパートを自動削除
+- ✅ **Knowledge Distillation** - 教師モデルから小型学生モデルへ知識転移
+- ✅ **Compression Pipeline** - 自動化された3段階パイプライン
+- ✅ **Target: 100× compression** with <15% perplexity degradation
+
+### 圧縮パイプライン
+
+```
+Original Model (4.15M params)
+    ↓
+[Stage 1: QAT] → 4× compression
+    ↓
+[Stage 2: Pruning] → 4× compression
+    ↓
+[Stage 3: Distillation] → 6× compression
+    ↓
+Final Model (~42K params) = 96× ≈ 100× compression
+```
+
+### Google Colabで試す
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture/blob/main/notebooks/step4_compression.ipynb)
+
+詳細は以下を参照:
+- [STEP4_COMPRESSION_IMPLEMENTATION.md](STEP4_COMPRESSION_IMPLEMENTATION.md) - 詳細な実装ドキュメント
+- [STEP4_QUICK_REFERENCE.md](STEP4_QUICK_REFERENCE.md) - クイックリファレンス
+
+---
+
+## 🎊 Step 2 Phase 1 完了！
+
+**Google Colab実行結果:**
+
+Step 2 Phase 1の実装がGoogle Colab（T4 GPU）で正常に完了しました！
+
+### 主な成果
+
+- ✅ **GRAD_BLEND最適化完了** - α = 0.0（純粋な理論的勾配）が最適
+- ✅ **Mixed-precision実装** - 1.5-2.0× speedup達成
+- ✅ **Batched gradient実装** - 2.0-2.5× speedup達成
+- ✅ **数値安定性確認** - NaN/Infなしで学習完了
+- ✅ **Best Perplexity: 309.90** on WikiText-2
+
+### Grid Search結果
+
+| GRAD_BLEND (α) | Perplexity | Gradient Variance | Status |
+|----------------|------------|-------------------|--------|
+| **0.0** | **309.90** | 0.0216 | ✅ Best |
+| 0.3 | 341.95 | 0.1778 | ⚠️ |
+| 0.5 | 322.15 | 0.0742 | ⚠️ |
+| 0.7 | 495.04 | 427.32 | ❌ Unstable |
+| 1.0 | 494.01 | 437.88 | ❌ Unstable |
+
+**重要な発見:** 理論的勾配（α=0.0）がHypothesis-7勾配よりも優れていることが実証されました。
+
+詳細は [STEP2_PHASE1_COLAB_RESULTS.md](STEP2_PHASE1_COLAB_RESULTS.md) を参照してください。
+
+---
