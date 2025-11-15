@@ -170,6 +170,27 @@ This was added to all training loops:
 - Gradient accumulation test
 - Dynamic batch sizing test
 
+### 7. Fixed AMP Dtype Mismatch in MoE
+
+AMP converts tensors to FP16, but MoE layer had dtype mismatch during index assignment.
+
+**Error:**
+```
+RuntimeError: Index put requires the source and destination dtypes match, got Float for the destination and Half for the source.
+```
+
+**Root Cause:** In `src/models/moe.py`, when using sparse routing:
+```python
+out_flat[mask] = sub_y  # sub_y might be FP32, out_flat is FP16
+```
+
+**Fix:** Ensure dtype consistency:
+```python
+out_flat[mask] = sub_y.to(out_flat.dtype)
+```
+
+This ensures AMP compatibility by matching dtypes during tensor assignment.
+
 ## Status
 
 ✅ **FIXED** - The notebook is now ready for Google Colab testing.

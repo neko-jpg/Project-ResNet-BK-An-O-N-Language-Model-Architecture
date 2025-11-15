@@ -70,6 +70,7 @@ class SparseMoELayer(nn.Module):
                 if mask.any():
                     sub_x = x_flat[mask]          # (T_e, D)
                     sub_y = expert(sub_x)         # (T_e, D)
-                    out_flat[mask] = sub_y
+                    # Ensure dtype matches for AMP compatibility
+                    out_flat[mask] = sub_y.to(out_flat.dtype)
 
         return out_flat.view(B, N, D)
