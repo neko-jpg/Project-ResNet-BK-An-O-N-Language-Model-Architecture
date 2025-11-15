@@ -167,10 +167,10 @@ class MixedPrecisionTrainer:
             if max_steps and step >= max_steps:
                 break
             
-            # Move to device
+            # Move to device and flatten targets
             device = next(self.model.parameters()).device
             x_batch = x_batch.to(device)
-            y_batch = y_batch.to(device)
+            y_batch = y_batch.view(-1).to(device)
             
             # Training step
             result = self.train_step(x_batch, y_batch)

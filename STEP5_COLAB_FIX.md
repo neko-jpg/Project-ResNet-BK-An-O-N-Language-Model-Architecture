@@ -191,6 +191,22 @@ out_flat[mask] = sub_y.to(out_flat.dtype)
 
 This ensures AMP compatibility by matching dtypes during tensor assignment.
 
+### 8. Fixed Target Shape in train_epoch
+
+The `train_epoch` method in `amp_trainer.py` wasn't flattening targets.
+
+**Error:**
+```
+ValueError: Expected input batch_size (1024) to match target batch_size (8).
+```
+
+**Fix:** Flatten targets in `train_epoch`:
+```python
+# Move to device and flatten targets
+x_batch = x_batch.to(device)
+y_batch = y_batch.view(-1).to(device)
+```
+
 ## Status
 
 ✅ **FIXED** - The notebook is now ready for Google Colab testing.
