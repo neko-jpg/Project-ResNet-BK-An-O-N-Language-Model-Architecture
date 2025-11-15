@@ -109,8 +109,9 @@ class PhysicsInformedTrainer:
         loss_energy = torch.tensor(0.0, device=x_batch.device)
         energy_metrics = {}
         
-        if self.physics_enabled and x_prev_batch is not None:
+        if self.physics_enabled and x_prev_batch is not None and x_prev_batch.shape[0] == x_batch.shape[0]:
             # Get embeddings for current and previous batches
+            # Only compute if batch sizes match
             x_embed = self.model.token_embedding(x_batch)  # (B, N, D)
             x_prev_embed = self.model.token_embedding(x_prev_batch)  # (B, N, D)
             
@@ -361,7 +362,7 @@ class PhysicsInformedTrainer:
                 total_loss += loss.item()
                 
                 # Energy metrics
-                if compute_energy_metrics and x_prev_batch is not None:
+                if compute_energy_metrics and x_prev_batch is not None and x_prev_batch.shape[0] == x_batch.shape[0]:
                     x_embed = self.model.token_embedding(x_batch)
                     x_prev_embed = self.model.token_embedding(x_prev_batch)
                     

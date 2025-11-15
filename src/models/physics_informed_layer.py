@@ -100,13 +100,14 @@ class PhysicsInformedBKLayer(nn.Module):
         V_total = V.sum(dim=-1)  # (B,)
         
         # Kinetic energy: T = sum_i T_i(momentum_i)
-        if x_prev is not None:
+        if x_prev is not None and x_prev.shape[0] == B:
             # Momentum approximation: finite difference
+            # Only compute if batch sizes match
             momentum = x - x_prev  # (B, N, D)
             T = self.kinetic_mlp(momentum).squeeze(-1)  # (B, N)
             T_total = T.sum(dim=-1)  # (B,)
         else:
-            # No previous state: assume zero kinetic energy
+            # No previous state or batch size mismatch: assume zero kinetic energy
             T_total = torch.zeros(B, device=x.device)
         
         # Total energy
