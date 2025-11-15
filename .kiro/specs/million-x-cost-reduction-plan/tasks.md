@@ -401,55 +401,111 @@ This implementation plan converts the feature design into executable coding task
   - Generate hardware utilization dashboard
   - _Requirements: 5.9, 5.20_
 
-- [ ] 7. Step 6: Implement Algorithmic Innovations
-- [ ] 7.1 Implement Adaptive Computation Time (ACT)
+- [-] 7. Step 6: Implement Algorithmic Innovations
+
+
+
+
+
+
+
+
+- [x] 7.1 Implement Adaptive Computation Time (ACT)
+
+
+
   - Create `AdaptiveResNetBKBlock` with halting unit
   - Implement cumulative halting probability tracking
   - Add ponder cost to loss function
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 7.2 Tune ACT hyperparameters
+- [x] 7.2 Tune ACT hyperparameters
+
+
+
   - Grid search over halting threshold and λ_act
   - Measure average layers executed
   - _Requirements: 6.4, 6.15_
 
-- [ ] 7.3 Implement multi-scale sequence processing
+
+- [x] 7.3 Implement multi-scale sequence processing
+
+
+
+
+
   - Create `MultiScaleResNetBKLayer` with learned downsampling/upsampling
   - Implement hierarchical processing: N ↁEN/2 ↁEN/4 ↁEN/2 ↁEN
   - _Requirements: 6.5, 6.6, 6.7, 6.8, 6.9_
 
-- [ ] 7.4 Implement learned sparsity in BK-Core
+- [x] 7.4 Implement learned sparsity in BK-Core
+
+
+
+
+
   - Create `SparseBKCore` with importance predictor
   - Implement Gumbel-Sigmoid for differentiable binary mask
   - Add interpolation network for masked positions
   - _Requirements: 6.10, 6.11, 6.12_
 
-- [ ] 7.5 Optimize sparse BK-Core computation
+- [x] 7.5 Optimize sparse BK-Core computation
+
+
+
+
+
   - Skip theta/phi recursions for masked positions
   - Implement sparse-aware algorithm
   - _Requirements: 6.13_
+-
 
-- [ ] 7.6 Implement sparsity loss
+- [x] 7.6 Implement sparsity loss
+
+
+
+
   - Encourage target sparsity level (e.g., 50%)
   - Balance sparsity vs accuracy
   - _Requirements: 6.14_
 
-- [ ] 7.7 Implement early exiting for inference
+-
+
+- [x] 7.7 Implement early exiting for inference
+
+
+
   - Halt computation when output confidence > threshold
   - Measure average exit layer
   - _Requirements: 6.14, 6.15_
 
-- [ ] 7.8 Implement conditional MoE computation
+- [x] 7.8 Implement conditional MoE computation
+
+
+
+
+
   - Dynamically adjust num_experts based on input difficulty
   - Easy inputs: 1 expert, hard inputs: 4 experts
   - _Requirements: 6.16, 6.17_
 
-- [ ] 7.9 Implement learned sequence length
+-
+
+- [x] 7.9 Implement learned sequence length
+
+
+
   - Predict optimal N for each input
   - Pad or truncate accordingly
   - _Requirements: 6.18_
 
-- [ ] 7.10 Test Step 6 on Google Colab
+
+- [x] 7.10 Test Step 6 on Google Colab
+
+
+
+
+
   - Create Colab notebook for algorithmic innovations
   - Test ACT: verify halting probabilities computed correctly
   - Test multi-scale: verify downsampling/upsampling works

@@ -13,6 +13,11 @@ from .koopman_layer import (
     KoopmanLanguageModel
 )
 from .physics_informed_layer import PhysicsInformedBKLayer
+from .adaptive_computation import (
+    AdaptiveResNetBKBlock,
+    ACTLanguageModel,
+    ACTTrainer
+)
 
 __all__ = [
     'BKCoreFunction',
@@ -26,4 +31,7 @@ __all__ = [
     'KoopmanResNetBKBlock',
     'KoopmanLanguageModel',
     'PhysicsInformedBKLayer',
+    'AdaptiveResNetBKBlock',
+    'ACTLanguageModel',
+    'ACTTrainer',
 ]
