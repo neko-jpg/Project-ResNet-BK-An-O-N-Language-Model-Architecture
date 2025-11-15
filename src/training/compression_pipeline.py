@@ -346,8 +346,15 @@ class CompressionPipeline:
         actual_teacher = teacher_model.model if hasattr(teacher_model, 'model') else teacher_model
         teacher_d_model = actual_teacher.d_model if hasattr(actual_teacher, 'd_model') else 64
         teacher_n_layers = actual_teacher.n_layers if hasattr(actual_teacher, 'n_layers') else 4
-        vocab_size = actual_teacher.vocab_size if hasattr(actual_teacher, 'vocab_size') else 50257
         n_seq = actual_teacher.n_seq if hasattr(actual_teacher, 'n_seq') else 128
+        
+        # Get actual vocab size from token embedding
+        if hasattr(actual_teacher, 'token_embedding'):
+            vocab_size = actual_teacher.token_embedding.num_embeddings
+        elif hasattr(actual_teacher, 'vocab_size'):
+            vocab_size = actual_teacher.vocab_size
+        else:
+            vocab_size = 30000  # Default fallback
         
         # Create smaller student
         student_d_model = max(32, teacher_d_model // 2)
