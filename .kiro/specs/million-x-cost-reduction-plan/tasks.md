@@ -611,8 +611,12 @@ This implementation plan converts the feature design into executable coding task
   - Measure data efficiency: target 50% of data for same performance
   - _Requirements: 7.4, 7.17, 7.20_
 
-- [ ] 9. Comprehensive Benchmarking and Validation
+- [-] 9. Comprehensive Benchmarking and Validation
+
+
 - [ ] 9.1 Implement FLOPs counting infrastructure
+
+
   - Create `FLOPsCounter` class
   - Count BK-Core, MoE, linear layer FLOPs
   - Track forward and backward FLOPs separately
