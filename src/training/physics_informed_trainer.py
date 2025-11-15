@@ -351,6 +351,10 @@ class PhysicsInformedTrainer:
                 x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device)
                 
+                # Flatten y_batch if needed (B, N) -> (B*N,)
+                if y_batch.ndim == 2:
+                    y_batch = y_batch.view(-1)
+                
                 # Forward pass
                 logits = self.model(x_batch)
                 loss = self.criterion(logits.view(-1, logits.size(-1)), y_batch)
