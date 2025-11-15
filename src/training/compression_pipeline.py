@@ -221,9 +221,10 @@ class CompressionPipeline:
         """
         Stage 2: Structured Pruning.
         
-        Prune unused MoE experts and low-magnitude weights.
+        Prune unused MoE experts and low-magnitude weights with iterative retraining.
         """
-        from src.models.pruned_moe import PrunedMoELayer, MagnitudePruner
+        from src.models.pruned_moe import PrunedMoELayer, IterativeMagnitudePruner
+        from src.training.iterative_pruning_trainer import create_iterative_pruning_trainer
         
         print(f"\nReplacing MoE layers with prunable versions...")
         
@@ -307,14 +308,30 @@ class CompressionPipeline:
                   f"Val PPL = {val_metrics['perplexity']:.2f}, "
                   f"Active Experts = {total_active}")
         
-        # Magnitude-based pruning
-        print(f"\nApplying magnitude-based pruning...")
-        magnitude_pruner = MagnitudePruner(threshold=0.01)
-        pruning_stats = magnitude_pruner.prune_model(
-            model, 
-            layer_names=None,  # Prune all linear layers
-            verbose=True
+        # Iterative magnitude-based pruning with retraining
+        print(f"\nApplying iterative magnitude-based pruning...")
+        print(f"Targeting output_proj and fc layers...")
+        
+        # Create iterative pruning trainer
+        iterative_trainer = create_iterative_pruning_trainer(
+            model=model,
+            initial_sparsity=0.2,
+            final_sparsity=0.7,
+            num_iterations=3,
+            target_layers=['output_proj', 'fc'],
+            device=self.device
         )
+        
+        # Run iterative pruning
+        magnitude_results = iterative_trainer.run_iterative_pruning(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            retrain_epochs=2,
+            learning_rate=1e-4,
+            save_dir=None  # Don't save intermediate checkpoints
+        )
+        
+        pruning_stats = magnitude_results.get('pruning_summary', {})
         
         metrics = {
             'stage': 'pruning',

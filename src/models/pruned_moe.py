@@ -297,22 +297,36 @@ class MagnitudePruner:
     """
     Magnitude-based weight pruning for linear layers.
     
-    Prunes weights with |w| < threshold.
+    Prunes weights with |w| < threshold, with support for:
+    - Iterative pruning with retraining
+    - Gradual sparsity increase
+    - Mask persistence across training
     """
     
-    def __init__(self, threshold: float = 0.01):
+    def __init__(self, threshold: float = 0.01, target_sparsity: float = 0.5):
         """
         Args:
             threshold: Prune weights with |w| < threshold
+            target_sparsity: Target sparsity ratio (0.5 = 50% weights pruned)
         """
         self.threshold = threshold
+        self.target_sparsity = target_sparsity
+        
+        # Store masks for each layer
+        self.masks = {}
+        
+        # Pruning history
+        self.pruning_history = []
     
-    def prune_layer(self, layer: nn.Linear, verbose: bool = True) -> int:
+    def prune_layer(self, layer: nn.Linear, layer_name: str = "", 
+                   sparsity: Optional[float] = None, verbose: bool = True) -> int:
         """
         Prune weights in a linear layer.
         
         Args:
             layer: Linear layer to prune
+            layer_name: Name of the layer (for tracking)
+            sparsity: If provided, prune to this sparsity level; else use threshold
             verbose: If True, print pruning information
         
         Returns:
@@ -321,8 +335,21 @@ class MagnitudePruner:
         with torch.no_grad():
             weight = layer.weight.data
             
-            # Create mask
-            mask = weight.abs() >= self.threshold
+            if sparsity is not None:
+                # Prune to target sparsity by magnitude
+                num_total = weight.numel()
+                num_to_prune = int(num_total * sparsity)
+                
+                # Get absolute values and find threshold
+                weight_abs = weight.abs().flatten()
+                if num_to_prune > 0:
+                    threshold_value = torch.kthvalue(weight_abs, num_to_prune).values.item()
+                    mask = weight.abs() >= threshold_value
+                else:
+                    mask = torch.ones_like(weight, dtype=torch.bool)
+            else:
+                # Prune by fixed threshold
+                mask = weight.abs() >= self.threshold
             
             # Count pruned weights
             num_total = weight.numel()
@@ -332,19 +359,38 @@ class MagnitudePruner:
             # Apply mask
             weight.mul_(mask.float())
             
+            # Store mask for this layer
+            if layer_name:
+                self.masks[layer_name] = mask
+            
             if verbose:
                 print(f"Pruned {num_pruned}/{num_total} weights ({prune_ratio:.2%})")
             
             return num_pruned
     
+    def apply_masks(self, model: nn.Module):
+        """
+        Apply stored masks to model weights.
+        
+        This should be called after each optimizer step to maintain sparsity.
+        
+        Args:
+            model: Model to apply masks to
+        """
+        with torch.no_grad():
+            for name, module in model.named_modules():
+                if isinstance(module, nn.Linear) and name in self.masks:
+                    module.weight.data.mul_(self.masks[name].float())
+    
     def prune_model(self, model: nn.Module, layer_names: Optional[List[str]] = None,
-                   verbose: bool = True) -> Dict[str, int]:
+                   sparsity: Optional[float] = None, verbose: bool = True) -> Dict[str, int]:
         """
         Prune all linear layers in a model.
         
         Args:
             model: Model to prune
             layer_names: If provided, only prune these layers
+            sparsity: If provided, prune to this sparsity level; else use threshold
             verbose: If True, print pruning information
         
         Returns:
@@ -357,7 +403,203 @@ class MagnitudePruner:
                 if layer_names is None or name in layer_names:
                     if verbose:
                         print(f"\nPruning layer: {name}")
-                    num_pruned = self.prune_layer(module, verbose=verbose)
+                    num_pruned = self.prune_layer(module, layer_name=name, 
+                                                  sparsity=sparsity, verbose=verbose)
                     pruning_stats[name] = num_pruned
         
         return pruning_stats
+    
+    def get_model_sparsity(self, model: nn.Module, 
+                          layer_names: Optional[List[str]] = None) -> Dict[str, float]:
+        """
+        Calculate sparsity for each layer in the model.
+        
+        Args:
+            model: Model to analyze
+            layer_names: If provided, only analyze these layers
+        
+        Returns:
+            Dictionary mapping layer_name -> sparsity_ratio
+        """
+        sparsity_stats = {}
+        
+        with torch.no_grad():
+            for name, module in model.named_modules():
+                if isinstance(module, nn.Linear):
+                    if layer_names is None or name in layer_names:
+                        weight = module.weight.data
+                        num_total = weight.numel()
+                        num_zero = (weight == 0).sum().item()
+                        sparsity = num_zero / num_total
+                        sparsity_stats[name] = sparsity
+        
+        return sparsity_stats
+
+
+class IterativeMagnitudePruner:
+    """
+    Iterative magnitude-based pruning with retraining.
+    
+    Gradually increases sparsity over multiple pruning-retraining cycles.
+    """
+    
+    def __init__(self, initial_sparsity: float = 0.2, 
+                 final_sparsity: float = 0.8,
+                 num_iterations: int = 5,
+                 prune_layers: Optional[List[str]] = None):
+        """
+        Args:
+            initial_sparsity: Starting sparsity level (e.g., 0.2 = 20%)
+            final_sparsity: Target final sparsity (e.g., 0.8 = 80%)
+            num_iterations: Number of prune-retrain cycles
+            prune_layers: Layer name patterns to prune (e.g., ['output_proj', 'fc'])
+        """
+        self.initial_sparsity = initial_sparsity
+        self.final_sparsity = final_sparsity
+        self.num_iterations = num_iterations
+        self.prune_layers = prune_layers
+        
+        # Calculate sparsity schedule (exponential)
+        self.sparsity_schedule = self._calculate_sparsity_schedule()
+        
+        # Create magnitude pruner
+        self.pruner = MagnitudePruner()
+        
+        # Track iteration
+        self.current_iteration = 0
+        
+        # History
+        self.history = []
+    
+    def _calculate_sparsity_schedule(self) -> List[float]:
+        """
+        Calculate exponential sparsity schedule.
+        
+        Returns:
+            List of sparsity values for each iteration
+        """
+        schedule = []
+        for i in range(self.num_iterations):
+            # Exponential schedule: s(t) = s_0 * (s_f / s_0)^(t / T)
+            progress = (i + 1) / self.num_iterations
+            sparsity = self.initial_sparsity * (
+                (self.final_sparsity / self.initial_sparsity) ** progress
+            )
+            schedule.append(sparsity)
+        
+        return schedule
+    
+    def _filter_layer_names(self, model: nn.Module) -> List[str]:
+        """
+        Filter layer names based on prune_layers patterns.
+        
+        Args:
+            model: Model to filter layers from
+        
+        Returns:
+            List of layer names to prune
+        """
+        if self.prune_layers is None:
+            # Prune all linear layers
+            return None
+        
+        filtered_names = []
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                # Check if any pattern matches
+                for pattern in self.prune_layers:
+                    if pattern in name:
+                        filtered_names.append(name)
+                        break
+        
+        return filtered_names if filtered_names else None
+    
+    def prune_step(self, model: nn.Module, verbose: bool = True) -> Dict:
+        """
+        Execute one pruning step.
+        
+        Args:
+            model: Model to prune
+            verbose: If True, print pruning information
+        
+        Returns:
+            Dictionary with pruning statistics
+        """
+        if self.current_iteration >= self.num_iterations:
+            if verbose:
+                print("All pruning iterations complete")
+            return {}
+        
+        target_sparsity = self.sparsity_schedule[self.current_iteration]
+        
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"ITERATIVE PRUNING - Iteration {self.current_iteration + 1}/{self.num_iterations}")
+            print(f"Target sparsity: {target_sparsity:.1%}")
+            print(f"{'='*60}")
+        
+        # Filter layers to prune
+        layer_names = self._filter_layer_names(model)
+        
+        if verbose and layer_names:
+            print(f"Pruning {len(layer_names)} layers matching patterns: {self.prune_layers}")
+        
+        # Prune model
+        pruning_stats = self.pruner.prune_model(
+            model, 
+            layer_names=layer_names,
+            sparsity=target_sparsity,
+            verbose=verbose
+        )
+        
+        # Get current sparsity
+        sparsity_stats = self.pruner.get_model_sparsity(model, layer_names=layer_names)
+        
+        # Record history
+        iteration_stats = {
+            'iteration': self.current_iteration,
+            'target_sparsity': target_sparsity,
+            'pruning_stats': pruning_stats,
+            'sparsity_stats': sparsity_stats,
+            'avg_sparsity': sum(sparsity_stats.values()) / len(sparsity_stats) if sparsity_stats else 0.0
+        }
+        self.history.append(iteration_stats)
+        
+        if verbose:
+            print(f"\nAverage sparsity: {iteration_stats['avg_sparsity']:.2%}")
+            print(f"Total weights pruned: {sum(pruning_stats.values()):,}")
+        
+        self.current_iteration += 1
+        
+        return iteration_stats
+    
+    def train_step_with_mask(self, model: nn.Module):
+        """
+        Apply masks after optimizer step to maintain sparsity.
+        
+        Call this after each optimizer.step() during retraining.
+        
+        Args:
+            model: Model being trained
+        """
+        self.pruner.apply_masks(model)
+    
+    def get_pruning_summary(self) -> Dict:
+        """
+        Get summary of all pruning iterations.
+        
+        Returns:
+            Dictionary with summary statistics
+        """
+        if not self.history:
+            return {}
+        
+        summary = {
+            'num_iterations': len(self.history),
+            'initial_sparsity': self.history[0]['avg_sparsity'],
+            'final_sparsity': self.history[-1]['avg_sparsity'],
+            'target_final_sparsity': self.final_sparsity,
+            'history': self.history
+        }
+        
+        return summary

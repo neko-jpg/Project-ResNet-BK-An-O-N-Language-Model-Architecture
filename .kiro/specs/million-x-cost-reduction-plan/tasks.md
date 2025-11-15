@@ -253,7 +253,12 @@ This implementation plan converts the feature design into executable coding task
   - _Requirements: 4.6, 4.7, 4.14_
 
 
-- [ ] 5.5 Implement magnitude-based pruning
+- [x] 5.5 Implement magnitude-based pruning
+
+
+
+
+
   - Prune weights with |w| < threshold in output_proj and fc layers
   - Implement iterative pruning with retraining
   - _Requirements: 4.8_
@@ -297,55 +302,82 @@ This implementation plan converts the feature design into executable coding task
   - _Requirements: 4.9, 4.13, 4.15, 4.16, 4.18, 4.20_
 
 
-- [ ] 6. Step 5: Implement Hardware Co-Design
-- [ ] 6.1 Implement fused CUDA kernel for theta recursion
+- [x] 6. Step 5: Implement Hardware Co-Design
+
+
+
+
+
+
+
+- [x] 6.1 Implement fused CUDA kernel for theta recursion
+
+
+
+
   - Write CUDA C++ code for theta forward sweep
   - Use shared memory for intermediate results
   - Compile with torch.utils.cpp_extension
   - _Requirements: 5.1, 5.2_
 
-- [ ] 6.2 Implement fused CUDA kernel for phi recursion
+- [x] 6.2 Implement fused CUDA kernel for phi recursion
+
   - Write CUDA C++ code for phi backward sweep
   - Optimize memory access patterns
   - _Requirements: 5.1, 5.2_
 
-- [ ] 6.3 Benchmark custom CUDA kernels
+- [x] 6.3 Benchmark custom CUDA kernels
+
+
   - Measure speedup vs PyTorch implementation: target 5ÁE
   - Compare to cuSPARSE tridiagonal solver
   - Profile GPU occupancy and memory bandwidth
   - _Requirements: 5.3, 5.4, 5.11, 5.12_
 
-- [ ] 6.4 Implement mixed-precision BK-Core
+- [x] 6.4 Implement mixed-precision BK-Core
+
+
   - Use FP16 for theta/phi recursions
   - Use FP32 for final division
   - Validate numerical accuracy: max error < 1e-4
   - _Requirements: 5.6, 5.7_
 
-- [ ] 6.5 Implement Automatic Mixed Precision (AMP) training
+- [x] 6.5 Implement Automatic Mixed Precision (AMP) training
+
+
   - Create `MixedPrecisionTrainer` class
   - Use torch.cuda.amp.autocast and GradScaler
   - Implement gradient scaling and unscaling
   - _Requirements: 5.8_
 
+
+
 - [ ] 6.6 Optimize for tensor cores
   - Ensure matrix dimensions are multiples of 8
   - Pad embeddings if necessary
+
+
   - _Requirements: 5.10_
 
 - [ ] 6.7 Implement multi-GPU training
   - Use DistributedDataParallel (DDP)
+
   - Implement gradient synchronization
   - Test scaling efficiency on 2-4 GPUs
   - _Requirements: 5.13, 5.14_
+
 
 - [ ] 6.8 Implement gradient accumulation
   - Simulate larger batch sizes without OOM
   - Accumulate gradients over K steps before optimizer update
   - _Requirements: 5.15_
 
+
 - [ ] 6.9 Implement CPU offloading for optimizer states
   - Keep optimizer states (momentum, variance) on CPU
   - Transfer gradients CPU ↁEGPU as needed
+
+
   - _Requirements: 5.16_
 
 - [ ] 6.10 Implement dynamic batch sizing
