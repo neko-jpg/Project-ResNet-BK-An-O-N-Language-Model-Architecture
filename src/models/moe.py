@@ -58,19 +58,22 @@ class SparseMoELayer(nn.Module):
             stacked = torch.stack(expert_outputs, dim=1)  # (T, E, D)
             out_flat = torch.sum(stacked * gates.unsqueeze(-1), dim=1)  # (T, D)
         else:
-            # Sparse top-1 routing
-            if self.top_k != 1:
-                raise NotImplementedError("top_k > 1 sparse routing not implemented yet.")
-
-            indices = router_logits.argmax(dim=-1)  # (T,)
+            # Sparse top-k routing (defaulting to top-1 if k==1)
+            topk_logits, topk_indices = torch.topk(router_logits, self.top_k, dim=-1)
+            # Normalize logits of the selected experts to obtain mixing weights
+            topk_gates = F.softmax(topk_logits, dim=-1)  # (T, K)
             out_flat = torch.zeros_like(x_flat)
 
-            for e, expert in enumerate(self.experts):
-                mask = (indices == e)
-                if mask.any():
-                    sub_x = x_flat[mask]          # (T_e, D)
-                    sub_y = expert(sub_x)         # (T_e, D)
-                    # Ensure dtype matches for AMP compatibility
-                    out_flat[mask] = sub_y.to(out_flat.dtype)
+            for expert_idx, expert in enumerate(self.experts):
+                mask = (topk_indices == expert_idx)  # (T, K)
+                if not mask.any():
+                    continue
+
+                token_idx, slot_idx = mask.nonzero(as_tuple=True)
+                sub_x = x_flat[token_idx]                # (T_e, D)
+                sub_y = expert(sub_x)                    # (T_e, D)
+                weights = topk_gates[token_idx, slot_idx].unsqueeze(-1)
+
+                out_flat[token_idx] = out_flat[token_idx] + (sub_y * weights).to(out_flat.dtype)
 
         return out_flat.view(B, N, D)
