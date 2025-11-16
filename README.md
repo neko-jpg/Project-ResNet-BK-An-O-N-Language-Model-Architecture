@@ -1,17 +1,25 @@
 # Project-ResNet-BK-An-O-N-Language-Model-Architecture
-(AI Learning Cost “One Millionth” Plan - Step 1/4 Achieved)
-📝 Repository Summary (README.md)
+(AI Learning Cost "One Millionth" Plan - Step 1/4 Achieved)
+?? Repository Summary (README.md)
 
 Project ResNet-BK: An O(N) Language Model Architecture
-(“1,000,000× AI Training Cost Reduction” Plan – Step 1/4 Achieved)
+(1,000,000x AI Training Cost Reduction Plan ? Step 1/4 Achieved)
 
-🚀 Overview (Elevator Pitch)
+?? Overview (Elevator Pitch)
 
-This repository documents the research and development of ResNet-BK, a new O(N) language model architecture designed to overcome the dominant bottleneck in modern AI: the O(N²) computational cost of Transformers.
+This repository documents the research and development of ResNet-BK, a new O(N) language model architecture designed to overcome the dominant bottleneck in modern AI: the O(N?) computational cost of Transformers.
 
-This work represents a successful proof-of-concept for Step 1 (Architectural Overhaul) and Step 3 (Sparsification) of the long-term “1,000,000× Cost Reduction Plan.”
+This work represents a successful proof-of-concept for Step 1 (Architectural Overhaul) and Step 3 (Sparsification) of the long-term 1,000,000x Cost Reduction Plan.
 
+?? Latest Status (Dec 2025, research prototype)
+- Colab small-scale benchmark (WikiText-2, seq_len=512, batch=4, 2000 steps) shows ResNet-BK beating a Transformer baseline: val ppl ~590 vs ~1288 (no OOM, CUDA).
+- Fairness note: Transformer uses autocast; ResNet-BK currently not. Speed numbers are therefore not comparable yet (throughput ~3.4k tok/s vs ~71k tok/s). Accuracy advantage remains.
+- Long-context bench script builds models per sequence length to avoid n_seq mismatch; use `notebooks/long_context_benchmark_colab.py`.
+- Target audience: research users. Large-scale recipes/CI are not production-ready yet.
+
+?? Earlier Results: Faster & Trainable
 🚀 Final Results: 6.7× Faster & Demonstrated Learning Ability
+
 1. Speed: 6.7× Faster than Attention at N=2048 (CPU)
 
 The final integrated architecture — combining:
