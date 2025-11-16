@@ -15,11 +15,18 @@ import math
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
+
+# Ensure project root is on sys.path when executed as a script in Colab
+import sys
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
 from src.models.configurable_resnet_bk import ConfigurableResNetBK, ResNetBKConfig
 from src.models.transformer_baseline import TransformerConfig, TransformerLM
