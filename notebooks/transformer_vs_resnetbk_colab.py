@@ -296,6 +296,9 @@ def run_colab(cfg: ColabConfig):
     print("=== Training Transformer Baseline ===")
     transformer_results = train_model("transformer", transformer_model, train_data, val_data, cfg)
 
+    # Ensure save directory exists
+    Path(cfg.save_path).parent.mkdir(parents=True, exist_ok=True)
+
     payload = {
         "config": asdict(cfg),
         "vocab_size": vocab["size"],
