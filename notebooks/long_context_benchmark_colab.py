@@ -12,18 +12,23 @@ Designed for Colab: small model config, random token inputs.
 
 import argparse
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List, Optional
 
 import torch
+from torch.cuda.amp import autocast
 
 # Ensure repo root is on sys.path when executed from notebooks/
 import sys
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
+
+# Ensure results dir exists
+os.makedirs("benchmarks/results", exist_ok=True)
 
 from src.models.configurable_resnet_bk import ConfigurableResNetBK, ResNetBKConfig
 from src.models.transformer_baseline import TransformerConfig, TransformerLM
@@ -79,7 +84,7 @@ def build_models(cfg: BenchmarkConfigLC):
     return resnet, transformer
 
 
-def measure_model(model: torch.nn.Module, seq_len: int, batch_size: int, device: torch.device, vocab_size: int):
+def measure_model(model: torch.nn.Module, seq_len: int, batch_size: int, device: torch.device, vocab_size: int, use_autocast: bool = False):
     model.eval()
     x = torch.randint(0, vocab_size, (batch_size, seq_len), device=device)
     torch.cuda.empty_cache() if device.type == "cuda" else None
@@ -87,7 +92,11 @@ def measure_model(model: torch.nn.Module, seq_len: int, batch_size: int, device:
         torch.cuda.reset_peak_memory_stats(device)
     start = time.time()
     with torch.no_grad():
-        _ = model(x)
+        if use_autocast and device.type == "cuda":
+            with autocast(device_type="cuda", dtype=torch.float16):
+                _ = model(x)
+        else:
+            _ = model(x)
         if device.type == "cuda":
             torch.cuda.synchronize()
     dur = time.time() - start
@@ -111,7 +120,7 @@ def run_long_context(cfg: BenchmarkConfigLC):
         print(f"=== Seq len {seq} ===")
         # ResNet-BK
         try:
-            r = measure_model(resnet, seq, cfg.batch_size, device, cfg.vocab_size)
+            r = measure_model(resnet, seq, cfg.batch_size, device, cfg.vocab_size, use_autocast=False)
             results["resnet_bk"].append({"status": "ok", **r})
             print(f"ResNet-BK ok: {r['tokens_per_sec']:.0f} tok/s, peak={r['peak_mb']}")
         except RuntimeError as e:
@@ -120,7 +129,7 @@ def run_long_context(cfg: BenchmarkConfigLC):
 
         # Transformer
         try:
-            t = measure_model(transformer, seq, cfg.batch_size, device, cfg.vocab_size)
+            t = measure_model(transformer, seq, cfg.batch_size, device, cfg.vocab_size, use_autocast=(device.type == "cuda"))
             results["transformer"].append({"status": "ok", **t})
             print(f"Transformer ok: {t['tokens_per_sec']:.0f} tok/s, peak={t['peak_mb']}")
         except RuntimeError as e:

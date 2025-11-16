@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import math
+import os
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -24,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
+from torch.cuda.amp import autocast
 
 from src.models.configurable_resnet_bk import ConfigurableResNetBK, ResNetBKConfig
 from src.models.transformer_baseline import TransformerConfig, TransformerLM
@@ -61,6 +63,10 @@ def set_seed(seed: int = 42):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+# Ensure results dir exists (reproducibility / avoiding save errors)
+os.makedirs("benchmarks/results", exist_ok=True)
 
 
 def build_vocab(texts: List[str], vocab_size: int) -> Tuple[Dict[str, int], Dict[int, str]]:
@@ -174,6 +180,7 @@ def evaluate(
     seq_len: int,
     device: torch.device,
     max_batches: Optional[int] = None,
+    autocast_fp16: bool = False,
 ) -> float:
     model.eval()
     losses = []
@@ -185,7 +192,11 @@ def evaluate(
             data, targets = get_batch(data_source, seq_len, i // seq_len)
             data = data.to(device)
             targets = targets.to(device)
-            logits = model(data)
+            if autocast_fp16 and device.type == "cuda":
+                with autocast(device_type="cuda", dtype=torch.float16):
+                    logits = model(data)
+            else:
+                logits = model(data)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
             losses.append(loss.item())
     model.train()
@@ -233,7 +244,12 @@ def train_model(
             data = data.to(device)
             targets = targets.to(device)
 
-            logits = model(data)
+            use_autocast = (label == "transformer") and (device.type == "cuda")
+            if use_autocast:
+                with autocast(device_type="cuda", dtype=torch.float16):
+                    logits = model(data)
+            else:
+                logits = model(data)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
             optimizer.zero_grad()
@@ -252,7 +268,14 @@ def train_model(
                 print(f"[{label}] step {step:05d} loss={loss.item():.4f} tokens/s={throughput:,.0f}")
 
             if step % cfg.eval_interval == 0:
-                val_loss = evaluate(model, val_data, cfg.seq_len, device, cfg.eval_max_batches)
+                val_loss = evaluate(
+                    model,
+                    val_data,
+                    cfg.seq_len,
+                    device,
+                    cfg.eval_max_batches,
+                    autocast_fp16=use_autocast,
+                )
                 ppl = math.exp(val_loss)
                 train_loss = loss.item()
                 elapsed = time.time() - start_time
@@ -275,7 +298,11 @@ def train_model(
 
     total_time = time.time() - start_time
     avg_throughput = sum(throughput_meter) / max(len(throughput_meter), 1)
-    final_val_loss = evaluate(model, val_data, cfg.seq_len, device, cfg.eval_max_batches) if not oom else float("inf")
+    final_val_loss = (
+        evaluate(model, val_data, cfg.seq_len, device, cfg.eval_max_batches, autocast_fp16=(label == "transformer") and (device.type == "cuda"))
+        if not oom
+        else float("inf")
+    )
 
     summary = {
         "label": label,

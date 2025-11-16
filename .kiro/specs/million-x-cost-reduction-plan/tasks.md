@@ -754,8 +754,7 @@ This implementation plan converts the feature design into executable coding task
   - Provide reproducible scripts
   - _Requirements: 9.14_
 
-- [ ] 10. Validate 1,000,000,000ÁECost Reduction
-- [ ] 10.1 Measure Step 1 cost reduction
+- [ ] 10. Valiasure Step 1 cost reduction
   - Benchmark O(N) architecture vs O(N²) Transformer
   - Measure at N ∁E{128, 256, 512, 1024, 2048}
   - Validate 10ÁEreduction target
