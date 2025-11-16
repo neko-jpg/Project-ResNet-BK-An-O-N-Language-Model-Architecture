@@ -1,12 +1,12 @@
 """
 Colab-ready comparison script: ResNet-BK vs Transformer (small-scale).
 
-Usage (Colab cell):
+Usage (Colab cell, stronger comparison):
     !pip install -q datasets
     %cd /content/Project-ResNet-BK-An-O-N-Language-Model-Architecture
-    !python notebooks/transformer_vs_resnetbk_colab.py --dataset wikitext2 --total_steps 200
+    !python notebooks/transformer_vs_resnetbk_colab.py --dataset wikitext2 --seq_len 512 --batch_size 4 --total_steps 2000
 
-Defaults are kept small so it runs quickly on Colab T4. Adjust flags for longer runs.
+Defaults target a stronger comparison while still fitting Colab T4; lower batch/steps if OOM or time is tight.
 """
 
 import argparse
@@ -22,7 +22,10 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
-from torch.cuda.amp import autocast
+
+# Use torch.autocast so we can pass device_type on recent Torch versions.
+# (torch.cuda.amp.autocast does not accept device_type on older builds, which breaks on Colab.)
+from torch import autocast
 
 # Ensure project root is on sys.path when executed as a script in Colab
 import sys
@@ -40,19 +43,19 @@ from src.models.transformer_baseline import TransformerConfig, TransformerLM
 @dataclass
 class ColabConfig:
     dataset: str = "wikitext2"  # {"wikitext2", "wikitext103"}
-    seq_len: int = 256
-    batch_size: int = 8
+    seq_len: int = 512
+    batch_size: int = 4
     vocab_size: int = 20000
-    total_steps: int = 500
-    eval_interval: int = 50
+    total_steps: int = 2000
+    eval_interval: int = 200
     eval_max_batches: Optional[int] = None  # limit eval steps for fairness
-    log_interval: int = 20
+    log_interval: int = 50
     learning_rate: float = 2e-4
     weight_decay: float = 0.01
-    warmup_steps: int = 20
+    warmup_steps: int = 100
     grad_clip: float = 1.0
-    data_limit: Optional[int] = 500_000  # tokens for speed
-    val_limit: Optional[int] = 100_000
+    data_limit: Optional[int] = 1_500_000  # tokens for speed
+    val_limit: Optional[int] = 200_000
     save_path: str = "benchmarks/results/colab_resnetbk_vs_transformer.json"
     device: str = "auto"  # "auto", "cuda", or "cpu"
 
@@ -191,7 +194,7 @@ def evaluate(
             data = data.to(device)
             targets = targets.to(device)
             if autocast_fp16 and device.type == "cuda":
-                with autocast(device_type="cuda", dtype=torch.float16):
+                with autocast("cuda", dtype=torch.float16):
                     logits = model(data)
             else:
                 logits = model(data)
@@ -238,7 +241,7 @@ def train_model(label: str, model: torch.nn.Module, train_data: torch.Tensor, va
 
             use_autocast = (label == "transformer") and (device.type == "cuda")
             if use_autocast:
-                with autocast(device_type="cuda", dtype=torch.float16):
+                with autocast("cuda", dtype=torch.float16):
                     logits = model(data)
             else:
                 logits = model(data)
@@ -356,18 +359,18 @@ def run_colab(cfg: ColabConfig):
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Colab comparison: ResNet-BK vs Transformer (small-scale)")
     parser.add_argument("--dataset", type=str, default="wikitext2", choices=["wikitext2", "wikitext103"])
-    parser.add_argument("--seq_len", type=int, default=256)
-    parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--total_steps", type=int, default=500)
-    parser.add_argument("--eval_interval", type=int, default=50)
+    parser.add_argument("--seq_len", type=int, default=512)
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--total_steps", type=int, default=2000)
+    parser.add_argument("--eval_interval", type=int, default=200)
     parser.add_argument("--eval_max_batches", type=int, default=None)
-    parser.add_argument("--log_interval", type=int, default=20)
+    parser.add_argument("--log_interval", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
-    parser.add_argument("--warmup_steps", type=int, default=20)
+    parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--grad_clip", type=float, default=1.0)
-    parser.add_argument("--data_limit", type=int, default=500_000)
-    parser.add_argument("--val_limit", type=int, default=100_000)
+    parser.add_argument("--data_limit", type=int, default=1_500_000)
+    parser.add_argument("--val_limit", type=int, default=200_000)
     parser.add_argument("--save_path", type=str, default="benchmarks/results/colab_resnetbk_vs_transformer.json")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--d_model", type=int, default=256)

@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import List, Optional
 
 import torch
-from torch.cuda.amp import autocast
+# Use torch.autocast so device_type is accepted on Colab's Torch builds.
+from torch import autocast
 
 # Ensure repo root is on sys.path when executed from notebooks/
 import sys
@@ -58,12 +59,14 @@ def resolve_device(name: str) -> torch.device:
     return torch.device(name)
 
 
-def build_models(cfg: BenchmarkConfigLC):
+def build_models(cfg: BenchmarkConfigLC, seq_len: Optional[int] = None):
+    # Build models sized for the target sequence length (ResNet-BK requires exact n_seq).
+    target_seq = seq_len if seq_len is not None else max(cfg.seq_lengths)
     resnet_cfg = ResNetBKConfig(
         vocab_size=cfg.vocab_size,
         d_model=cfg.d_model,
         n_layers=cfg.n_layers,
-        n_seq=max(cfg.seq_lengths),
+        n_seq=target_seq,
         num_experts=cfg.num_experts,
         top_k=cfg.top_k,
         dropout_p=0.1,
@@ -78,7 +81,7 @@ def build_models(cfg: BenchmarkConfigLC):
         n_layers=cfg.n_layers,
         n_heads=cfg.num_heads,
         ffn_dim=cfg.ffn_dim,
-        max_seq_len=max(cfg.seq_lengths),
+        max_seq_len=target_seq,
     )
     transformer = TransformerLM(transformer_cfg)
     return resnet, transformer
@@ -93,7 +96,7 @@ def measure_model(model: torch.nn.Module, seq_len: int, batch_size: int, device:
     start = time.time()
     with torch.no_grad():
         if use_autocast and device.type == "cuda":
-            with autocast(device_type="cuda", dtype=torch.float16):
+            with autocast("cuda", dtype=torch.float16):
                 _ = model(x)
         else:
             _ = model(x)
@@ -110,14 +113,14 @@ def measure_model(model: torch.nn.Module, seq_len: int, batch_size: int, device:
 
 def run_long_context(cfg: BenchmarkConfigLC):
     device = resolve_device(cfg.device)
-    resnet, transformer = build_models(cfg)
-    resnet = resnet.to(device)
-    transformer = transformer.to(device)
-
     results = {"config": asdict(cfg), "resnet_bk": [], "transformer": []}
 
     for seq in cfg.seq_lengths:
         print(f"=== Seq len {seq} ===")
+        resnet, transformer = build_models(cfg, seq_len=seq)
+        resnet = resnet.to(device)
+        transformer = transformer.to(device)
+
         # ResNet-BK
         try:
             r = measure_model(resnet, seq, cfg.batch_size, device, cfg.vocab_size, use_autocast=False)
