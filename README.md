@@ -39,6 +39,11 @@ Task: WikiText-2
 
 Result: Perplexity 428.84 after 3 epochs
 
+Notes (Transformer baseline clarity):
+- Uses pre-norm blocks and learned absolute positional embeddings (swap to sinusoidal / RoPE for ablations if desired).
+- Small benchmark settings (vocab≈20k, seq_len≈256, d_model=256, L=6) can show higher initial loss; this is expected, not a bug.
+- LayerNorm is applied before each sublayer for stability in both baselines.
+
 This confirms that the architecture is viable as a language model.
 
 🔬 Technical Milestones

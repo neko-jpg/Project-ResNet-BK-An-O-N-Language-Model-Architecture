@@ -37,6 +37,7 @@ class ComparisonConfig:
     vocab_size: int = 32000
     total_steps: int = 1000
     eval_interval: int = 200
+    eval_max_batches: Optional[int] = None  # limit eval iterations for fairness
     log_interval: int = 50
     learning_rate: float = 2e-4
     weight_decay: float = 0.01
@@ -137,6 +138,11 @@ def load_language_dataset(
     train_data = batchify(train_ids, batch_size)
     val_data = batchify(val_ids, batch_size)
 
+    # Truncate to equal length for fair eval
+    min_len = min(train_data.size(0), val_data.size(0))
+    train_data = train_data[:min_len]
+    val_data = val_data[:min_len]
+
     vocab = {"stoi": stoi, "itos": itos, "size": len(stoi)}
     print(
         f"Loaded dataset={name} | train tokens={train_ids.numel():,} | "
@@ -162,11 +168,20 @@ def cycle_indices(data_source: torch.Tensor, seq_len: int):
             yield idx
 
 
-def evaluate(model: torch.nn.Module, data_source: torch.Tensor, seq_len: int, device: torch.device) -> float:
+def evaluate(
+    model: torch.nn.Module,
+    data_source: torch.Tensor,
+    seq_len: int,
+    device: torch.device,
+    max_batches: Optional[int] = None,
+) -> float:
     model.eval()
     losses = []
     with torch.no_grad():
-        for i in range(0, data_source.size(0) - 1 - seq_len, seq_len):
+        total_segments = (data_source.size(0) - 1) // seq_len
+        limit = total_segments if max_batches is None else min(total_segments, max_batches)
+        for seg_idx in range(limit):
+            i = seg_idx * seq_len
             data, targets = get_batch(data_source, seq_len, i // seq_len)
             data = data.to(device)
             targets = targets.to(device)
@@ -209,58 +224,68 @@ def train_model(
     tokens_per_step = cfg.seq_len * cfg.batch_size
     throughput_meter = []
 
-    for step in range(1, cfg.total_steps + 1):
-        batch_idx = next(seq_indices)
-        data, targets = get_batch(train_data, cfg.seq_len, batch_idx)
-        data = data.to(device)
-        targets = targets.to(device)
+    oom = False
+    loss = None
+    try:
+        for step in range(1, cfg.total_steps + 1):
+            batch_idx = next(seq_indices)
+            data, targets = get_batch(train_data, cfg.seq_len, batch_idx)
+            data = data.to(device)
+            targets = targets.to(device)
 
-        logits = model(data)
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            logits = model(data)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
-        optimizer.step()
-        scheduler.step()
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+            optimizer.step()
+            scheduler.step()
 
-        if step % cfg.log_interval == 0:
-            now = time.time()
-            elapsed = now - last_log_time
-            tokens = cfg.log_interval * tokens_per_step
-            throughput = tokens / max(elapsed, 1e-6)
-            throughput_meter.append(throughput)
-            last_log_time = now
-            print(f"[{label}] step {step:05d} loss={loss.item():.4f} tokens/s={throughput:,.0f}")
+            if step % cfg.log_interval == 0:
+                now = time.time()
+                elapsed = now - last_log_time
+                tokens = cfg.log_interval * tokens_per_step
+                throughput = tokens / max(elapsed, 1e-6)
+                throughput_meter.append(throughput)
+                last_log_time = now
+                print(f"[{label}] step {step:05d} loss={loss.item():.4f} tokens/s={throughput:,.0f}")
 
-        if step % cfg.eval_interval == 0:
-            val_loss = evaluate(model, val_data, cfg.seq_len, device)
-            ppl = math.exp(val_loss)
-            train_loss = loss.item()
-            elapsed = time.time() - start_time
-            history.append(
-                {
-                    "step": step,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "val_ppl": ppl,
-                    "elapsed_sec": elapsed,
-                }
-            )
-            print(f"[{label}] Eval step {step}: val_loss={val_loss:.4f} | ppl={ppl:.2f}")
+            if step % cfg.eval_interval == 0:
+                val_loss = evaluate(model, val_data, cfg.seq_len, device, cfg.eval_max_batches)
+                ppl = math.exp(val_loss)
+                train_loss = loss.item()
+                elapsed = time.time() - start_time
+                history.append(
+                    {
+                        "step": step,
+                        "train_loss": train_loss,
+                        "val_loss": val_loss,
+                        "val_ppl": ppl,
+                        "elapsed_sec": elapsed,
+                    }
+                )
+                print(f"[{label}] Eval step {step}: val_loss={val_loss:.4f} | ppl={ppl:.2f}")
+    except RuntimeError as e:
+        if "out of memory" in str(e).lower():
+            oom = True
+            print(f"[{label}] OOM encountered during training. Stopping early.")
+        else:
+            raise
 
     total_time = time.time() - start_time
     avg_throughput = sum(throughput_meter) / max(len(throughput_meter), 1)
-    final_val_loss = evaluate(model, val_data, cfg.seq_len, device)
+    final_val_loss = evaluate(model, val_data, cfg.seq_len, device, cfg.eval_max_batches) if not oom else float("inf")
 
     summary = {
         "label": label,
         "final_val_loss": final_val_loss,
-        "final_val_ppl": math.exp(final_val_loss),
+        "final_val_ppl": math.exp(final_val_loss) if final_val_loss != float("inf") else float("inf"),
         "total_time_sec": total_time,
         "tokens_processed": cfg.total_steps * tokens_per_step,
         "avg_tokens_per_sec": avg_throughput,
         "device": device_str,
+        "oom": oom,
     }
     return {"history": history, "summary": summary}
 
@@ -327,6 +352,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--total_steps", type=int, default=1000)
     parser.add_argument("--eval_interval", type=int, default=200)
+    parser.add_argument("--eval_max_batches", type=int, default=None)
     parser.add_argument("--log_interval", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--weight_decay", type=float, default=0.01)
@@ -354,6 +380,7 @@ def main():
         batch_size=args.batch_size,
         total_steps=args.total_steps,
         eval_interval=args.eval_interval,
+        eval_max_batches=args.eval_max_batches,
         log_interval=args.log_interval,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
