@@ -7,17 +7,18 @@ Goal: implement the four combos from `改善案/修正案.md` + 論文 and de-ri
   Ref: `src/models/resnet_bk.py` (prime-bump init), `改善案/修正案.md`, `改善案/論文/riemann_hypothesis_main.tex`
 - [x] Wire init flag into config and small model (d_model≈64, n_layers≈4, N≈128) training script.  
   Ref: `src/models/configurable_resnet_bk.py`, `src/utils/config.py`, `train.py`
-- [ ] Run A/B on短/長文タスク; log convergence speed, loss floor, NaN/Inf有無.  
+- [x] Run A/B on短/長文タスク; log convergence speed, loss floor, NaN/Inf有無.  
   Ref: `src/benchmarks/wikitext2_benchmark.py`, `notebooks/long_context_benchmark_colab.py`, `notebooks/prime_bump_init_run.ipynb`（ColabでA/B＋長文まで一括実行可）; cmd例: `python train.py --config-preset baseline --prime-bump-init --prime-bump-scale 0.02`  
   Note: long_context_benchmark (2048,4096) saved at `benchmarks/results/long_context_benchmark.json`  
   - ResNet-BK: 2048 → ~1.7k tok/s, ~459 MB; 4096 → ~2.2k tok/s, ~803 MB  
-  - Transformer: 2048 → ~20k tok/s, ~327 MB; 4096 → ~51k tok/s, ~552 MB
-- [ ] Exit: ≥baseline収束 or 長文ロバスト性向上 with no instability.
+  - Transformer: 2048 → ~20k tok/s, ~327 MB; 4096 → ~51k tok/s, ~552 MB  
+  A/B (step 550): baseline loss 6.967/PPL 1061.1 vs prime-bump loss 6.941/PPL 1033.5 (NaN/Inf=0, Δloss -0.026, ΔPPL -27.6); logs in `checkpoints/baseline` / `checkpoints/prime_bump`.
+- [x] Exit: baseline以上の収束を確認（PPLわずかに改善、安定性維持）。長文スループットは未改善のため今後のPhaseで対応。
 
 ## Phase 2 — Scattering-based Router (ACT / MoE)
-- [ ] 定義: scattering phase / spectral shiftの計算可能なproxy（例: stateノルム変化、局所スペクトル推定）.  
-  Ref: `2_Scaling_Benchmarks/4_MoE_PoC/on_resnetbk_moe_poc.py`, `改善案/論文/riemann_hypothesis_main.tex`
-- [ ] Router/early-exit判定をproxyに差し替え、MLP routerをフォールバックとしてA/B.  
+- [x] 定義/実装: scattering proxy（トークンノルムでrouter logitsをスケール）を追加。  
+  Ref: `src/models/moe.py` (`use_scattering_router`, `scattering_scale`), `src/models/resnet_bk.py`, `src/models/configurable_resnet_bk.py`, `src/utils/config.py`
+- [ ] A/B: Router/early-exit判定をproxy有無で比較し、MLP routerをフォールバックとしてA/B.  
   Ref: `src/models/transformer_baseline.py` (routing), `src/training/gradient_caching.py` (early-exit hooks)
 - [ ] 評価: routing安定性（entropy, load balance）とPPL影響を小規模ベンチで測定.  
   Ref: `src/benchmarks/transformer_comparison.py`

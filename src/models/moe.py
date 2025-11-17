@@ -19,10 +19,12 @@ class SparseMoELayer(nn.Module):
         dropout_p: dropout probability
     """
     
-    def __init__(self, d_model, num_experts=4, top_k=1, dropout_p=0.1):
+    def __init__(self, d_model, num_experts=4, top_k=1, dropout_p=0.1, use_scattering_router: bool = False, scattering_scale: float = 0.1):
         super().__init__()
         self.num_experts = num_experts
         self.top_k = top_k
+        self.use_scattering_router = use_scattering_router
+        self.scattering_scale = scattering_scale
 
         self.experts = nn.ModuleList([
             nn.Sequential(
@@ -48,6 +50,10 @@ class SparseMoELayer(nn.Module):
         B, N, D = x.shape
         x_flat = x.reshape(B * N, D)  # (T, D), T = B*N
         router_logits = self.gating_network(x_flat)  # (T, E)
+        if self.use_scattering_router:
+            # Simple proxy: scale logits by token norm to modulate routing entropy (higher norm -> sharper)
+            token_norm = x_flat.norm(dim=-1, keepdim=True)  # (T, 1)
+            router_logits = router_logits * (1.0 + self.scattering_scale * token_norm)
 
         if self.top_k >= self.num_experts:
             # Dense Mixture (softmax composition) mode

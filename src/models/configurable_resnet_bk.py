@@ -106,6 +106,10 @@ class ResNetBKConfig:
     # Initialization
     prime_bump_init: bool = False
     prime_bump_scale: float = 0.02
+
+    # Routing (Phase 2)
+    use_scattering_router: bool = False
+    scattering_scale: float = 0.1
     
     def __post_init__(self):
         """Validate configuration."""
@@ -279,6 +283,8 @@ class ConfigurableResNetBK(nn.Module):
             dropout_p=config.dropout_p,
             prime_bump_init=config.prime_bump_init,
             prime_bump_scale=config.prime_bump_scale,
+            use_scattering_router=config.use_scattering_router,
+            scattering_scale=config.scattering_scale,
         )
         
         # Apply configuration to model components

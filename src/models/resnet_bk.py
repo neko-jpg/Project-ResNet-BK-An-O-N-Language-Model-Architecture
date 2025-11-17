@@ -19,12 +19,12 @@ class MoEResNetBKLayer(nn.Module):
         Output = FFN_out + bk_scale * BK_out
     """
     
-    def __init__(self, d_model, n_seq, num_experts=4, top_k=1, dropout_p=0.1):
+    def __init__(self, d_model, n_seq, num_experts=4, top_k=1, dropout_p=0.1, use_scattering_router: bool = False, scattering_scale: float = 0.1):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
 
-        self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p)
+        self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale)
         self.v_proj = nn.Linear(d_model, 1)
 
         # BK-Core output (real, imag) -> d_model
@@ -96,10 +96,10 @@ class ResNetBKBlock(nn.Module):
         Input -> LayerNorm -> MoEResNetBKLayer -> Add(Input) -> Output
     """
     
-    def __init__(self, d_model, n_seq, num_experts=4, top_k=1, dropout_p=0.1):
+    def __init__(self, d_model, n_seq, num_experts=4, top_k=1, dropout_p=0.1, use_scattering_router: bool = False, scattering_scale: float = 0.1):
         super().__init__()
         self.layer_norm = nn.LayerNorm(d_model)
-        self.bk_layer = MoEResNetBKLayer(d_model, n_seq, num_experts, top_k, dropout_p)
+        self.bk_layer = MoEResNetBKLayer(d_model, n_seq, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale)
 
     def forward(self, x):
         """Pre-Norm residual structure."""
@@ -126,6 +126,8 @@ class LanguageModel(nn.Module):
         num_experts=4,
         top_k=1,
         dropout_p=0.1,
+        use_scattering_router: bool = False,
+        scattering_scale: float = 0.1,
         prime_bump_init: bool = False,
         prime_bump_scale: float = 0.02,
     ):
@@ -143,6 +145,8 @@ class LanguageModel(nn.Module):
                 num_experts=num_experts,
                 top_k=top_k,
                 dropout_p=dropout_p,
+                use_scattering_router=use_scattering_router,
+                scattering_scale=scattering_scale,
             )
             for _ in range(n_layers)
         ])
