@@ -8,11 +8,14 @@ Goal: implement the four combos from `改善案/修正案.md` + 論文 and de-ri
 - [x] Wire init flag into config and small model (d_model≈64, n_layers≈4, N≈128) training script.  
   Ref: `src/models/configurable_resnet_bk.py`, `src/utils/config.py`, `train.py`
 - [ ] Run A/B on短/長文タスク; log convergence speed, loss floor, NaN/Inf有無.  
-  Ref: `src/benchmarks/wikitext2_benchmark.py`, `notebooks/long_context_benchmark_colab.py`, `notebooks/prime_bump_init_run.ipynb`; cmd例: `python train.py --config-preset baseline --prime-bump-init --prime-bump-scale 0.02`
+  Ref: `src/benchmarks/wikitext2_benchmark.py`, `notebooks/long_context_benchmark_colab.py`, `notebooks/prime_bump_init_run.ipynb`（ColabでA/B＋長文まで一括実行可）; cmd例: `python train.py --config-preset baseline --prime-bump-init --prime-bump-scale 0.02`  
+  Note: long_context_benchmark (2048,4096) saved at `benchmarks/results/long_context_benchmark.json`  
+  - ResNet-BK: 2048 → ~2.0k tok/s, ~459 MB; 4096 → ~1.9k tok/s, ~803 MB  
+  - Transformer: 2048 → ~19.3k tok/s, ~327 MB; 4096 → ~53.7k tok/s, ~552 MB
 - [ ] Exit: ≥baseline収束 or 長文ロバスト性向上 with no instability.
 
 ## Phase 2 — Scattering-based Router (ACT / MoE)
-- [ ] 定義: scattering phase/ spectral shiftの計算可能なproxy（例: stateノルム変化、局所スペクトル推定）.  
+- [ ] 定義: scattering phase / spectral shiftの計算可能なproxy（例: stateノルム変化、局所スペクトル推定）.  
   Ref: `2_Scaling_Benchmarks/4_MoE_PoC/on_resnetbk_moe_poc.py`, `改善案/論文/riemann_hypothesis_main.tex`
 - [ ] Router/early-exit判定をproxyに差し替え、MLP routerをフォールバックとしてA/B.  
   Ref: `src/models/transformer_baseline.py` (routing), `src/training/gradient_caching.py` (early-exit hooks)

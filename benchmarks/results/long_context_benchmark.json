@@ -1,0 +1,54 @@
+{
+  "config": {
+    "seq_lengths": [
+      2048,
+      4096
+    ],
+    "batch_size": 2,
+    "vocab_size": 20000,
+    "d_model": 256,
+    "n_layers": 6,
+    "num_heads": 8,
+    "ffn_dim": 1024,
+    "num_experts": 4,
+    "top_k": 2,
+    "device": "auto",
+    "save_path": "benchmarks/results/long_context_benchmark.json"
+  },
+  "resnet_bk": [
+    {
+      "status": "ok",
+      "seq_len": 2048,
+      "batch_size": 2,
+      "time_sec": 2.012683391571045,
+      "tokens_per_sec": 2035.0940526233367,
+      "peak_mb": 459.391488
+    },
+    {
+      "status": "ok",
+      "seq_len": 4096,
+      "batch_size": 2,
+      "time_sec": 4.261108875274658,
+      "tokens_per_sec": 1922.5042682045923,
+      "peak_mb": 802.996736
+    }
+  ],
+  "transformer": [
+    {
+      "status": "ok",
+      "seq_len": 2048,
+      "batch_size": 2,
+      "time_sec": 0.21190428733825684,
+      "tokens_per_sec": 19329.481491149214,
+      "peak_mb": 326.905344
+    },
+    {
+      "status": "ok",
+      "seq_len": 4096,
+      "batch_size": 2,
+      "time_sec": 0.15250802040100098,
+      "tokens_per_sec": 53715.20775405876,
+      "peak_mb": 551.644672
+    }
+  ]
+}
