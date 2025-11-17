@@ -19,12 +19,12 @@ class MoEResNetBKLayer(nn.Module):
         Output = FFN_out + bk_scale * BK_out
     """
     
-    def __init__(self, d_model, n_seq, num_experts=4, top_k=1, dropout_p=0.1, use_scattering_router: bool = False, scattering_scale: float = 0.1):
+    def __init__(self, d_model, n_seq, num_experts=4, top_k=1, dropout_p=0.1, use_scattering_router: bool = False, scattering_scale: float = 0.1, scattering_scale_warmup_steps: int = 0):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
 
-        self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale)
+        self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale, scattering_scale_warmup_steps=scattering_scale_warmup_steps)
         self.v_proj = nn.Linear(d_model, 1)
 
         # BK-Core output (real, imag) -> d_model
@@ -61,7 +61,7 @@ class MoEResNetBKLayer(nn.Module):
         assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
 
         # MoE-FFN
-        ffn_out = self.moe_ffn(x)               # (B, N, D)
+        ffn_out, routing_entropy = self.moe_ffn(x)             # (B, N, D), scalar
 
         # Potential v_i (B, N)
         v = self.v_proj(ffn_out).squeeze(-1)    # (B, N)
@@ -85,7 +85,10 @@ class MoEResNetBKLayer(nn.Module):
         spec_out = self.output_proj(features)       # (B, N, D)
 
         # Mix BK branch with learnable scale
-        return ffn_out + self.bk_scale * spec_out
+        output = ffn_out + self.bk_scale * spec_out
+        # stash routing entropy for logging
+        self.last_routing_entropy = routing_entropy
+        return output
 
 
 class ResNetBKBlock(nn.Module):
@@ -103,7 +106,8 @@ class ResNetBKBlock(nn.Module):
 
     def forward(self, x):
         """Pre-Norm residual structure."""
-        return x + self.bk_layer(self.layer_norm(x))
+        out = self.bk_layer(self.layer_norm(x))
+        return x + out
 
 
 class LanguageModel(nn.Module):
@@ -128,6 +132,7 @@ class LanguageModel(nn.Module):
         dropout_p=0.1,
         use_scattering_router: bool = False,
         scattering_scale: float = 0.1,
+        scattering_scale_warmup_steps: int = 0,
         prime_bump_init: bool = False,
         prime_bump_scale: float = 0.02,
     ):
@@ -147,6 +152,7 @@ class LanguageModel(nn.Module):
                 dropout_p=dropout_p,
                 use_scattering_router=use_scattering_router,
                 scattering_scale=scattering_scale,
+                scattering_scale_warmup_steps=scattering_scale_warmup_steps,
             )
             for _ in range(n_layers)
         ])
@@ -216,7 +222,17 @@ class LanguageModel(nn.Module):
 
         for block in self.blocks:
             h = block(h)
-
+            # collect routing entropy if available
+            if hasattr(block.bk_layer.moe_ffn, "last_routing_entropy"):
+                ent = block.bk_layer.moe_ffn.last_routing_entropy
+                if ent is not None:
+                    routing_entropies.append(ent)
         h = self.layer_norm_final(h)
         logits = self.lm_head(h)           # (B, N, vocab_size)
+        # store average routing entropy for logging
+        if routing_entropies:
+            self.last_routing_entropy = float(sum(routing_entropies) / len(routing_entropies))
+        else:
+            self.last_routing_entropy = None
+
         return logits

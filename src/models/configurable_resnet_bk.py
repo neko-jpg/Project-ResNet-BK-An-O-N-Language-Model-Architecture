@@ -110,6 +110,7 @@ class ResNetBKConfig:
     # Routing (Phase 2)
     use_scattering_router: bool = False
     scattering_scale: float = 0.1
+    scattering_scale_warmup_steps: int = 0
     
     def __post_init__(self):
         """Validate configuration."""
@@ -285,6 +286,7 @@ class ConfigurableResNetBK(nn.Module):
             prime_bump_scale=config.prime_bump_scale,
             use_scattering_router=config.use_scattering_router,
             scattering_scale=config.scattering_scale,
+            scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
         )
         
         # Apply configuration to model components
@@ -293,10 +295,16 @@ class ConfigurableResNetBK(nn.Module):
     def _apply_config(self):
         """Apply configuration settings to model components."""
         from .bk_core import BKCoreFunction
+        from .moe import SparseMoELayer
         
         # Step 2: Learning algorithm
         if self.config.use_analytic_gradient:
             BKCoreFunction.GRAD_BLEND = self.config.grad_blend
+        # Routing proxy settings
+        for block in self.model.blocks:
+            if isinstance(block.bk_layer.moe_ffn, SparseMoELayer):
+                block.bk_layer.moe_ffn.use_scattering_router = self.config.use_scattering_router
+                block.bk_layer.moe_ffn.scattering_scale = self.config.scattering_scale
         
         # Apply numerical stability settings
         for block in self.model.blocks:

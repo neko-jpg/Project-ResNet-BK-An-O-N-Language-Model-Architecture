@@ -157,6 +157,8 @@ def train():
             
             # Log metrics
             if global_step % args.log_interval == 0:
+                routing_entropy = getattr(model.model, "last_routing_entropy", None)
+
                 metrics = TrainingMetrics(
                     step=global_step,
                     epoch=epoch,
@@ -164,6 +166,7 @@ def train():
                     learning_rate=scheduler.get_last_lr()[0],
                     step_time=step_time,
                     grad_norm=grad_norm.item(),
+                    routing_entropy=float(routing_entropy) if routing_entropy is not None else 0.0,
                 )
                 logger.log(metrics)
                 

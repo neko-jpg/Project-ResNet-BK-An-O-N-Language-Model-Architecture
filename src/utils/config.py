@@ -42,6 +42,7 @@ def parse_args():
     parser.add_argument('--prime-bump-scale', type=float, default=0.02, help='Std/offset scale used in prime-bump initialization')
     parser.add_argument('--use-scattering-router', action='store_true', help='Enable scattering-based router (token norm modulation)')
     parser.add_argument('--scattering-scale', type=float, default=0.1, help='Scaling factor for scattering-based router modulation')
+    parser.add_argument('--scattering-scale-warmup-steps', type=int, default=0, help='Warmup steps to double scattering scale (0=off)')
     
     # Training hyperparameters
     parser.add_argument('--batch-size', type=int, default=20, help='Batch size')
@@ -134,6 +135,7 @@ def get_config_from_args(args):
     config.prime_bump_scale = args.prime_bump_scale
     config.use_scattering_router = args.use_scattering_router
     config.scattering_scale = args.scattering_scale
+    config.scattering_scale_warmup_steps = args.scattering_scale_warmup_steps
     
     # Step 2
     if args.use_analytic_gradient:

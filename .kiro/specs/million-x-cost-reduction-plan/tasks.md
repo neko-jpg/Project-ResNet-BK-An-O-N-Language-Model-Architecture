@@ -18,8 +18,9 @@ Goal: implement the four combos from `改善案/修正案.md` + 論文 and de-ri
 ## Phase 2 — Scattering-based Router (ACT / MoE)
 - [x] 定義/実装: scattering proxy（トークンノルムでrouter logitsをスケール）を追加。  
   Ref: `src/models/moe.py` (`use_scattering_router`, `scattering_scale`), `src/models/resnet_bk.py`, `src/models/configurable_resnet_bk.py`, `src/utils/config.py`
-- [ ] A/B: Router/early-exit判定をproxy有無で比較し、MLP routerをフォールバックとしてA/B.  
-  Ref: `src/models/transformer_baseline.py` (routing), `src/training/gradient_caching.py` (early-exit hooks)
+- [x] A/B: Router/early-exit判定をproxy有無で比較。  
+  Ref: `src/models/transformer_baseline.py` (routing), `src/training/gradient_caching.py` (early-exit hooks); Colab: `notebooks/phase2_scattering_router_ab.ipynb`  
+  Result (step 550): baseline loss 6.9671/PPL 1061.1/grad_norm 0.321 vs scattering loss 6.9671/PPL 1061.1/grad_norm 0.321 (NaN/Inf=0, Δppl ~0)
 - [ ] 評価: routing安定性（entropy, load balance）とPPL影響を小規模ベンチで測定.  
   Ref: `src/benchmarks/transformer_comparison.py`
 - [ ] Exit: proxy routerが安定かつPPL低下 ≤5% or 明確な効率改善。
