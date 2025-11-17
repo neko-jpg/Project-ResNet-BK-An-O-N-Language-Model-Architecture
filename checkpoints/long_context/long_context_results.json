@@ -1,0 +1,56 @@
+{
+  "args": {
+    "d_model": 64,
+    "n_layers": 2,
+    "n_heads": 4,
+    "d_ff": 1024,
+    "seq_len": 2048,
+    "multi_length": true,
+    "sequence_lengths": [
+      128,
+      256
+    ],
+    "batch_size": 8,
+    "epochs": 1,
+    "lr": 0.001,
+    "weight_decay": 0.01,
+    "grad_clip": 1.0,
+    "dataset": "wikitext-2",
+    "data_limit": 10000,
+    "eval_only": false,
+    "streaming": false,
+    "eval_tokens": 1000000,
+    "log_interval": 5,
+    "save_dir": "checkpoints/long_context",
+    "use_wandb": false,
+    "device": "auto",
+    "seed": 42,
+    "use_birman_schwinger": false,
+    "use_scattering_router": false,
+    "use_semiseparable": false
+  },
+  "results_by_length": {
+    "128": [
+      {
+        "avg_loss": 0.0,
+        "perplexity": 1.0,
+        "epoch_time": 0.0010023117065429688,
+        "spike_count": 0,
+        "grad_norm_mean": 0.0,
+        "grad_norm_std": 0.0
+      }
+    ],
+    "256": [
+      {
+        "avg_loss": 0.0,
+        "perplexity": 1.0,
+        "epoch_time": 0.0010113716125488281,
+        "spike_count": 0,
+        "grad_norm_mean": 0.0,
+        "grad_norm_std": 0.0
+      }
+    ]
+  },
+  "metrics_history": [],
+  "gradient_statistics": {}
+}

@@ -1,0 +1,164 @@
+%% Theorem and Proof Templates for Mamba-Killer ResNet-BK
+%% Copy and customize these templates for your paper
+
+%% ============================================================================
+%% MAIN THEOREMS
+%% ============================================================================
+
+\begin{theorem}[Trace-Class Stability]
+\label{thm:trace-class}
+Let $K_\varepsilon(z)$ be the Birman-Schwinger operator with $\varepsilon > 1/2$ and $\text{Im}(z) \geq \eta_0 > 0$. Then:
+\begin{enumerate}
+    \item $K_\varepsilon(z)$ is trace-class: $\norm{K_\varepsilon(z)}_{S_1} < \infty$
+    \item The Fredholm determinant $\det(I + K_\varepsilon(z))$ is well-defined
+    \item The resolvent $(H_\varepsilon - z)^{-1}$ exists and is bounded
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+(1) follows from Proposition BS-trace with $\norm{K_\varepsilon}_{S_1} \leq \frac{1}{2}(\text{Im} z)^{-1} \norm{V_\varepsilon}_{L^1}$.
+(2) follows from (1) since trace-class operators have well-defined Fredholm determinants.
+(3) follows from Birman-Schwinger principle: $(H_\varepsilon - z)^{-1} = R_0(z) - R_0(z) V_\varepsilon (I + K_\varepsilon(z))^{-1} V_\varepsilon R_0(z)$.
+\end{proof}
+
+%% ============================================================================
+
+\begin{theorem}[Convergence Guarantee]
+\label{thm:convergence}
+Under standard assumptions (Lipschitz loss, bounded gradients), the hybrid analytic gradient descent converges to a stationary point with rate $O(1/\sqrt{T})$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+The hybrid gradient $\nabla_{\text{hybrid}} = \alpha \nabla_{\text{analytic}} + (1-\alpha) \nabla_{\text{autograd}}$ satisfies:
+\begin{equation}
+\mathbb{E}[\norm{\nabla_{\text{hybrid}}}^2] \leq (1+\delta) \norm{\nabla L}^2
+\end{equation}
+for small $\delta > 0$. Standard SGD analysis then gives $O(1/\sqrt{T})$ convergence.
+\end{proof}
+
+%% ============================================================================
+
+\begin{theorem}[Long-Context Stability]
+\label{thm:longcontext}
+For sequence length $N$ and $\varepsilon > 1/2$, the error accumulation in BK-Core satisfies:
+\begin{equation}
+\norm{G_{\text{computed}} - G_{\text{exact}}}_F \leq C \sqrt{N} \cdot \text{machine\_eps}
+\end{equation}
+where $C$ depends on $\varepsilon$ and $\norm{V_\varepsilon}_{L^2}$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+The theta/phi recursions accumulate error at each step. Using LAP bounds and Schatten norm control, we show that error grows as $O(\sqrt{N})$ rather than $O(N)$ for naive methods.
+\end{proof}
+
+%% ============================================================================
+%% PROPOSITIONS
+%% ============================================================================
+
+\begin{proposition}[Scattering Phase Continuity]
+\label{prop:phase-continuity}
+The scattering phase $\delta_\varepsilon(\lambda)$ extends continuously to the real axis $\lambda \in \mathbb{R}$ via the Limiting Absorption Principle.
+\end{proposition}
+
+\begin{proof}
+By Corollary BK-boundary, the Birman-Krein formula extends to $\text{Im}(z) = 0$. The phase is then:
+\begin{equation}
+\delta_\varepsilon(\lambda) = \lim_{\eta \to 0^+} \arg(\det(I + K_\varepsilon(\lambda + i\eta)))
+\end{equation}
+which exists and is continuous by LAP.
+\end{proof}
+
+%% ============================================================================
+
+\begin{proposition}[Semiseparable Complexity]
+\label{prop:semiseparable-complexity}
+For $H = T + UV^T$ with $\text{rank}(UV^T) = r$:
+\begin{enumerate}
+    \item Matrix-vector product: $O(N + Nr) = O(N)$ for $r = O(1)$
+    \item Memory: $O(N + Nr) = O(N \log N)$ for $r = \lceil \log N \rceil$
+    \item Factorization: $O(N^2)$ (one-time cost)
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+(1) Tridiagonal solve is $O(N)$, low-rank update is $O(Nr)$.
+(2) Store tridiagonal ($O(N)$) and factors $U, V$ ($O(Nr)$).
+(3) Use iterative methods (Lanczos) to extract low-rank approximation.
+\end{proof}
+
+%% ============================================================================
+%% LEMMAS
+%% ============================================================================
+
+\begin{lemma}[Resolvent Bound]
+\label{lem:resolvent-bound}
+For $\text{Im}(z) \geq \eta_0 > 0$:
+\begin{equation}
+\norm{R_0(z)}_{L^2 \to L^2} \leq \frac{1}{\eta_0}
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+Direct computation using Fourier transform:
+\begin{equation}
+\widehat{R_0(z)}(k) = \frac{1}{k^2 - z}
+\end{equation}
+The $L^2$ norm is bounded by $1/\text{Im}(z)$.
+\end{proof}
+
+%% ============================================================================
+
+\begin{lemma}[GUE Spacing]
+\label{lem:gue-spacing}
+For eigenvalues $\{\lambda_i\}$ of $H_\varepsilon$ with Prime-Bump initialization, the nearest-neighbor spacing $s_i = \lambda_{i+1} - \lambda_i$ (after unfolding) follows:
+\begin{equation}
+p(s) = \frac{\pi s}{2} e^{-\pi s^2/4} + O(\varepsilon)
+\end{equation}
+\end{lemma}
+
+\begin{proof}
+The Prime-Bump potential creates a random matrix ensemble in the GUE class. By Wigner's theorem, the spacing distribution converges to the Wigner surmise as $N \to \infty$.
+\end{proof}
+
+%% ============================================================================
+%% COROLLARIES
+%% ============================================================================
+
+\begin{corollary}[Quantization Robustness]
+\label{cor:quantization}
+The Lipschitz constant of BK-Core with respect to parameter perturbations is bounded by:
+\begin{equation}
+L_{\text{BK}} \leq C \cdot \norm{K_\varepsilon}_{S_1}
+\end{equation}
+where $C$ is independent of $N$.
+\end{corollary}
+
+\begin{proof}
+Follows from trace-class property and perturbation theory for Fredholm determinants.
+\end{proof}
+
+%% ============================================================================
+%% DEFINITIONS
+%% ============================================================================
+
+\begin{definition}[Clark Measure]
+\label{def:clark-measure}
+For the regularized determinant $D_\varepsilon(\lambda)$, the Clark measure is:
+\begin{equation}
+\mu_\varepsilon(E) = \frac{1}{2\pi} \int_E |D_\varepsilon(\lambda + i0)|^{-2} \, d\lambda
+\end{equation}
+for Borel sets $E \subset \mathbb{R}$.
+\end{definition}
+
+%% ============================================================================
+%% REMARKS
+%% ============================================================================
+
+\begin{remark}[Comparison to Mamba]
+While Mamba uses structured state-space models with selective mechanisms, our approach provides mathematical guarantees through operator theory. The trace-class condition ensures stability that SSMs lack.
+\end{remark}
+
+\begin{remark}[Computational Efficiency]
+The semiseparable structure is not just a memory optimization—it reflects the underlying mathematical structure of the Birman-Schwinger operator, which naturally has low-rank off-diagonal blocks.
+\end{remark}
+

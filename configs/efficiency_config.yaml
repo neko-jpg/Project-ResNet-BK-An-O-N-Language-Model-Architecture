@@ -1,0 +1,68 @@
+# Dynamic Compute Efficiency Configuration
+# For ACT and learned sparsity experiments
+
+# Inherit from base config
+_base_: base_config.yaml
+
+# Model Architecture - Efficiency Features
+model:
+  d_model: 512
+  n_layers: 12
+  n_seq: 2048
+  
+  # Enable adaptive computation
+  use_act: true
+  act_halt_threshold: 0.2
+  
+  # Enable learned sparsity
+  use_learned_sparsity: true
+  sparsity_target: 0.6  # 60% sparsity
+  
+  # Enable multi-scale processing
+  use_multi_scale: true
+  downsample_factor: 2
+  downsample_layers: [4, 5, 6, 7]  # Middle layers
+
+# Training Configuration
+training:
+  learning_rate: 1.0e-3
+  max_steps: 100000
+  warmup_steps: 1000
+  
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  
+  # Sparsity loss weight
+  sparsity_loss_weight: 0.01
+  
+  # ACT loss weight
+  act_loss_weight: 0.01
+
+# Data Configuration
+data:
+  dataset: "wikitext2"
+  data_dir: "./data"
+
+# Monitoring
+monitoring:
+  use_wandb: true
+  experiment_name: "dynamic_efficiency"
+  
+  # Track efficiency metrics
+  log_flops: true
+  log_avg_depth: true
+  log_sparsity: true
+  log_expert_usage: true
+
+# FLOPs Counting
+flops_counter:
+  enabled: true
+  count_forward: true
+  count_backward: true
+  log_interval: 100
+
+# Evaluation - Compare efficiency
+evaluation:
+  measure_flops: true
+  measure_latency: true
+  compare_to_baseline: true  # Compare to model without ACT/sparsity

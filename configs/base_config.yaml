@@ -1,0 +1,109 @@
+# Base Configuration for Mamba-Killer ResNet-BK
+# This file contains default hyperparameters for all experiments
+
+# Model Architecture
+model:
+  vocab_size: 50257  # GPT-2 tokenizer
+  d_model: 256
+  n_layers: 8
+  n_seq: 2048
+  
+  # Birman-Schwinger parameters
+  epsilon: 1.0  # Regularization parameter (will be annealed)
+  use_prime_bump: true
+  prime_bump_scale: 0.02
+  k_max: 3  # Maximum prime power
+  
+  # Scattering router
+  use_scattering_router: true
+  num_experts: 8
+  top_k: 2
+  use_clark_measure: false
+  
+  # Numerical stability
+  use_mourre: true
+  use_lap: true
+  schatten_threshold: 100.0
+  precision_upgrade_threshold: 1.0e6
+  
+  # Semiseparable structure
+  use_semiseparable: true
+  low_rank: null  # Default: log(n_seq)
+  use_cpu_offload: false
+  
+  # Adaptive computation
+  use_act: false  # Disabled by default for baseline
+  act_halt_threshold: 0.2
+
+# Training Configuration
+training:
+  # Optimization
+  learning_rate: 1.0e-3
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  max_grad_norm: 1.0
+  
+  # Schedule
+  warmup_steps: 1000
+  max_steps: 100000
+  lr_scheduler: "cosine"  # Options: cosine, linear, constant
+  
+  # Batch configuration
+  batch_size: 8
+  gradient_accumulation_steps: 1
+  
+  # Epsilon annealing
+  epsilon_schedule: [1.0, 0.75, 0.5]  # Anneal during training
+  epsilon_anneal_steps: [0, 30000, 60000]
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  mixed_precision: true  # FP16/BF16
+  
+  # Evaluation
+  eval_interval: 1000
+  eval_steps: 100
+  save_interval: 5000
+  
+  # Logging
+  log_interval: 100
+  log_grad_norm: true
+  log_schatten_norms: true
+
+# Data Configuration
+data:
+  dataset: "wikitext2"  # Options: wikitext2, wikitext103, c4, pile
+  data_dir: "./data"
+  num_workers: 4
+  prefetch_factor: 2
+
+# Reproducibility
+seed: 42
+deterministic: true
+
+# Hardware
+device: "cuda"
+num_gpus: 1
+distributed_backend: "nccl"  # For multi-GPU
+
+# Checkpointing
+checkpoint:
+  save_dir: "./checkpoints"
+  keep_last_n: 5
+  save_optimizer: true
+  save_scheduler: true
+
+# Monitoring
+monitoring:
+  use_wandb: false
+  use_tensorboard: true
+  project_name: "mamba-killer-resnet-bk"
+  experiment_name: "base_experiment"
+  
+  # Stability monitoring
+  check_nan_inf: true
+  check_interval: 100
+  condition_number_threshold: 1.0e6
+  gradient_explosion_threshold: 10.0  # Multiple of median

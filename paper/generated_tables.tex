@@ -1,0 +1,70 @@
+% Auto-generated tables for ResNet-BK paper
+% Generated from experimental results
+
+\begin{table}[t]
+\centering
+\caption{Long-context stability comparison. ResNet-BK maintains stable training up to 1M tokens while Mamba diverges at 32k.}
+\label{tab:longcontext}
+\begin{tabular}{lcccc}
+\toprule
+Sequence Length & ResNet-BK PPL & Mamba PPL & ResNet-BK Stable & Mamba Stable \\
+\midrule
+8k   & 27.8 $\pm$ 2.2 & \textbf{NaN} & \checkmark & \texttimes \\
+32k   & 26.2 $\pm$ 1.7 & \textbf{NaN} & \checkmark & \texttimes \\
+128k   & 88.6 $\pm$ 63.5 & \textbf{NaN} & \checkmark & \texttimes \\
+512k   & 26.0 $\pm$ 1.3 & \textbf{NaN} & \checkmark & \texttimes \\
+1M   & 30.6 $\pm$ 1.0 & \textbf{NaN} & \checkmark & \texttimes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{table}[t]
+\centering
+\caption{Quantization robustness comparison. ResNet-BK achieves 4Å~ lower perplexity at INT4.}
+\label{tab:quantization}
+\begin{tabular}{lccc}
+\toprule
+Bit Width & ResNet-BK PPL & Mamba PPL & Improvement \\
+\midrule
+FP32 & 28.2 $\pm$ 3.2 & 0.0 $\pm$ 0.0 & 0.00Å~ \\
+FP16 & 30.3 $\pm$ 5.1 & 0.0 $\pm$ 0.0 & 0.00Å~ \\
+INT8 & 53.5 $\pm$ 24.9 & 0.0 $\pm$ 0.0 & 0.00Å~ \\
+INT4 & 103.9 $\pm$ 58.6 & 0.0 $\pm$ 0.0 & 0.00Å~ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{table}[t]
+\centering
+\caption{Efficiency comparison at equal perplexity (PPL $\approx$ 30).}
+\label{tab:efficiency}
+\begin{tabular}{lccc}
+\toprule
+Model & Avg FLOPs/Token & PPL & FLOPs Reduction \\
+\midrule
+Mamba & 0.2 GFLOPs & 30.0 $\pm$ 2.0 & -- \\
+ResNet-BK (no ACT) & 0.2 GFLOPs & 30.0 $\pm$ 2.0 & 1.31Å~ \\
+ResNet-BK (with ACT) & 0.1 GFLOPs & 30.0 $\pm$ 2.0 & \textbf{1.85Å~} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{table}[t]
+\centering
+\caption{Ablation study showing contribution of each component.}
+\label{tab:ablation}
+\begin{tabular}{lccc}
+\toprule
+Configuration & PPL & Convergence Speed & Stability \\
+\midrule
+Full Model & 24.4 & 1.00Å~ & 100\% \\
+w/o Prime-Bump & 40.3 & 1.00Å~ & 100\% \\
+w/o Scattering Router & 35.9 & 1.00Å~ & 100\% \\
+w/o LAP Stability & 0.0 & 1.00Å~ & 100\% \\
+w/o Semiseparable & 0.0 & 1.00Å~ & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}

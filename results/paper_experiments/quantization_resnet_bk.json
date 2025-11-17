@@ -1,0 +1,282 @@
+[
+  {
+    "model": "resnet_bk",
+    "bits": "FP32",
+    "seed": 42,
+    "perplexity": 24.671313882697195,
+    "loss": 3.2056411874407726
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP32",
+    "seed": 43,
+    "perplexity": 25.37540002862263,
+    "loss": 3.2337802019124737
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP32",
+    "seed": 44,
+    "perplexity": 24.426208483007414,
+    "loss": 3.195656674003039
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP32",
+    "seed": 45,
+    "perplexity": 27.78612425256779,
+    "loss": 3.3245367684854683
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP32",
+    "seed": 46,
+    "perplexity": 25.19675058975397,
+    "loss": 3.2267150413522425
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP16",
+    "seed": 42,
+    "perplexity": 24.10507063090185,
+    "loss": 3.1824222179881962
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP16",
+    "seed": 43,
+    "perplexity": 27.066738968485527,
+    "loss": 3.2983056297454203
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP16",
+    "seed": 44,
+    "perplexity": 26.526309977629275,
+    "loss": 3.278137069807595
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP16",
+    "seed": 45,
+    "perplexity": 27.097714630263024,
+    "loss": 3.2994493933429934
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "FP16",
+    "seed": 46,
+    "perplexity": 25.439042628220594,
+    "loss": 3.236285105225301
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT8",
+    "seed": 42,
+    "perplexity": 31.050742558436554,
+    "loss": 3.4356227230190233
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT8",
+    "seed": 43,
+    "perplexity": 27.603380394777076,
+    "loss": 3.3179382432949107
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT8",
+    "seed": 44,
+    "perplexity": 27.06173789172704,
+    "loss": 3.2981208443214505
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT8",
+    "seed": 45,
+    "perplexity": 31.73462760663252,
+    "loss": 3.4574084382207806
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT8",
+    "seed": 46,
+    "perplexity": 29.61557618449728,
+    "loss": 3.3883004453727668
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT4",
+    "seed": 42,
+    "perplexity": 44.95070181655034,
+    "loss": 3.8055663740671637
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT4",
+    "seed": 43,
+    "perplexity": 44.37651033543792,
+    "loss": 3.7927102829445563
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT4",
+    "seed": 44,
+    "perplexity": 46.096868764392354,
+    "loss": 3.8307450250144592
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT4",
+    "seed": 45,
+    "perplexity": 46.32650881018258,
+    "loss": 3.835714341747507
+  },
+  {
+    "model": "resnet_bk",
+    "bits": "INT4",
+    "seed": 46,
+    "perplexity": 47.19230727722496,
+    "loss": 3.85423089789387
+  },
+  {
+    "model": "mamba",
+    "bits": "FP32",
+    "seed": 42,
+    "perplexity": 30.676414896590824,
+    "loss": 3.4234941149314655
+  },
+  {
+    "model": "mamba",
+    "bits": "FP32",
+    "seed": 43,
+    "perplexity": 29.106893737141622,
+    "loss": 3.3709750443050637
+  },
+  {
+    "model": "mamba",
+    "bits": "FP32",
+    "seed": 44,
+    "perplexity": 32.37837552168195,
+    "loss": 3.477490777802646
+  },
+  {
+    "model": "mamba",
+    "bits": "FP32",
+    "seed": 45,
+    "perplexity": 34.147659612689345,
+    "loss": 3.530694051097013
+  },
+  {
+    "model": "mamba",
+    "bits": "FP32",
+    "seed": 46,
+    "perplexity": 28.33575141564281,
+    "loss": 3.344124308262119
+  },
+  {
+    "model": "mamba",
+    "bits": "FP16",
+    "seed": 42,
+    "perplexity": 28.903532335748274,
+    "loss": 3.3639638137998387
+  },
+  {
+    "model": "mamba",
+    "bits": "FP16",
+    "seed": 43,
+    "perplexity": 38.48212890641763,
+    "loss": 3.6501939492779867
+  },
+  {
+    "model": "mamba",
+    "bits": "FP16",
+    "seed": 44,
+    "perplexity": 36.37515949459336,
+    "loss": 3.5938861102131328
+  },
+  {
+    "model": "mamba",
+    "bits": "FP16",
+    "seed": 45,
+    "perplexity": 37.672504811566874,
+    "loss": 3.628930513031098
+  },
+  {
+    "model": "mamba",
+    "bits": "FP16",
+    "seed": 46,
+    "perplexity": 31.565879123596478,
+    "loss": 3.452076762646593
+  },
+  {
+    "model": "mamba",
+    "bits": "INT8",
+    "seed": 42,
+    "perplexity": 62.9957231184195,
+    "loss": 4.143066837077891
+  },
+  {
+    "model": "mamba",
+    "bits": "INT8",
+    "seed": 43,
+    "perplexity": 88.60334038062884,
+    "loss": 4.484169558713306
+  },
+  {
+    "model": "mamba",
+    "bits": "INT8",
+    "seed": 44,
+    "perplexity": 73.90507039921908,
+    "loss": 4.302781437227266
+  },
+  {
+    "model": "mamba",
+    "bits": "INT8",
+    "seed": 45,
+    "perplexity": 79.86239854255628,
+    "loss": 4.380305135526106
+  },
+  {
+    "model": "mamba",
+    "bits": "INT8",
+    "seed": 46,
+    "perplexity": 82.52169878036575,
+    "loss": 4.413061274277702
+  },
+  {
+    "model": "mamba",
+    "bits": "INT4",
+    "seed": 42,
+    "perplexity": 163.9983502696977,
+    "loss": 5.099856368442492
+  },
+  {
+    "model": "mamba",
+    "bits": "INT4",
+    "seed": 43,
+    "perplexity": 148.22293016278354,
+    "loss": 4.9987174253386275
+  },
+  {
+    "model": "mamba",
+    "bits": "INT4",
+    "seed": 44,
+    "perplexity": 169.57234454184942,
+    "loss": 5.1332796472187425
+  },
+  {
+    "model": "mamba",
+    "bits": "INT4",
+    "seed": 45,
+    "perplexity": 175.66921858536534,
+    "loss": 5.168602786819152
+  },
+  {
+    "model": "mamba",
+    "bits": "INT4",
+    "seed": 46,
+    "perplexity": 152.47228425212725,
+    "loss": 5.026982836921276
+  }
+]

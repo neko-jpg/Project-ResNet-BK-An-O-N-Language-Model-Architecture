@@ -1,0 +1,102 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{vaswani2017attention}
+\citation{gu2023mamba}
+\citation{peng2023rwkv}
+\citation{poli2023hyena}
+\citation{birman1962spectral}
+\citation{schwinger1961brownian}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{2}{section.1}\protected@file@percent }
+\citation{gu2023mamba}
+\citation{gu2022efficiently}
+\citation{peng2023rwkv}
+\citation{sun2023retentive}
+\citation{poli2023hyena}
+\citation{fu2023hungry}
+\citation{fedus2022switch}
+\citation{du2022glam}
+\citation{graves2016adaptive}
+\citation{banino2021pondernet}
+\citation{frantar2022gptq}
+\citation{lin2023awq}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Contributions}{3}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{3}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Efficient Language Models}{3}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Mixture-of-Experts}{3}{subsection.2.2}\protected@file@percent }
+\citation{jacob2018quantization}
+\citation{birman1962spectral}
+\citation{schwinger1961brownian}
+\citation{mehta2004random}
+\citation{martin2018implicit}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Quantization}{4}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Mathematical Foundations}{4}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Method}{4}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Birman-Schwinger Operator Formulation}{4}{subsection.3.1}\protected@file@percent }
+\newlabel{thm:schatten}{{2}{4}{Schatten Bounds}{theorem.2}{}}
+\newlabel{thm:schatten@cref}{{[theorem][2][]2}{[1][4][]4}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Prime-Bump Potential Initialization}{4}{subsection.3.2}\protected@file@percent }
+\newlabel{thm:gue}{{4}{5}{GUE Statistics}{theorem.4}{}}
+\newlabel{thm:gue@cref}{{[theorem][4][]4}{[1][4][]5}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Scattering-Based Routing}{5}{subsection.3.3}\protected@file@percent }
+\newlabel{prop:birman-krein}{{6}{5}{Birman-Krein Formula}{theorem.6}{}}
+\newlabel{prop:birman-krein@cref}{{[theorem][6][]6}{[1][5][]5}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Semiseparable Matrix Structure}{5}{subsection.3.4}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces O(N) Matrix-Vector Multiplication}}{5}{algorithm.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Adaptive Computation Time}{5}{subsection.3.5}\protected@file@percent }
+\citation{gu2023mamba}
+\citation{vaswani2017attention}
+\citation{peng2023rwkv}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Long-context stability comparison. ResNet-BK maintains stable training up to 1M tokens while Mamba diverges at 32k.}}{6}{table.1}\protected@file@percent }
+\newlabel{tab:longcontext}{{1}{6}{Long-context stability comparison. ResNet-BK maintains stable training up to 1M tokens while Mamba diverges at 32k}{table.1}{}}
+\newlabel{tab:longcontext@cref}{{[table][1][]1}{[1][6][]6}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Quantization robustness comparison. ResNet-BK achieves 4× lower perplexity at INT4.}}{6}{table.2}\protected@file@percent }
+\newlabel{tab:quantization}{{2}{6}{Quantization robustness comparison. ResNet-BK achieves 4× lower perplexity at INT4}{table.2}{}}
+\newlabel{tab:quantization@cref}{{[table][2][]2}{[1][6][]6}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experiments}{6}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Experimental Setup}{6}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Long-Context Stability}{6}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Quantization Robustness}{6}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Dynamic Compute Efficiency}{6}{subsection.4.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Long-context stability comparison. ResNet-BK (blue) maintains stable training up to 1M tokens while Mamba (red) diverges at 32k tokens. Error bars show standard deviation over 5 random seeds.}}{7}{figure.1}\protected@file@percent }
+\newlabel{fig:longcontext}{{1}{7}{Long-context stability comparison. ResNet-BK (blue) maintains stable training up to 1M tokens while Mamba (red) diverges at 32k tokens. Error bars show standard deviation over 5 random seeds}{figure.1}{}}
+\newlabel{fig:longcontext@cref}{{[figure][1][]1}{[1][6][]7}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Efficiency comparison at equal perplexity (PPL $\approx $ 30).}}{7}{table.3}\protected@file@percent }
+\newlabel{tab:efficiency}{{3}{7}{Efficiency comparison at equal perplexity (PPL $\approx $ 30)}{table.3}{}}
+\newlabel{tab:efficiency@cref}{{[table][3][]3}{[1][6][]7}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Ablation Studies}{7}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Statistical Significance}{7}{subsection.4.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Conclusion}{7}{section.5}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Quantization robustness comparison. ResNet-BK (blue) maintains low perplexity across all bit widths while Mamba (red) degrades severely at INT4. The dashed line indicates practical deployment threshold (PPL = 100).}}{8}{figure.2}\protected@file@percent }
+\newlabel{fig:quantization}{{2}{8}{Quantization robustness comparison. ResNet-BK (blue) maintains low perplexity across all bit widths while Mamba (red) degrades severely at INT4. The dashed line indicates practical deployment threshold (PPL = 100)}{figure.2}{}}
+\newlabel{fig:quantization@cref}{{[figure][2][]2}{[1][6][]8}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Ablation study showing contribution of each component.}}{8}{table.4}\protected@file@percent }
+\newlabel{tab:ablation}{{4}{8}{Ablation study showing contribution of each component}{table.4}{}}
+\newlabel{tab:ablation@cref}{{[table][4][]4}{[1][6][]8}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Future Work}{8}{subsection.5.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Dynamic compute efficiency. ResNet-BK with ACT (green) achieves 2× FLOPs reduction compared to Mamba (red) at equal perplexity. ResNet-BK without ACT (blue) still outperforms Mamba by 1.33×.}}{9}{figure.3}\protected@file@percent }
+\newlabel{fig:efficiency}{{3}{9}{Dynamic compute efficiency. ResNet-BK with ACT (green) achieves 2× FLOPs reduction compared to Mamba (red) at equal perplexity. ResNet-BK without ACT (blue) still outperforms Mamba by 1.33×}{figure.3}{}}
+\newlabel{fig:efficiency@cref}{{[figure][3][]3}{[1][6][]9}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Broader Impact}{9}{subsection.5.2}\protected@file@percent }
+\bibstyle{plain}
+\bibdata{references}
+\bibcite{banino2021pondernet}{1}
+\bibcite{birman1962spectral}{2}
+\bibcite{du2022glam}{3}
+\bibcite{fedus2022switch}{4}
+\bibcite{frantar2022gptq}{5}
+\bibcite{fu2023hungry}{6}
+\bibcite{graves2016adaptive}{7}
+\bibcite{gu2023mamba}{8}
+\bibcite{gu2022efficiently}{9}
+\bibcite{jacob2018quantization}{10}
+\bibcite{lin2023awq}{11}
+\bibcite{martin2018implicit}{12}
+\bibcite{mehta2004random}{13}
+\bibcite{peng2023rwkv}{14}
+\bibcite{poli2023hyena}{15}
+\bibcite{schwinger1961brownian}{16}
+\bibcite{sun2023retentive}{17}
+\bibcite{vaswani2017attention}{18}
+\gdef \@abspage@last{11}

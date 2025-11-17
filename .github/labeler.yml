@@ -1,0 +1,122 @@
+# Automatic labeling for pull requests
+# https://github.com/actions/labeler
+
+# Documentation
+documentation:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'docs/**/*'
+      - '*.md'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'CHANGELOG.md'
+
+# Core models
+models:
+  - changed-files:
+    - any-glob-to-any-file: 'src/models/**/*'
+
+# Training
+training:
+  - changed-files:
+    - any-glob-to-any-file: 'src/training/**/*'
+
+# Benchmarks
+benchmarks:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'src/benchmarks/**/*'
+      - 'scripts/benchmarks/**/*'
+
+# Tests
+tests:
+  - changed-files:
+    - any-glob-to-any-file: 'tests/**/*'
+
+# Examples
+examples:
+  - changed-files:
+    - any-glob-to-any-file: 'examples/**/*'
+
+# Notebooks
+notebooks:
+  - changed-files:
+    - any-glob-to-any-file: 'notebooks/**/*'
+
+# CI/CD
+ci-cd:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - '.github/workflows/**/*'
+      - '.github/**/*.yml'
+
+# Docker
+docker:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'Dockerfile*'
+      - 'docker-compose*.yml'
+
+# Configuration
+configuration:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'configs/**/*'
+      - '*.yaml'
+      - '*.yml'
+      - '*.toml'
+      - '*.ini'
+      - '*.cfg'
+
+# Dependencies
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'requirements*.txt'
+      - 'setup.py'
+      - 'pyproject.toml'
+
+# Scripts
+scripts:
+  - changed-files:
+    - any-glob-to-any-file: 'scripts/**/*'
+
+# Utilities
+utilities:
+  - changed-files:
+    - any-glob-to-any-file: 'src/utils/**/*'
+
+# Paper
+paper:
+  - changed-files:
+    - any-glob-to-any-file: 'paper/**/*'
+
+# Bug fix
+bug:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'src/**/*fix*.py'
+      - 'tests/**/*fix*.py'
+
+# Performance
+performance:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'src/**/*optim*.py'
+      - 'src/**/*perf*.py'
+      - 'src/training/hardware_optimizations.py'
+
+# Security
+security:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'SECURITY.md'
+      - '.github/workflows/security*.yml'
+
+# Breaking change (based on file patterns)
+breaking-change:
+  - changed-files:
+    - any-glob-to-any-file: 
+      - 'src/models/bk_core.py'
+      - 'src/models/resnet_bk.py'
+      - 'src/models/configurable_resnet_bk.py'

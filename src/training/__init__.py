@@ -19,6 +19,11 @@ from .difficulty_prediction import DifficultyPredictor, DifficultyPredictionTrai
 from .dynamic_lr_scheduler import DynamicLRScheduler, CosineAnnealingWarmRestarts, OneCycleLR, create_dynamic_scheduler
 from .distributed_optimizations import ZeROOptimizer, DistributedTrainer, GradientAccumulator, train_with_gradient_accumulation
 
+# Mamba-Killer: Failure Recovery and Monitoring
+from .stability_monitor import StabilityMonitor, StabilityMetrics
+from .auto_recovery import AutoRecovery, RecoveryState
+from .colab_timeout_handler import ColabTimeoutHandler
+
 __all__ = [
     # Step 2: Koopman and Physics-Informed Learning
     'HybridKoopmanTrainer',
@@ -57,4 +62,11 @@ __all__ = [
     'DistributedTrainer',
     'GradientAccumulator',
     'train_with_gradient_accumulation',
+    
+    # Mamba-Killer: Failure Recovery and Monitoring
+    'StabilityMonitor',
+    'StabilityMetrics',
+    'AutoRecovery',
+    'RecoveryState',
+    'ColabTimeoutHandler',
 ]

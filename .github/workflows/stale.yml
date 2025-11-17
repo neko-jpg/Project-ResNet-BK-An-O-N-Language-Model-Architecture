@@ -1,0 +1,73 @@
+name: Mark stale issues and pull requests
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/stale@v8
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Issue settings
+          stale-issue-message: |
+            This issue has been automatically marked as stale because it has not had recent activity. 
+            It will be closed if no further activity occurs within 7 days. 
+            
+            If this issue is still relevant, please:
+            - Add a comment to keep it open
+            - Add the "keep-open" label
+            - Provide additional information or updates
+            
+            Thank you for your contributions!
+          close-issue-message: |
+            This issue has been automatically closed due to inactivity. 
+            
+            If you believe this issue is still relevant, please:
+            - Reopen the issue
+            - Provide updated information
+            - Reference this issue in a new issue
+            
+            Thank you for your understanding!
+          days-before-issue-stale: 60
+          days-before-issue-close: 7
+          stale-issue-label: 'stale'
+          exempt-issue-labels: 'keep-open,bug,enhancement,help-wanted,good-first-issue,security'
+          
+          # Pull request settings
+          stale-pr-message: |
+            This pull request has been automatically marked as stale because it has not had recent activity.
+            It will be closed if no further activity occurs within 7 days.
+            
+            If this PR is still relevant, please:
+            - Rebase on the latest main branch
+            - Resolve any conflicts
+            - Add a comment to keep it open
+            - Add the "keep-open" label
+            
+            Thank you for your contributions!
+          close-pr-message: |
+            This pull request has been automatically closed due to inactivity.
+            
+            If you'd like to continue working on this:
+            - Reopen the PR
+            - Rebase on the latest main branch
+            - Provide an update on the status
+            
+            Thank you for your understanding!
+          days-before-pr-stale: 30
+          days-before-pr-close: 7
+          stale-pr-label: 'stale'
+          exempt-pr-labels: 'keep-open,work-in-progress,blocked'
+          
+          # General settings
+          operations-per-run: 100
+          remove-stale-when-updated: true
+          ascending: true

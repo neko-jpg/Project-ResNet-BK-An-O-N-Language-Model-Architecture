@@ -44,6 +44,15 @@ def parse_args():
     parser.add_argument('--scattering-scale', type=float, default=0.1, help='Scaling factor for scattering-based router modulation')
     parser.add_argument('--scattering-scale-warmup-steps', type=int, default=0, help='Warmup steps to double scattering scale (0=off)')
     
+    # Birman-Schwinger parameters
+    parser.add_argument('--use-birman-schwinger', action='store_true', help='Enable Birman-Schwinger core with LAP stability')
+    parser.add_argument('--epsilon', type=float, default=1.0, help='Regularization parameter epsilon (0.5-1.0)')
+    parser.add_argument('--use-mourre', action='store_true', default=True, help='Enable Mourre estimate verification')
+    parser.add_argument('--use-lap', action='store_true', default=True, help='Enable Limiting Absorption Principle')
+    parser.add_argument('--schatten-threshold', type=float, default=100.0, help='Threshold for automatic spectral clipping')
+    parser.add_argument('--precision-upgrade-threshold', type=float, default=1e6, help='Condition number threshold for precision upgrade')
+    parser.add_argument('--k-max', type=int, default=3, help='Maximum prime power for Prime-Bump potential')
+    
     # Training hyperparameters
     parser.add_argument('--batch-size', type=int, default=20, help='Batch size')
     parser.add_argument('--epochs', type=int, default=3, help='Number of epochs')

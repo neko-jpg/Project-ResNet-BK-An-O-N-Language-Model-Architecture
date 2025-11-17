@@ -1,0 +1,322 @@
+[
+  {
+    "model": "resnet_bk",
+    "seq_length": 8192,
+    "seed": 42,
+    "perplexity": 26.531531326530377,
+    "loss": 3.278333887046654,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 8192,
+    "seed": 43,
+    "perplexity": 25.66098849256573,
+    "loss": 3.244971881148773,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 8192,
+    "seed": 44,
+    "perplexity": 27.624584447138737,
+    "loss": 3.3187061170872636,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 8192,
+    "seed": 45,
+    "perplexity": 26.983255495189,
+    "loss": 3.295216506776476,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 8192,
+    "seed": 46,
+    "perplexity": 24.49026852355033,
+    "loss": 3.1982758355242322,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 32768,
+    "seed": 42,
+    "perplexity": 25.51536600772522,
+    "loss": 3.239280859219054,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 32768,
+    "seed": 43,
+    "perplexity": 23.979775324497364,
+    "loss": 3.1772107802684606,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 32768,
+    "seed": 44,
+    "perplexity": 25.762100775094993,
+    "loss": 3.248904449739205,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 32768,
+    "seed": 45,
+    "perplexity": 25.53791267923342,
+    "loss": 3.240164119748207,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 32768,
+    "seed": 46,
+    "perplexity": 24.495072629574825,
+    "loss": 3.198471980163702,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 131072,
+    "seed": 42,
+    "perplexity": 25.422074339363853,
+    "loss": 3.2356178650820264,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 131072,
+    "seed": 43,
+    "perplexity": 24.275614829869156,
+    "loss": 3.1894723415546564,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 131072,
+    "seed": 44,
+    "perplexity": 29.904599845746468,
+    "loss": 3.3980123095591934,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 131072,
+    "seed": 45,
+    "perplexity": 26.653535840657348,
+    "loss": 3.2829218187587887,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 131072,
+    "seed": 46,
+    "perplexity": 24.148254856466146,
+    "loss": 3.1842121148152995,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 524288,
+    "seed": 42,
+    "perplexity": 28.312750293983765,
+    "loss": 3.3433122436097844,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 524288,
+    "seed": 43,
+    "perplexity": 25.86766451085734,
+    "loss": 3.2529937142276815,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 524288,
+    "seed": 44,
+    "perplexity": 25.831001628855457,
+    "loss": 3.2515753840893793,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 524288,
+    "seed": 45,
+    "perplexity": 25.939734205737302,
+    "loss": 3.2557759323337705,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 524288,
+    "seed": 46,
+    "perplexity": 24.10199011923582,
+    "loss": 3.1822944146489225,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 1048576,
+    "seed": 42,
+    "perplexity": 30.722808858636387,
+    "loss": 3.4250053383000227,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 1048576,
+    "seed": 43,
+    "perplexity": 28.92584090439158,
+    "loss": 3.364735344546239,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 1048576,
+    "seed": 44,
+    "perplexity": 31.993227166950653,
+    "loss": 3.465524229365694,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 1048576,
+    "seed": 45,
+    "perplexity": 30.81973619412355,
+    "loss": 3.4281552702876383,
+    "stable": true
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 1048576,
+    "seed": 46,
+    "perplexity": 30.499963660779745,
+    "loss": 3.4177254921628117,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 8192,
+    "seed": 42,
+    "perplexity": 30.319081538204195,
+    "loss": 3.4117772680397636,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 8192,
+    "seed": 43,
+    "perplexity": 27.655536555615534,
+    "loss": 3.3198259450163587,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 8192,
+    "seed": 44,
+    "perplexity": 32.721199533555264,
+    "loss": 3.4880231716235444,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 8192,
+    "seed": 45,
+    "perplexity": 28.412499783435596,
+    "loss": 3.346829181556509,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 8192,
+    "seed": 46,
+    "perplexity": 27.59141021349815,
+    "loss": 3.3175045001342003,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 32768,
+    "seed": 42,
+    "perplexity": 28.840638673242065,
+    "loss": 3.3617854575682857,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 32768,
+    "seed": 43,
+    "perplexity": 29.864430522658605,
+    "loss": 3.396668157616683,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 32768,
+    "seed": 44,
+    "perplexity": 25.274430185020933,
+    "loss": 3.229793220043932,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 32768,
+    "seed": 45,
+    "perplexity": 26.862511520147883,
+    "loss": 3.2907316908246704,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 32768,
+    "seed": 46,
+    "perplexity": 26.192622528075354,
+    "loss": 3.265477788217256,
+    "stable": true
+  },
+  {
+    "model": "mamba",
+    "seq_length": 131072,
+    "seed": 42,
+    "perplexity": 131.01575623235428,
+    "loss": 4.875317592551361,
+    "stable": false
+  },
+  {
+    "model": "mamba",
+    "seq_length": 131072,
+    "seed": 43,
+    "perplexity": 139.69555570529434,
+    "loss": 4.9394654526236845,
+    "stable": false
+  },
+  {
+    "model": "mamba",
+    "seq_length": 131072,
+    "seed": 44,
+    "perplexity": 174.0183147897586,
+    "loss": 5.159160551087762,
+    "stable": false
+  },
+  {
+    "model": "mamba",
+    "seq_length": 131072,
+    "seed": 45,
+    "perplexity": 158.5046738986493,
+    "loss": 5.065784081202117,
+    "stable": false
+  },
+  {
+    "model": "mamba",
+    "seq_length": 131072,
+    "seed": 46,
+    "perplexity": 152.74467270253007,
+    "loss": 5.028767721519009,
+    "stable": false
+  }
+]

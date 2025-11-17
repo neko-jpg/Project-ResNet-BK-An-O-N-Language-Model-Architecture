@@ -1,0 +1,72 @@
+# Quantization Robustness Configuration
+# For INT8/INT4 quantization experiments
+
+# Inherit from base config
+_base_: base_config.yaml
+
+# Model Architecture
+model:
+  d_model: 512
+  n_layers: 12
+  n_seq: 2048
+
+# Training Configuration - Quantization-Aware Training
+training:
+  learning_rate: 5.0e-4
+  max_steps: 150000
+  warmup_steps: 2000
+  
+  # QAT-specific settings
+  qat_enabled: true
+  qat_start_step: 10000  # Start QAT after initial training
+  
+  # Batch configuration
+  batch_size: 16
+  gradient_accumulation_steps: 2
+
+# Quantization Configuration
+quantization:
+  # Post-Training Quantization (PTQ)
+  ptq:
+    enabled: false
+    bit_width: 8
+    symmetric: true
+    per_channel: true
+  
+  # Quantization-Aware Training (QAT)
+  qat:
+    enabled: true
+    bit_width: 8
+    fake_quantize: true
+    
+    # Mixed-precision quantization
+    mixed_precision:
+      enabled: true
+      moe_experts: 4  # INT4 for experts
+      bk_core: 8      # INT8 for BK-Core
+      output_layers: 16  # FP16 for output
+  
+  # Group-wise quantization for INT4
+  group_size: 128
+  
+  # Calibration
+  calibration_samples: 1000
+
+# Data Configuration
+data:
+  dataset: "wikitext2"
+  data_dir: "./data"
+
+# Monitoring
+monitoring:
+  use_wandb: true
+  experiment_name: "quantization_robustness"
+  
+  # Track quantization metrics
+  log_quantization_error: true
+  log_bit_width_distribution: true
+
+# Evaluation - Test multiple bit widths
+evaluation:
+  bit_widths: [32, 16, 8, 4, 2]
+  compare_to_fp32: true

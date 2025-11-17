@@ -1,0 +1,15 @@
+{
+  "correlation": NaN,
+  "mean_phase": 0.0,
+  "std_phase": 0.0,
+  "mean_abs_phase": 0.0,
+  "mean_perplexity": 1125.6889229232545,
+  "std_perplexity": 396.9643206206797,
+  "mean_phase_difficult_tokens": 0.0,
+  "mean_phase_easy_tokens": 0.0,
+  "phase_difference": 0.0,
+  "t_statistic": NaN,
+  "p_value": NaN,
+  "high_phase_for_difficult": false,
+  "statistically_significant": false
+}

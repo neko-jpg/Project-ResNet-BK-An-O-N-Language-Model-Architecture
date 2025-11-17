@@ -1,0 +1,140 @@
+{
+  "resnetbk": {
+    "32": {
+      "perplexity": 30.248357076505616,
+      "precision": "FP32",
+      "deployable": true
+    },
+    "16": {
+      "perplexity": 30.23086784941441,
+      "precision": "FP16",
+      "deployable": true
+    },
+    "8": {
+      "perplexity": 31.52384426905035,
+      "precision": "INT8",
+      "deployable": true
+    },
+    "4": {
+      "perplexity": 34.361514928204016,
+      "precision": "INT4",
+      "deployable": true
+    },
+    "2": {
+      "perplexity": 44.88292331263833,
+      "precision": "INT2",
+      "deployable": true
+    }
+  },
+  "mamba": {
+    "32": {
+      "perplexity": 32.993428306022466,
+      "precision": "FP32",
+      "deployable": true
+    },
+    "16": {
+      "perplexity": 32.683471397657634,
+      "precision": "FP16",
+      "deployable": true
+    },
+    "8": {
+      "perplexity": 38.09537707620138,
+      "precision": "INT8",
+      "deployable": true
+    },
+    "4": {
+      "perplexity": 211.04605971281606,
+      "precision": "INT4",
+      "deployable": false
+    },
+    "2": {
+      "perplexity": 479.5316932505533,
+      "precision": "INT2",
+      "deployable": false
+    }
+  },
+  "comparison": {
+    "32": {
+      "precision": "FP32",
+      "resnetbk_ppl": 30.248357076505616,
+      "mamba_ppl": 32.993428306022466,
+      "resnetbk_degradation_pct": 0.0,
+      "mamba_degradation_pct": 0.0,
+      "ppl_ratio": 1.0907510851770852,
+      "resnetbk_deployable": true,
+      "mamba_deployable": true
+    },
+    "2": {
+      "precision": "INT2",
+      "resnetbk_ppl": 44.88292331263833,
+      "mamba_ppl": 479.5316932505533,
+      "resnetbk_degradation_pct": 48.3813590242877,
+      "mamba_degradation_pct": 1353.4157796600418,
+      "ppl_ratio": 10.68405660456445,
+      "resnetbk_deployable": true,
+      "mamba_deployable": false
+    },
+    "4": {
+      "precision": "INT4",
+      "resnetbk_ppl": 34.361514928204016,
+      "mamba_ppl": 211.04605971281606,
+      "resnetbk_degradation_pct": 13.597954564260139,
+      "mamba_degradation_pct": 539.6608977864016,
+      "ppl_ratio": 6.141931173691907,
+      "resnetbk_deployable": true,
+      "mamba_deployable": false
+    },
+    "8": {
+      "precision": "INT8",
+      "resnetbk_ppl": 31.52384426905035,
+      "mamba_ppl": 38.09537707620138,
+      "resnetbk_degradation_pct": 4.21671560316056,
+      "mamba_degradation_pct": 15.463530260805388,
+      "ppl_ratio": 1.2084622913076266,
+      "resnetbk_deployable": true,
+      "mamba_deployable": true
+    },
+    "16": {
+      "precision": "FP16",
+      "resnetbk_ppl": 30.23086784941441,
+      "mamba_ppl": 32.683471397657634,
+      "resnetbk_degradation_pct": -0.057818766972939646,
+      "mamba_degradation_pct": -0.9394504429485245,
+      "ppl_ratio": 1.0811291147994857,
+      "resnetbk_deployable": true,
+      "mamba_deployable": true
+    }
+  },
+  "requirements_check": {
+    "req_7_2_int8_degradation_lt_5pct": {
+      "met": true,
+      "value": 4.21671560316056,
+      "threshold": 5.0
+    },
+    "req_7_6_int4_degradation_lt_15pct": {
+      "met": true,
+      "value": 13.597954564260139,
+      "threshold": 15.0
+    },
+    "req_8_6_resnetbk_int4_lt_50": {
+      "met": true,
+      "value": 34.361514928204016,
+      "threshold": 50
+    },
+    "req_8_7_mamba_int4_gt_200": {
+      "met": true,
+      "value": 211.04605971281606,
+      "threshold": 200
+    },
+    "req_7_8_int8_10pct_better": {
+      "met": true,
+      "value": 11.246814657644828,
+      "threshold": 10.0
+    },
+    "req_7_9_mamba_4x_worse_int4": {
+      "met": true,
+      "value": 6.141931173691907,
+      "threshold": 4.0
+    }
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "resnetbk": {
+    "best_ppl": 28.14901424590337,
+    "best_ppl_flops": 4986173569.882881,
+    "lowest_flops": 2158769629.866471,
+    "lowest_flops_ppl": 29.99559277734364,
+    "mean_ppl": 29.078582778890375,
+    "mean_flops": 3634212694.748175,
+    "num_configs": 10
+  },
+  "mamba": {
+    "best_ppl": 32.24835707650561,
+    "best_ppl_flops": 9972347139.765762,
+    "lowest_flops": 5217539259.732942,
+    "lowest_flops_ppl": 36.58598796223939,
+    "mean_ppl": 34.42763796481729,
+    "mean_flops": 7718425389.49635,
+    "num_configs": 10
+  },
+  "comparison": {
+    "equal_ppl": {
+      "ppl_25": {
+        "target_ppl": 25.0,
+        "resnetbk_actual_ppl": 28.14901424590337,
+        "mamba_actual_ppl": 32.24835707650561,
+        "resnetbk_flops": 4986173569.882881,
+        "mamba_flops": 9972347139.765762,
+        "flops_ratio": 2.0
+      },
+      "ppl_30": {
+        "target_ppl": 30.0,
+        "resnetbk_actual_ppl": 29.99559277734364,
+        "mamba_actual_ppl": 32.24835707650561,
+        "resnetbk_flops": 2158769629.866471,
+        "mamba_flops": 9972347139.765762,
+        "flops_ratio": 4.619458696193811
+      },
+      "ppl_35": {
+        "target_ppl": 35.0,
+        "resnetbk_actual_ppl": 29.99559277734364,
+        "mamba_actual_ppl": 35.05754108374349,
+        "resnetbk_flops": 2158769629.866471,
+        "mamba_flops": 6387542494.151806,
+        "flops_ratio": 2.9588810245338233
+      },
+      "ppl_40": {
+        "target_ppl": 40.0,
+        "resnetbk_actual_ppl": 29.99559277734364,
+        "mamba_actual_ppl": 36.58598796223939,
+        "resnetbk_flops": 2158769629.866471,
+        "mamba_flops": 5217539259.732942,
+        "flops_ratio": 2.4169041418540194
+      }
+    },
+    "equal_flops": {
+      "3G": {
+        "target_flops": 3000000000.0,
+        "resnetbk_actual_flops": 3008671975.53422,
+        "mamba_actual_flops": 5217539259.732942,
+        "resnetbk_ppl": 29.58458868146981,
+        "mamba_ppl": 36.58598796223939,
+        "ppl_improvement_pct": 19.136832625637354
+      },
+      "5G": {
+        "target_flops": 5000000000.0,
+        "resnetbk_actual_flops": 4986173569.882881,
+        "mamba_actual_flops": 5217539259.732942,
+        "resnetbk_ppl": 28.14901424590337,
+        "mamba_ppl": 36.58598796223939,
+        "ppl_improvement_pct": 23.060669360750545
+      },
+      "7G": {
+        "target_flops": 7000000000.0,
+        "resnetbk_actual_flops": 4986173569.882881,
+        "mamba_actual_flops": 6617343951.06844,
+        "resnetbk_ppl": 28.14901424590337,
+        "mamba_ppl": 35.48098113578302,
+        "ppl_improvement_pct": 20.664498712199556
+      },
+      "10G": {
+        "target_flops": 10000000000.0,
+        "resnetbk_actual_flops": 4986173569.882881,
+        "mamba_actual_flops": 9972347139.765762,
+        "resnetbk_ppl": 28.14901424590337,
+        "mamba_ppl": 32.24835707650561,
+        "ppl_improvement_pct": 12.71178814125945
+      }
+    }
+  },
+  "requirements_check": {
+    "req_8_10_2x_fewer_flops_at_ppl30": {
+      "met": true,
+      "value": 4.619458696193811,
+      "threshold": 2.0,
+      "description": "ResNet-BK uses 2\u00d7 fewer FLOPs than Mamba at PPL\u224830"
+    },
+    "req_8_11_30pct_lower_ppl_at_equal_flops": {
+      "met": false,
+      "value": 23.060669360750545,
+      "threshold": 30.0,
+      "description": "ResNet-BK has 30% lower PPL than Mamba at equal FLOPs"
+    }
+  }
+}

@@ -1,0 +1,42 @@
+labels: [idea]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing your idea! We love hearing from the community.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea Description
+      description: Describe your idea in detail
+      placeholder: Tell us about your idea
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this idea important?
+      placeholder: What problem does it solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Possible Implementation
+      description: How might this be implemented?
+      placeholder: Any thoughts on implementation?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to help implement this idea
+          required: false

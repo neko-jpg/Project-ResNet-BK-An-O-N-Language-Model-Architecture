@@ -1,0 +1,83 @@
+# Mamba Comparison Configuration
+# Identical hyperparameters for fair comparison
+
+# Inherit from base config
+_base_: base_config.yaml
+
+# Model Architecture - Match Mamba size
+model:
+  d_model: 768
+  n_layers: 12
+  n_seq: 2048
+  num_experts: 8
+
+# Training Configuration - Identical to Mamba
+training:
+  # Optimization - Match Mamba paper
+  learning_rate: 6.0e-4
+  weight_decay: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  max_grad_norm: 1.0
+  
+  # Schedule
+  warmup_steps: 2000
+  max_steps: 100000
+  lr_scheduler: "cosine"
+  
+  # Batch configuration - Match Mamba
+  batch_size: 8
+  gradient_accumulation_steps: 4  # Effective batch size: 32
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  mixed_precision: true
+
+# Data Configuration - Same datasets
+data:
+  dataset: "wikitext103"
+  data_dir: "./data"
+  num_workers: 4
+
+# Reproducibility - Fixed seed for fair comparison
+seed: 42
+deterministic: true
+
+# Monitoring
+monitoring:
+  use_wandb: true
+  experiment_name: "mamba_comparison"
+  
+  # Track comparison metrics
+  log_grad_norm: true
+  log_schatten_norms: true
+  log_condition_numbers: true
+  log_loss_spikes: true
+
+# Evaluation - Multi-dataset
+evaluation:
+  datasets: ["wikitext2", "wikitext103", "c4", "pile"]
+  compute_perplexity: true
+  compute_flops: true
+  compute_memory: true
+  
+  # Statistical testing
+  num_seeds: 5
+  confidence_level: 0.99
+  bonferroni_correction: true
+
+# Comparison Settings
+comparison:
+  baseline_model: "mamba"
+  baseline_checkpoint: null  # Path to Mamba checkpoint
+  
+  # Metrics to compare
+  metrics:
+    - "perplexity"
+    - "gradient_stability"
+    - "condition_number"
+    - "loss_spikes"
+    - "convergence_speed"
+    - "flops"
+    - "memory"

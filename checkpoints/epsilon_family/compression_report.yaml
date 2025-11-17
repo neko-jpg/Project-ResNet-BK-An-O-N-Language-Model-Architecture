@@ -1,0 +1,38 @@
+all_valid: false
+epsilon_values:
+- 1.0
+- 0.75
+- 0.5
+- 0.25
+- 0.1
+measures_computed:
+- 0.75
+- 0.5
+- 0.25
+- 0.1
+tv_distances:
+  0.25_to_0.1: !!python/object/apply:numpy._core.multiarray.scalar
+  - &id001 !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    AAAAAAAAlDw=
+  0.5_to_0.25: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAAlDw=
+  0.75_to_0.5: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    AAAAAAAAAAA=

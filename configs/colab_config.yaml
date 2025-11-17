@@ -1,0 +1,79 @@
+# Google Colab Configuration
+# Optimized for T4 GPU with 15GB RAM
+
+# Inherit from base config
+_base_: base_config.yaml
+
+# Model Architecture - Colab-friendly size
+model:
+  d_model: 256
+  n_layers: 8
+  n_seq: 1024  # Shorter sequences for memory
+  
+  # Enable memory optimizations
+  use_semiseparable: true
+  use_cpu_offload: false  # Colab CPU is slow
+  
+  # Disable expensive features for faster iteration
+  use_act: false
+  use_learned_sparsity: false
+
+# Training Configuration - Fast iteration
+training:
+  learning_rate: 1.0e-3
+  max_steps: 10000  # Quick training for demo
+  warmup_steps: 500
+  
+  # Small batch for memory
+  batch_size: 4
+  gradient_accumulation_steps: 2
+  
+  # Aggressive memory optimization
+  gradient_checkpointing: true
+  mixed_precision: true
+  
+  # Frequent checkpointing (Colab can disconnect)
+  eval_interval: 500
+  save_interval: 1000
+  log_interval: 50
+
+# Data Configuration
+data:
+  dataset: "wikitext2"  # Smallest dataset
+  data_dir: "/content/data"  # Colab path
+  num_workers: 2  # Colab has limited CPU
+
+# Checkpointing - Save to Google Drive
+checkpoint:
+  save_dir: "/content/drive/MyDrive/mamba_killer_checkpoints"
+  keep_last_n: 3
+  save_optimizer: true
+  save_scheduler: true
+  
+  # Auto-save before timeout
+  timeout_warning_minutes: 30
+  emergency_save: true
+
+# Monitoring - Use TensorBoard (built into Colab)
+monitoring:
+  use_wandb: false  # Requires API key
+  use_tensorboard: true
+  project_name: "mamba-killer-colab"
+  experiment_name: "colab_demo"
+
+# Colab-specific settings
+colab:
+  mount_drive: true
+  drive_path: "/content/drive"
+  
+  # Timeout handling
+  max_runtime_hours: 12
+  save_before_timeout: true
+  
+  # Resource monitoring
+  check_gpu_memory: true
+  check_interval: 100
+  
+  # Auto-recovery
+  auto_resume: true
+  resume_from_drive: true

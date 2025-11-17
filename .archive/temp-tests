@@ -1,0 +1,28 @@
+"""Quick verification of Birman-Schwinger integration."""
+from src.models.resnet_bk import LanguageModel
+import torch
+
+print("Verifying Birman-Schwinger Integration...")
+
+# Create model
+model = LanguageModel(
+    vocab_size=100,
+    d_model=32,
+    n_layers=1,
+    n_seq=64,
+    use_birman_schwinger=True,
+    prime_bump_init=True,
+)
+
+# Forward pass
+x = torch.randint(0, 100, (2, 64))
+logits = model(x)
+
+# Get diagnostics
+diag = model.get_stability_diagnostics()
+
+print("✓ Integration verified!")
+print(f"  Diagnostics keys: {len(diag)} metrics")
+print(f"  Output shape: {logits.shape}")
+print(f"  All finite: {diag.get('all_finite_rate', 0):.1%}")
+print(f"  Mean Schatten S2: {diag.get('mean_schatten_s2', 0):.2e}")

@@ -18,6 +18,31 @@ from .adaptive_computation import (
     ACTLanguageModel,
     ACTTrainer
 )
+from .semiseparable_matrix import (
+    SemiseparableMatrix,
+    SemiseparableCheckpointFunction,
+    create_semiseparable_from_dense
+)
+from .mamba_baseline import (
+    MambaLM,
+    MambaConfig,
+    MambaBlock,
+    create_mamba_from_resnetbk_config
+)
+
+# Hugging Face integration (optional import)
+try:
+    from .hf_resnet_bk import (
+        ResNetBKConfig,
+        ResNetBKForCausalLM,
+        create_resnet_bk_for_hf
+    )
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+    ResNetBKConfig = None
+    ResNetBKForCausalLM = None
+    create_resnet_bk_for_hf = None
 
 __all__ = [
     'BKCoreFunction',
@@ -34,4 +59,15 @@ __all__ = [
     'AdaptiveResNetBKBlock',
     'ACTLanguageModel',
     'ACTTrainer',
+    'SemiseparableMatrix',
+    'SemiseparableCheckpointFunction',
+    'create_semiseparable_from_dense',
+    'MambaLM',
+    'MambaConfig',
+    'MambaBlock',
+    'create_mamba_from_resnetbk_config',
+    'ResNetBKConfig',
+    'ResNetBKForCausalLM',
+    'create_resnet_bk_for_hf',
+    'HF_AVAILABLE',
 ]

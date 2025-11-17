@@ -1,0 +1,63 @@
+# Code Owners for ResNet-BK
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @neko-jpg
+
+# Core architecture and models
+/src/models/ @neko-jpg
+/src/models/bk_core.py @neko-jpg
+/src/models/birman_schwinger_core.py @neko-jpg
+/src/models/resnet_bk.py @neko-jpg
+
+# Mathematical foundations
+/src/models/mourre_lap.py @neko-jpg
+/src/models/prime_bump_potential.py @neko-jpg
+/src/models/scattering_router.py @neko-jpg
+/src/models/semiseparable_matrix.py @neko-jpg
+
+# Training infrastructure
+/src/training/ @neko-jpg
+
+# Benchmarks and evaluation
+/src/benchmarks/ @neko-jpg
+/scripts/benchmarks/ @neko-jpg
+
+# Documentation
+/docs/ @neko-jpg
+*.md @neko-jpg
+/README.md @neko-jpg
+
+# Configuration
+/configs/ @neko-jpg
+*.yaml @neko-jpg
+*.yml @neko-jpg
+
+# Tests
+/tests/ @neko-jpg
+
+# CI/CD
+/.github/ @neko-jpg
+/.github/workflows/ @neko-jpg
+
+# Docker
+/Dockerfile @neko-jpg
+/docker-compose.yml @neko-jpg
+
+# Paper
+/paper/ @neko-jpg
+
+# Examples
+/examples/ @neko-jpg
+
+# Notebooks
+/notebooks/ @neko-jpg
+
+# Build and packaging
+/setup.py @neko-jpg
+/pyproject.toml @neko-jpg
+/requirements.txt @neko-jpg
+
+# License and legal
+/LICENSE @neko-jpg
+/THIRD_PARTY_LICENSES.md @neko-jpg

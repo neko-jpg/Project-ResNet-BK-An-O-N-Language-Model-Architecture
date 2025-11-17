@@ -1,0 +1,55 @@
+labels: [question]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for asking a question! Please check the [FAQ](../../FAQ.md) and [documentation](https://resnet-bk.readthedocs.io) first.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: Ask your question here
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide any relevant context
+      placeholder: What are you trying to do?
+    validations:
+      required: false
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What I've Tried
+      description: What have you already tried?
+      placeholder: List what you've attempted
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: ResNet-BK Version
+      description: Which version are you using?
+      placeholder: e.g., 0.9.0
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have checked the FAQ
+          required: false
+        - label: I have checked the documentation
+          required: false
+        - label: I have searched existing discussions
+          required: false

@@ -1,0 +1,182 @@
+[
+  {
+    "components": "prime_bump,scattering_router,lap_stability,semiseparable",
+    "seed": 42,
+    "perplexity": 25.00848717691116,
+    "loss": 3.2192152543319486
+  },
+  {
+    "components": "prime_bump,scattering_router,lap_stability,semiseparable",
+    "seed": 43,
+    "perplexity": 21.568775948205893,
+    "loss": 3.0712467109098
+  },
+  {
+    "components": "prime_bump,scattering_router,lap_stability,semiseparable",
+    "seed": 44,
+    "perplexity": 25.582212402846967,
+    "loss": 3.241897281966866
+  },
+  {
+    "components": "prime_bump,scattering_router,lap_stability,semiseparable",
+    "seed": 45,
+    "perplexity": 23.0933741377867,
+    "loss": 3.1395457425210003
+  },
+  {
+    "components": "prime_bump,scattering_router,lap_stability,semiseparable",
+    "seed": 46,
+    "perplexity": 26.546813479339704,
+    "loss": 3.2789097208744606
+  },
+  {
+    "components": "none",
+    "seed": 42,
+    "perplexity": 47.84959355490176,
+    "loss": 3.8680626237124542
+  },
+  {
+    "components": "none",
+    "seed": 43,
+    "perplexity": 45.052817164226354,
+    "loss": 3.807835516266234
+  },
+  {
+    "components": "none",
+    "seed": 44,
+    "perplexity": 44.37555090768551,
+    "loss": 3.7926886625395984
+  },
+  {
+    "components": "none",
+    "seed": 45,
+    "perplexity": 42.94326838378752,
+    "loss": 3.759879904686478
+  },
+  {
+    "components": "none",
+    "seed": 46,
+    "perplexity": 41.10794724758037,
+    "loss": 3.7162014664979273
+  },
+  {
+    "components": "prime_bump",
+    "seed": 42,
+    "perplexity": 35.72543492815863,
+    "loss": 3.575862898077965
+  },
+  {
+    "components": "prime_bump",
+    "seed": 43,
+    "perplexity": 35.756877313238476,
+    "loss": 3.5767426230370987
+  },
+  {
+    "components": "prime_bump",
+    "seed": 44,
+    "perplexity": 36.12982369009131,
+    "loss": 3.587118665271952
+  },
+  {
+    "components": "prime_bump",
+    "seed": 45,
+    "perplexity": 35.858712346070796,
+    "loss": 3.5795865597261174
+  },
+  {
+    "components": "prime_bump",
+    "seed": 46,
+    "perplexity": 35.848833669642154,
+    "loss": 3.5793110328941444
+  },
+  {
+    "components": "scattering_router",
+    "seed": 42,
+    "perplexity": 41.36022789524152,
+    "loss": 3.722319740224682
+  },
+  {
+    "components": "scattering_router",
+    "seed": 43,
+    "perplexity": 41.12373008102196,
+    "loss": 3.716585329119927
+  },
+  {
+    "components": "scattering_router",
+    "seed": 44,
+    "perplexity": 39.815304263469685,
+    "loss": 3.68425136761088
+  },
+  {
+    "components": "scattering_router",
+    "seed": 45,
+    "perplexity": 37.58133151357528,
+    "loss": 3.626507424799239
+  },
+  {
+    "components": "scattering_router",
+    "seed": 46,
+    "perplexity": 35.806745628144455,
+    "loss": 3.578136301023988
+  },
+  {
+    "components": "lap_stability",
+    "seed": 42,
+    "perplexity": 36.09057726973812,
+    "loss": 3.5860318138090714
+  },
+  {
+    "components": "lap_stability",
+    "seed": 43,
+    "perplexity": 32.566247312624725,
+    "loss": 3.4832763935103532
+  },
+  {
+    "components": "lap_stability",
+    "seed": 44,
+    "perplexity": 29.84247896005729,
+    "loss": 3.395932846953962
+  },
+  {
+    "components": "lap_stability",
+    "seed": 45,
+    "perplexity": 32.137453801443094,
+    "loss": 3.4700221350629494
+  },
+  {
+    "components": "lap_stability",
+    "seed": 46,
+    "perplexity": 34.29931330616162,
+    "loss": 3.5351253337429625
+  },
+  {
+    "components": "semiseparable",
+    "seed": 42,
+    "perplexity": 43.255644606898954,
+    "loss": 3.7671277360042223
+  },
+  {
+    "components": "semiseparable",
+    "seed": 43,
+    "perplexity": 38.87251565053539,
+    "loss": 3.660287462361764
+  },
+  {
+    "components": "semiseparable",
+    "seed": 44,
+    "perplexity": 40.76242491709597,
+    "loss": 3.7077606991535075
+  },
+  {
+    "components": "semiseparable",
+    "seed": 45,
+    "perplexity": 39.913871778691714,
+    "loss": 3.686723927101182
+  },
+  {
+    "components": "semiseparable",
+    "seed": 46,
+    "perplexity": 38.8448583137981,
+    "loss": 3.6595757209198174
+  }
+]

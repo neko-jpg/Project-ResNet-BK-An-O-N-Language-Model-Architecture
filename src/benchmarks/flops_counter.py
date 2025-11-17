@@ -554,6 +554,294 @@ def compare_models(model1: nn.Module, model2: nn.Module,
     return comparison
 
 
+class ACTFLOPsCounter:
+    """
+    FLOPs counter for ACT-enabled models.
+    
+    Tracks actual FLOPs based on dynamic layer execution. Accounts for:
+    - Variable number of layers executed per token
+    - Early exit savings
+    - ACT overhead (halting computation)
+    
+    Usage:
+        counter = ACTFLOPsCounter(model, batch_size=32, seq_len=128)
+        flops = counter.count_actual_flops(avg_layers_executed=5.2)
+    """
+    
+    def __init__(self, model: nn.Module, batch_size: int, seq_len: int):
+        """
+        Initialize ACT FLOPs counter.
+        
+        Args:
+            model: ACT-enabled ResNet-BK model
+            batch_size: batch size
+            seq_len: sequence length
+        """
+        self.base_counter = FLOPsCounter(model, batch_size, seq_len)
+        self.model = model
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+    
+    def count_act_overhead_flops(self) -> FLOPsCount:
+        """
+        Count FLOPs for ACT halting computation.
+        
+        Per layer:
+        - Scattering phase extraction: O(D) operations
+        - Halting probability computation: O(1) operations
+        - Weight computation: O(1) operations
+        
+        Returns:
+            FLOPsCount for ACT overhead
+        """
+        B = self.batch_size
+        N = self.seq_len
+        D = self.base_counter.d_model
+        n_layers = self.base_counter.n_layers
+        
+        # Phase extraction: mean over D dimensions
+        phase_extraction_flops = B * N * D * n_layers
+        
+        # Halting probability: simple arithmetic operations
+        halting_computation_flops = B * N * 10 * n_layers  # ~10 ops per token
+        
+        # Weight computation: conditional operations
+        weight_computation_flops = B * N * 5 * n_layers  # ~5 ops per token
+        
+        forward_flops = phase_extraction_flops + halting_computation_flops + weight_computation_flops
+        
+        # Backward: gradient through ACT logic (minimal)
+        backward_flops = forward_flops * 0.5  # Approximate
+        
+        return FLOPsCount(forward=forward_flops, backward=backward_flops)
+    
+    def count_actual_flops(
+        self,
+        avg_layers_executed: float,
+        include_act_overhead: bool = True
+    ) -> FLOPsCount:
+        """
+        Count actual FLOPs based on average layers executed.
+        
+        Args:
+            avg_layers_executed: average number of layers executed per token
+            include_act_overhead: include ACT computation overhead
+        
+        Returns:
+            FLOPsCount with actual FLOPs
+        """
+        # Get per-layer FLOPs
+        full_forward = self.base_counter.count_forward_flops()
+        full_backward = self.base_counter.count_backward_flops()
+        
+        # Compute layer FLOPs (excluding embeddings and LM head)
+        embedding_flops = self.base_counter.count_embedding_flops()
+        lm_head_flops = self.base_counter.count_lm_head_flops()
+        final_ln_flops = self.base_counter.count_layernorm_flops()
+        
+        layer_forward_flops = (
+            full_forward.forward 
+            - embedding_flops.forward 
+            - lm_head_flops.forward 
+            - final_ln_flops.forward
+        )
+        layer_backward_flops = (
+            full_backward.backward 
+            - embedding_flops.backward 
+            - lm_head_flops.backward 
+            - final_ln_flops.backward
+        )
+        
+        # Scale by actual layers executed
+        n_layers = self.base_counter.n_layers
+        layer_scale = avg_layers_executed / n_layers
+        
+        actual_forward = (
+            embedding_flops.forward
+            + layer_forward_flops * layer_scale
+            + final_ln_flops.forward
+            + lm_head_flops.forward
+        )
+        
+        actual_backward = (
+            embedding_flops.backward
+            + layer_backward_flops * layer_scale
+            + final_ln_flops.backward
+            + lm_head_flops.backward
+        )
+        
+        # Add ACT overhead
+        if include_act_overhead:
+            act_overhead = self.count_act_overhead_flops()
+            actual_forward += act_overhead.forward
+            actual_backward += act_overhead.backward
+        
+        # Optimizer FLOPs unchanged
+        optimizer_flops = self.base_counter.count_optimizer_flops()
+        
+        return FLOPsCount(
+            forward=int(actual_forward),
+            backward=int(actual_backward),
+            optimizer=optimizer_flops.optimizer
+        )
+    
+    def compute_flops_reduction(self, avg_layers_executed: float) -> float:
+        """
+        Compute FLOPs reduction percentage.
+        
+        Args:
+            avg_layers_executed: average layers executed
+        
+        Returns:
+            reduction: FLOPs reduction as fraction (e.g., 0.4 = 40% reduction)
+        """
+        full_flops = self.base_counter.count_total_flops()
+        actual_flops = self.count_actual_flops(avg_layers_executed)
+        
+        reduction = 1.0 - (actual_flops.total / full_flops.total)
+        return reduction
+    
+    def print_act_summary(self, avg_layers_executed: float):
+        """
+        Print ACT FLOPs summary.
+        
+        Args:
+            avg_layers_executed: average layers executed per token
+        """
+        full_flops = self.base_counter.count_total_flops()
+        actual_flops = self.count_actual_flops(avg_layers_executed)
+        reduction = self.compute_flops_reduction(avg_layers_executed)
+        
+        print("=" * 70)
+        print(f"ACT FLOPs Counter Summary")
+        print("=" * 70)
+        print(f"Model: ResNet-BK with ACT")
+        print(f"Max Layers: {self.base_counter.n_layers}")
+        print(f"Avg Layers Executed: {avg_layers_executed:.2f}")
+        print(f"Batch Size: {self.batch_size}, Seq Length: {self.seq_len}")
+        print("-" * 70)
+        print(f"Full Model (no ACT):")
+        print(f"  Forward:  {full_flops.forward:>15,} FLOPs ({full_flops.forward/1e9:.3f} GFLOPs)")
+        print(f"  Backward: {full_flops.backward:>15,} FLOPs ({full_flops.backward/1e9:.3f} GFLOPs)")
+        print(f"  Total:    {full_flops.total:>15,} FLOPs ({full_flops.total/1e9:.3f} GFLOPs)")
+        print()
+        print(f"With ACT (avg {avg_layers_executed:.2f} layers):")
+        print(f"  Forward:  {actual_flops.forward:>15,} FLOPs ({actual_flops.forward/1e9:.3f} GFLOPs)")
+        print(f"  Backward: {actual_flops.backward:>15,} FLOPs ({actual_flops.backward/1e9:.3f} GFLOPs)")
+        print(f"  Total:    {actual_flops.total:>15,} FLOPs ({actual_flops.total/1e9:.3f} GFLOPs)")
+        print("-" * 70)
+        print(f"FLOPs Reduction: {reduction:.1%}")
+        print(f"Speedup: {1.0/(1.0-reduction):.2f}×")
+        print("=" * 70)
+    
+    def save_act_results(
+        self,
+        filepath: str,
+        avg_layers_executed: float,
+        early_exit_rate: float,
+        full_depth_rate: float
+    ):
+        """
+        Save ACT results to JSON.
+        
+        Args:
+            filepath: output JSON file path
+            avg_layers_executed: average layers executed
+            early_exit_rate: fraction of tokens that exited early
+            full_depth_rate: fraction of tokens that used full depth
+        """
+        full_flops = self.base_counter.count_total_flops()
+        actual_flops = self.count_actual_flops(avg_layers_executed)
+        reduction = self.compute_flops_reduction(avg_layers_executed)
+        
+        data = {
+            'model_config': {
+                'd_model': self.base_counter.d_model,
+                'n_layers': self.base_counter.n_layers,
+                'seq_len': self.seq_len,
+                'batch_size': self.batch_size,
+            },
+            'act_config': {
+                'avg_layers_executed': avg_layers_executed,
+                'early_exit_rate': early_exit_rate,
+                'full_depth_rate': full_depth_rate,
+            },
+            'flops': {
+                'full_model': full_flops.to_dict(),
+                'with_act': actual_flops.to_dict(),
+                'reduction': reduction,
+                'speedup': 1.0 / (1.0 - reduction) if reduction < 1.0 else float('inf'),
+            }
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+        
+        print(f"ACT results saved to {filepath}")
+
+
+def measure_act_flops(
+    model: nn.Module,
+    dataloader,
+    device: str = 'cuda',
+    max_batches: int = 100
+) -> Dict:
+    """
+    Measure actual FLOPs for ACT model on real data.
+    
+    Args:
+        model: ACT-enabled model
+        dataloader: data loader
+        device: device to run on
+        max_batches: maximum batches to process
+    
+    Returns:
+        Dictionary with FLOPs measurements and statistics
+    """
+    model.eval()
+    model.to(device)
+    
+    # Check if model has ACT
+    if not hasattr(model, 'act_module'):
+        raise ValueError("Model does not have ACT enabled")
+    
+    # Reset ACT statistics
+    model.act_module.reset_statistics()
+    
+    # Process batches
+    with torch.no_grad():
+        for batch_idx, (x_batch, _) in enumerate(dataloader):
+            if batch_idx >= max_batches:
+                break
+            
+            x_batch = x_batch.to(device)
+            _ = model(x_batch)
+    
+    # Get ACT statistics
+    stats = model.act_module.get_statistics()
+    
+    # Create FLOPs counter
+    batch_size = next(iter(dataloader))[0].shape[0]
+    seq_len = next(iter(dataloader))[0].shape[1]
+    counter = ACTFLOPsCounter(model, batch_size, seq_len)
+    
+    # Compute FLOPs
+    actual_flops = counter.count_actual_flops(stats['avg_layers_executed'])
+    full_flops = counter.base_counter.count_total_flops()
+    
+    results = {
+        'act_statistics': stats,
+        'flops': {
+            'full_model': full_flops.to_dict(),
+            'with_act': actual_flops.to_dict(),
+            'reduction': stats['flops_reduction'],
+        },
+        'avg_flops_per_token': actual_flops.total / (batch_size * seq_len),
+    }
+    
+    return results
+
+
 if __name__ == '__main__':
     # Example usage
     from src.models.configurable_resnet_bk import ConfigurableResNetBK, BASELINE_CONFIG
@@ -568,3 +856,19 @@ if __name__ == '__main__':
     
     # Save to JSON
     counter.save_to_json('flops_count.json')
+    
+    print("\n" + "=" * 70)
+    print("ACT FLOPs Counter Example")
+    print("=" * 70)
+    
+    # Simulate ACT with average 5.2 layers executed (out of 8)
+    act_counter = ACTFLOPsCounter(model, batch_size=32, seq_len=128)
+    act_counter.print_act_summary(avg_layers_executed=5.2)
+    
+    # Save ACT results
+    act_counter.save_act_results(
+        'act_flops_count.json',
+        avg_layers_executed=5.2,
+        early_exit_rate=0.35,
+        full_depth_rate=0.15
+    )

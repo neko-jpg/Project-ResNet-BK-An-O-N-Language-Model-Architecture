@@ -1,0 +1,122 @@
+[
+  {
+    "model": "resnet_bk",
+    "seq_length": 2048,
+    "seed": 42,
+    "flops": 2724731005717.6436,
+    "throughput": 15754.516887047952,
+    "flops_per_token": 166304382.67319602
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 2048,
+    "seed": 43,
+    "flops": 2315096424153.1523,
+    "throughput": 15229.166146787002,
+    "flops_per_token": 141302271.98200393
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 2048,
+    "seed": 44,
+    "flops": 2547620162849.3936,
+    "throughput": 15332.496464767975,
+    "flops_per_token": 155494394.70516318
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 2048,
+    "seed": 45,
+    "flops": 2802128217594.472,
+    "throughput": 14815.454641996943,
+    "flops_per_token": 171028333.5934126
+  },
+  {
+    "model": "resnet_bk",
+    "seq_length": 2048,
+    "seed": 46,
+    "flops": 2356520841377.5015,
+    "throughput": 15638.818647665052,
+    "flops_per_token": 143830617.75985727
+  },
+  {
+    "model": "resnet_bk_act",
+    "seq_length": 2048,
+    "seed": 42,
+    "flops": 1828326927227.0842,
+    "throughput": 17958.473276282235,
+    "flops_per_token": 111592219.67938747
+  },
+  {
+    "model": "resnet_bk_act",
+    "seq_length": 2048,
+    "seed": 43,
+    "flops": 1745011406684.6592,
+    "throughput": 17509.77309451557,
+    "flops_per_token": 106507043.86503047
+  },
+  {
+    "model": "resnet_bk_act",
+    "seq_length": 2048,
+    "seed": 44,
+    "flops": 1822047383469.9868,
+    "throughput": 18202.3061194786,
+    "flops_per_token": 111208946.74499431
+  },
+  {
+    "model": "resnet_bk_act",
+    "seq_length": 2048,
+    "seed": 45,
+    "flops": 1783709780892.369,
+    "throughput": 16813.663303565398,
+    "flops_per_token": 108869005.181419
+  },
+  {
+    "model": "resnet_bk_act",
+    "seq_length": 2048,
+    "seed": 46,
+    "flops": 1891854903554.7388,
+    "throughput": 18003.82754297743,
+    "flops_per_token": 115469659.64079216
+  },
+  {
+    "model": "mamba",
+    "seq_length": 2048,
+    "seed": 42,
+    "flops": 3225217541373.001,
+    "throughput": 11762.187165494595,
+    "flops_per_token": 196851656.57794195
+  },
+  {
+    "model": "mamba",
+    "seq_length": 2048,
+    "seed": 43,
+    "flops": 3578418864229.321,
+    "throughput": 11885.928572538034,
+    "flops_per_token": 218409354.50618413
+  },
+  {
+    "model": "mamba",
+    "seq_length": 2048,
+    "seed": 44,
+    "flops": 3261472467575.988,
+    "throughput": 11972.084855561703,
+    "flops_per_token": 199064481.66357347
+  },
+  {
+    "model": "mamba",
+    "seq_length": 2048,
+    "seed": 45,
+    "flops": 3399324564357.924,
+    "throughput": 12166.695441009057,
+    "flops_per_token": 207478305.93004906
+  },
+  {
+    "model": "mamba",
+    "seq_length": 2048,
+    "seed": 46,
+    "flops": 3274104673897.453,
+    "throughput": 12176.77707903656,
+    "flops_per_token": 199835490.35018635
+  }
+]
