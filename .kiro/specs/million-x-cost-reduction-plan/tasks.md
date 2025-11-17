@@ -10,8 +10,8 @@ Goal: implement the four combos from `改善案/修正案.md` + 論文 and de-ri
 - [ ] Run A/B on短/長文タスク; log convergence speed, loss floor, NaN/Inf有無.  
   Ref: `src/benchmarks/wikitext2_benchmark.py`, `notebooks/long_context_benchmark_colab.py`, `notebooks/prime_bump_init_run.ipynb`（ColabでA/B＋長文まで一括実行可）; cmd例: `python train.py --config-preset baseline --prime-bump-init --prime-bump-scale 0.02`  
   Note: long_context_benchmark (2048,4096) saved at `benchmarks/results/long_context_benchmark.json`  
-  - ResNet-BK: 2048 → ~2.0k tok/s, ~459 MB; 4096 → ~1.9k tok/s, ~803 MB  
-  - Transformer: 2048 → ~19.3k tok/s, ~327 MB; 4096 → ~53.7k tok/s, ~552 MB
+  - ResNet-BK: 2048 → ~1.7k tok/s, ~459 MB; 4096 → ~2.2k tok/s, ~803 MB  
+  - Transformer: 2048 → ~20k tok/s, ~327 MB; 4096 → ~51k tok/s, ~552 MB
 - [ ] Exit: ≥baseline収束 or 長文ロバスト性向上 with no instability.
 
 ## Phase 2 — Scattering-based Router (ACT / MoE)
