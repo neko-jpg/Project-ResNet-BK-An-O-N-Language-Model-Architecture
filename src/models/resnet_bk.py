@@ -126,6 +126,8 @@ class LanguageModel(nn.Module):
         num_experts=4,
         top_k=1,
         dropout_p=0.1,
+        prime_bump_init: bool = False,
+        prime_bump_scale: float = 0.02,
     ):
         super().__init__()
         self.d_model = d_model
@@ -147,6 +149,46 @@ class LanguageModel(nn.Module):
 
         self.layer_norm_final = nn.LayerNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size)
+
+        self._reset_parameters(prime_bump_init=prime_bump_init, prime_bump_scale=prime_bump_scale)
+
+    @staticmethod
+    def _prime_indices(n: int):
+        """Return list of primes < n using simple sieve."""
+        if n < 2:
+            return []
+        sieve = [True] * n
+        sieve[0] = sieve[1] = False
+        for p in range(2, int(n ** 0.5) + 1):
+            if sieve[p]:
+                step = p
+                start = p * p
+                sieve[start:n:step] = [False] * len(range(start, n, step))
+        return [i for i, is_prime in enumerate(sieve) if is_prime]
+
+    def _reset_parameters(self, prime_bump_init: bool, prime_bump_scale: float):
+        """Initialize weights. Optionally add prime-bump pattern to position embeddings."""
+        # Base initializations
+        nn.init.normal_(self.token_embedding.weight, mean=0.0, std=prime_bump_scale)
+        nn.init.normal_(self.position_embedding.weight, mean=0.0, std=prime_bump_scale)
+
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
+
+        # Prime-bump: add structured offsets to position embeddings following prime indices
+        if prime_bump_init:
+            primes = self._prime_indices(self.n_seq)
+            if primes:
+                pos_weight = self.position_embedding.weight.data
+                bump = torch.zeros_like(pos_weight)
+                bump[primes] = prime_bump_scale
+                pos_weight.add_(bump)
 
     def forward(self, x):
         """

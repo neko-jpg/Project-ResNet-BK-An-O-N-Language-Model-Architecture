@@ -38,6 +38,8 @@ def parse_args():
     parser.add_argument('--num-experts', type=int, default=4, help='Number of MoE experts')
     parser.add_argument('--top-k', type=int, default=1, help='Top-k experts to route to')
     parser.add_argument('--dropout-p', type=float, default=0.1, help='Dropout probability')
+    parser.add_argument('--prime-bump-init', action='store_true', help='Enable prime-bump initialization for BK core embeddings')
+    parser.add_argument('--prime-bump-scale', type=float, default=0.02, help='Std/offset scale used in prime-bump initialization')
     
     # Training hyperparameters
     parser.add_argument('--batch-size', type=int, default=20, help='Batch size')
@@ -126,6 +128,8 @@ def get_config_from_args(args):
     config.num_experts = args.num_experts
     config.top_k = args.top_k
     config.dropout_p = args.dropout_p
+    config.prime_bump_init = args.prime_bump_init
+    config.prime_bump_scale = args.prime_bump_scale
     
     # Step 2
     if args.use_analytic_gradient:

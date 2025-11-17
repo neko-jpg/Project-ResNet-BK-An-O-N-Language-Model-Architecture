@@ -102,6 +102,10 @@ class ResNetBKConfig:
     v_max: float = 3.0
     feature_clamp: float = 10.0
     grad_clip: float = 0.5
+
+    # Initialization
+    prime_bump_init: bool = False
+    prime_bump_scale: float = 0.02
     
     def __post_init__(self):
         """Validate configuration."""
@@ -273,6 +277,8 @@ class ConfigurableResNetBK(nn.Module):
             num_experts=config.num_experts,
             top_k=config.top_k,
             dropout_p=config.dropout_p,
+            prime_bump_init=config.prime_bump_init,
+            prime_bump_scale=config.prime_bump_scale,
         )
         
         # Apply configuration to model components
@@ -336,6 +342,8 @@ class ConfigurableResNetBK(nn.Module):
             enabled_features.append("Active Learning")
         if self.config.use_gradient_caching:
             enabled_features.append("Gradient Caching")
+        if self.config.prime_bump_init:
+            enabled_features.append(f"Prime-bump Init (scale={self.config.prime_bump_scale})")
         
         summary = {
             "Model": f"ResNet-BK (d={self.config.d_model}, L={self.config.n_layers}, N={self.config.n_seq})",
