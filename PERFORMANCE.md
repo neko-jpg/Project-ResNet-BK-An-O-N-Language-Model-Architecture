@@ -27,7 +27,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 ```
 
-**Expected speedup**: 1.5-2× on A100/A6000
+**Expected speedup**: Potential 1.5-2× on A100/A6000
 
 ### Use torch.compile (PyTorch 2.0+)
 
@@ -35,7 +35,7 @@ torch.backends.cudnn.allow_tf32 = True
 model = torch.compile(model, mode='max-autotune')
 ```
 
-**Expected speedup**: 1.3-1.8×
+**Expected speedup**: Potential 1.3-1.8×
 
 ### Increase Batch Size
 
@@ -44,7 +44,7 @@ model = torch.compile(model, mode='max-autotune')
 batch_size: 32  # Increase until OOM
 ```
 
-**Expected speedup**: Linear with batch size (up to hardware limit)
+**Expected speedup**: Scales with batch size (up to hardware limit)
 
 ### Enable Mixed Precision
 
@@ -63,7 +63,7 @@ for batch in train_loader:
     scaler.update()
 ```
 
-**Expected speedup**: 1.5-2× with minimal accuracy loss
+**Expected speedup**: Potential 1.5-2× with minimal accuracy loss
 
 ---
 
@@ -151,7 +151,7 @@ for batch in train_loader:
     optimizer.step()
 ```
 
-**Expected speedup**: Near-linear with GPU count
+**Expected speedup**: Scales with GPU count
 
 ---
 
@@ -170,7 +170,7 @@ output = model.generate(
 )
 ```
 
-**Expected speedup**: 2-5× for generation
+**Expected speedup**: Potential 2-5× for generation
 
 ### Quantization
 
@@ -204,7 +204,7 @@ batch_input_ids = torch.stack(inputs)
 batch_outputs = model(batch_input_ids)
 ```
 
-**Expected speedup**: 3-5× for batch size 32
+**Expected speedup**: Potential 3-5× for batch size 32
 
 ### ONNX Export
 
@@ -226,7 +226,7 @@ session = ort.InferenceSession('model.onnx')
 output = session.run(None, {'input': input_array})
 ```
 
-**Expected speedup**: 1.5-2× on CPU, 1.2-1.5× on GPU
+**Expected speedup**: Potential 1.5-2× on CPU, 1.2-1.5× on GPU
 
 ### TensorRT Optimization
 
@@ -246,7 +246,7 @@ trt_model = torch_tensorrt.compile(
 output = trt_model(input_ids)
 ```
 
-**Expected speedup**: 2-4× on NVIDIA GPUs
+**Expected speedup**: Potential 2-4× on NVIDIA GPUs
 
 ---
 
@@ -516,7 +516,7 @@ from src.models.cuda_bk_core import CUDABKCore
 model = CUDABKCore(n_seq=2048, epsilon=1.0)
 ```
 
-**Expected speedup**: 2-5× over PyTorch implementation
+**Expected speedup**: Potential 2-5× over PyTorch implementation
 
 ### Triton Kernels
 
@@ -543,7 +543,7 @@ from flash_attn import flash_attn_func
 output = flash_attn_func(q, k, v)
 ```
 
-**Expected speedup**: 2-4× for attention computation
+**Expected speedup**: Potential 2-4× for attention computation
 
 ---
 

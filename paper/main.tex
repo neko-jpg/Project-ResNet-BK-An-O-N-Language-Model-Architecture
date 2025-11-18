@@ -83,11 +83,11 @@ Our main contributions are:
 \begin{enumerate}
     \item \textbf{Mathematical foundations}: We establish rigorous connections between Birman-Schwinger operator theory and language modeling, proving that our BK-Core satisfies trace-class conditions that guarantee numerical stability.
     
-    \item \textbf{Prime-Bump initialization}: We introduce a novel initialization scheme based on prime number distribution that achieves 30\% faster convergence and follows GUE (Gaussian Unitary Ensemble) eigenvalue statistics.
+    \item \textbf{Prime-Bump initialization}: We introduce a novel initialization scheme based on prime number distribution that shows faster convergence in initial experiments and follows GUE (Gaussian Unitary Ensemble) eigenvalue statistics.
     
-    \item \textbf{Scattering-based routing}: We replace learnable MLP gating in mixture-of-experts with physics-based scattering phase computation, achieving 10× faster routing with zero training cost.
+    \item \textbf{Scattering-based routing}: We replace learnable MLP gating in mixture-of-experts with physics-based scattering phase computation, achieving faster routing with no additional training cost.
     
-    \item \textbf{Semiseparable optimization}: We exploit H = tridiag + low\_rank structure to achieve 70\% memory reduction, enabling training of 3.5B parameters on Google Colab free tier (15GB GPU) and 10B+ parameters on consumer GPUs with 24GB VRAM.
+    \item \textbf{Semiseparable optimization}: We exploit H = tridiag + low\_rank structure to achieve significant memory reduction, enabling training of larger models on consumer GPUs.
     
     \item \textbf{Mathematical validation}: We provide rigorous proofs and empirical verification of trace-class properties, Schatten norm bounds, and GUE eigenvalue statistics for Prime-Bump initialization.
     
@@ -203,7 +203,7 @@ The scattering phase satisfies:
 \end{equation}
 \end{proposition}
 
-This provides a parameter-free routing mechanism with 10× speedup over MLP gating.
+This provides a parameter-free routing mechanism with faster computation than MLP gating.
 
 \subsection{Semiseparable Matrix Structure}
 
@@ -236,7 +236,7 @@ p_{\text{halt}}(i) = \begin{cases}
 \end{cases}
 \end{equation}
 
-This achieves 40\% FLOPs reduction while maintaining perplexity within 5\%.
+This achieves FLOPs reduction while maintaining perplexity (initial experiments).
 
 
 \section{Experiments}
@@ -272,7 +272,7 @@ This achieves 40\% FLOPs reduction while maintaining perplexity within 5\%.
 
 \begin{table}[t]
 \centering
-\caption{Memory efficiency comparison showing semiseparable structure benefits. ResNet-BK achieves 70\% memory reduction compared to dense attention.}
+\caption{Memory efficiency comparison showing semiseparable structure benefits. ResNet-BK achieves significant memory reduction compared to dense attention.}
 \label{tab:memory}
 \begin{tabular}{lccc}
 \toprule
@@ -289,17 +289,17 @@ X-Large & 10B+   & 20+ GB  & RTX 4090 (24GB) \\
 \textbf{Semiseparable Structure Benefits:}
 The H = T + UV$^T$ factorization where T is tridiagonal and rank(UV$^T$) = $\lceil \log_2(N) \rceil$ provides:
 \begin{itemize}
-    \item Memory: O(N log N) vs. O(N$^2$) for dense attention (70\% reduction)
+    \item Memory: O(N log N) vs. O(N$^2$) for dense attention (significant reduction)
     \item Computation: O(N) matrix-vector multiplication
-    \item Gradient checkpointing: 85\% activation memory reduction
+    \item Gradient checkpointing: Significant activation memory reduction
 \end{itemize}
 
 \textbf{Practical Deployment:}
 \begin{itemize}
     \item RTX 3080 (8GB): Up to 1.2B parameters (tested)
     \item Google Colab T4 (15GB): Up to 3.5B parameters (validated)
-    \item RTX 3090/4090 (24GB): Up to 10B+ parameters (estimated)
-    \item Multi-GPU setup: Scales to 100B+ with model parallelism
+    \item RTX 3090/4090 (24GB): Larger models possible (estimated)
+    \item Multi-GPU setup: Further scaling with model parallelism
 \end{itemize}
 
 \subsection{Mathematical Validation}
@@ -316,7 +316,7 @@ Schatten S2 norm & $\leq \frac{1}{2}(\text{Im} z)^{-1/2} \|V\|_{L^2}$ & Verified
 Schatten S1 norm & $\leq \frac{1}{2}(\text{Im} z)^{-1} \|V\|_{L^1}$ & Verified \\
 GUE spacing (mean) & 1.0 & $0.98 \pm 0.05$ \\
 GUE spacing (std) & 0.52 & $0.54 \pm 0.03$ \\
-Memory reduction & 70\% (theoretical) & 68-72\% (measured) \\
+Memory reduction & Significant (theoretical) & Measured in experiments \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -364,7 +364,7 @@ On NVIDIA GeForce RTX 3080 (8GB VRAM) with sequence length 4096:
     \item Forward pass: 35ms (measured)
     \item Memory usage: 3.2GB (vs. 9.8GB for dense attention)
     \item Training throughput: 1200 tokens/sec (batch size 2, FP32)
-    \item Peak memory efficiency: 70\% reduction vs. dense attention
+    \item Peak memory efficiency: Significant reduction vs. dense attention
 \end{itemize}
 
 \subsection{Ablation Studies}
@@ -378,9 +378,9 @@ On NVIDIA GeForce RTX 3080 (8GB VRAM) with sequence length 4096:
 Configuration & PPL & Convergence Speed & Stability \\
 \midrule
 Full Model & 28.3 & 1.00× & 100\% \\
-$w/o$ Prime-Bump & 29.8 & 0.77× & 100\% \\
-$w/o$ Scattering Router & 28.9 & 0.95× & 100\% \\
-$w/o$ LAP Stability & 31.2 & 0.82× & 87\% \\
+$w/o$ Prime-Bump & 29.8 & Slower & 100\% \\
+$w/o$ Scattering Router & 28.9 & Similar & 100\% \\
+$w/o$ LAP Stability & 31.2 & Slower & Lower \\
 $w/o$ Semiseparable & \textbf{OOM} & -- & -- \\
 \bottomrule
 \end{tabular}
@@ -447,7 +447,7 @@ Promising directions include:
 
 Our work contributes to more efficient and accessible language model training through:
 \begin{itemize}
-    \item \textbf{Memory efficiency}: 70\% reduction enables larger models on limited hardware
+    \item \textbf{Memory efficiency}: Significant reduction enables larger models on limited hardware
     \item \textbf{Mathematical rigor}: Provides theoretical foundations for future O(N) architectures
     \item \textbf{Open source}: Complete implementation and tools available for research community
     \item \textbf{Accessibility}: Enables researchers with limited computational resources to experiment with billion-parameter models

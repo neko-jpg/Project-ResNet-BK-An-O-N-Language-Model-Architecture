@@ -2,10 +2,10 @@
 
 ## 🎯 Project Overview
 
-ResNet-BK is a mathematically rigorous O(N) language model architecture that surpasses Mamba in:
-- **Long-context stability**: 1M tokens (31× longer than Mamba)
-- **Quantization robustness**: 4× lower perplexity at INT4
-- **Dynamic efficiency**: 2× fewer FLOPs at equal perplexity
+ResNet-BK is a mathematically rigorous O(N) language model architecture exploring improvements in:
+- **Long-context stability**: Extended context length capability (initial experiments)
+- **Quantization robustness**: Better perplexity at INT4 (initial experiments)
+- **Dynamic efficiency**: Fewer FLOPs at equal perplexity (initial measurements)
 
 ## 📁 Project Structure
 
@@ -64,12 +64,14 @@ output = model.generate(input_ids, max_length=100)
 
 ## 📈 Performance Benchmarks
 
-| Metric | ResNet-BK | Mamba | Improvement |
-|--------|-----------|-------|-------------|
-| Max Context | 1M tokens | 32k tokens | **31× longer** |
-| INT4 PPL | 45 | 180 | **4× better** |
-| FLOPs | 2.5B | 5.0B | **2× fewer** |
-| Memory | 12GB | OOM | **Trainable** |
+Initial experimental results (require further validation):
+
+| Metric | ResNet-BK | Baseline | Note |
+|--------|-----------|----------|------|
+| Max Context | Extended | Standard | Initial experiments |
+| INT4 PPL | Better | Baseline | Initial experiments |
+| FLOPs | Lower | Baseline | Initial measurements |
+| Memory | Efficient | Standard | Initial tests |
 
 ## 🛠️ Development Status
 

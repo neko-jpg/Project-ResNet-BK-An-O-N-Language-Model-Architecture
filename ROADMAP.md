@@ -4,7 +4,7 @@ This document outlines the development roadmap for ResNet-BK, including complete
 
 ## Vision
 
-Build the most mathematically rigorous and efficient O(N) language model architecture, surpassing Mamba in long-context stability, quantization robustness, and dynamic compute efficiency.
+Build a mathematically rigorous and efficient O(N) language model architecture, exploring improvements in long-context stability, quantization robustness, and dynamic compute efficiency.
 
 ---
 
@@ -24,7 +24,7 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 **Key Results**:
 - Stable computation of resolvent kernel
 - Verified trace-class properties
-- Zero gradient explosions in 10k training steps
+- No gradient explosions observed in initial 10k training steps
 
 ### Phase 2: Scattering-Based Router (Q4 2024) ✅
 **Status**: Complete
@@ -37,9 +37,9 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - ✅ Scattering phase visualization
 
 **Key Results**:
-- 10× faster routing than MLP gating
+- Faster routing than MLP gating (initial measurements)
 - Interpretable routing (phase correlates with difficulty)
-- Zero training cost for routing
+- No additional training cost for routing
 
 ### Phase 3: Semiseparable Matrix Structure (Q4 2024) ✅
 **Status**: Complete
@@ -52,9 +52,9 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - ✅ Gradient checkpointing with structure awareness
 
 **Key Results**:
-- 70% memory reduction vs dense attention
+- Significant memory reduction vs dense attention
 - O(N) complexity maintained
-- Stable training on 128k sequences
+- Stable training on long sequences (initial tests)
 
 ### Phase 4: Long-Context Stability (Q4 2024) ✅
 **Status**: Complete
@@ -67,9 +67,9 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - ✅ Loss spike detection and recovery
 
 **Key Results**:
-- Stable training on 1M tokens (vs Mamba's 32k limit)
-- 31× longer context than Mamba
-- Zero gradient spikes in long-context training
+- Stable training on extended context lengths (initial experiments)
+- Longer context capability than baseline models
+- No gradient spikes observed in long-context training (initial tests)
 
 ### Phase 5: Quantization Robustness (Q4 2024) ✅
 **Status**: Complete
@@ -82,9 +82,9 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - ✅ Quantization error analysis
 
 **Key Results**:
-- 4× lower perplexity than Mamba at INT4
+- Better perplexity than baseline at INT4 (initial experiments)
 - Minimal degradation with QAT
-- Robust to extreme quantization
+- Promising robustness to quantization
 
 ### Phase 6: Dynamic Compute Efficiency (Q4 2024) ✅
 **Status**: Complete
@@ -97,9 +97,9 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - ✅ FLOPs counter for accurate measurement
 
 **Key Results**:
-- 2× fewer FLOPs than Mamba at equal perplexity
+- Fewer FLOPs than baseline at equal perplexity (initial measurements)
 - Adaptive compute allocation
-- 30% speedup on easy sequences
+- Speedup on easy sequences (initial tests)
 
 ### Phase 7: Benchmark Pipeline (Q4 2024) ✅
 **Status**: Complete
@@ -128,7 +128,7 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - ✅ Compression pipeline
 
 **Key Results**:
-- 10× compression with minimal loss
+- Significant compression with minimal loss
 - Measure-preserving distillation
 - Efficient model family
 
@@ -189,8 +189,8 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - [ ] Model serving infrastructure
 
 **Expected Impact**:
-- 5× faster training
-- 10× faster inference
+- Faster training through optimization
+- Faster inference through optimization
 - Better hardware utilization
 
 ### Phase 12: Extended Context (Q2 2025)
@@ -204,8 +204,8 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - [ ] Streaming processing
 
 **Expected Impact**:
-- 10× longer context than current
-- Book-level understanding
+- Longer context than current implementation
+- Extended document understanding
 - Long-form generation
 
 ### Phase 13: Multimodal Extension (Q3 2025)
@@ -219,8 +219,8 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 - [ ] Multimodal benchmarks
 
 **Expected Impact**:
-- Vision-language understanding
-- Audio-text processing
+- Vision-language understanding capability
+- Audio-text processing capability
 - Unified multimodal model
 
 ### Phase 14: Theoretical Extensions (Q3 2025)
@@ -235,8 +235,8 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 
 **Expected Impact**:
 - Stronger theoretical guarantees
-- Better understanding of architecture
-- Novel mathematical insights
+- Deeper understanding of architecture
+- Potential mathematical insights
 
 ### Phase 15: Real-World Applications (Q4 2025)
 **Status**: Planned
@@ -250,7 +250,7 @@ Build the most mathematically rigorous and efficient O(N) language model archite
 
 **Expected Impact**:
 - Practical applications
-- User adoption
+- Potential user adoption
 - Real-world validation
 
 ---
