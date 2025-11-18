@@ -136,7 +136,7 @@ For a detailed but accessible explanation of these concepts, please read our **[
 The full theoretical proofs are available in the paper:
 - **"Riemann Hypothesis and AI: Emergent Theory"** by Teppei Arai
 - 📄 Available at: https://doi.org/10.5281/zenodo.17346958 (License: CC BY-NC-ND 4.0)
-
+-　However, the file riemann_hypothesis_main.tex within this repository is licensed under the MIT License, so please feel free to use it as you wish.
 ---
 
 ## 📊 Benchmarking
