@@ -38,7 +38,7 @@ Initial comparative experiments suggest the following possibilities:
 
 | Metric | ResNet-BK (Ours) | Mamba (Baseline) | Note |
 |--------|------------------|------------------|------|
-| Stability | ✅ Stable (Loss: 10.82→10.59) | ⚠️ CUDA Error / Unstable | RTX 3080 (10GB), Seq=2048 |
+| Stability | ✅ Stable (Loss: 10.82→10.59) | ⚠️ CUDA Error / Unstable | RTX 3080 (8GB), Seq=2048 |
 | Complexity | O(N log N) (Memory) | O(N) | Semiseparable Matrix Structure |
 
 **Note**: These are preliminary results from initial experiments and require comprehensive validation with larger datasets and multiple runs.
