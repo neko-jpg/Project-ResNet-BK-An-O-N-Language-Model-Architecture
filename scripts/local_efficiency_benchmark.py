@@ -46,7 +46,8 @@ def make_loader(seq_length: int, batch_size: int, seed: int, dataset_name: str, 
     def tok_fn(examples):
         return tokenizer(examples["text"], add_special_tokens=False)
 
-    tokenized = raw["train"].map(tok_fn, batched=True, remove_columns=["text"])
+    # Use only a small subset of the data to avoid timeout during preprocessing
+    tokenized = raw["train"].select(range(1000)).map(tok_fn, batched=True, remove_columns=["text"])
     seq_plus_one = seq_length + 1
 
     def group(examples):
@@ -97,13 +98,18 @@ def build_models(seq_length: int, vocab_size: int, d_model: int, n_layers: int, 
     return bk_base, bk_act, mamba
 
 
+def count_parameters(model):
+    """Counts the number of trainable parameters in a model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def train_and_profile(model, loader, use_act: bool, steps: int, lr: float, model_name: str = "Model"):
     model = model.to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     losses = []
-    flop_samples = []
     model.train()
 
+    start_time = time.time()
     progress_bar = tqdm(total=steps, desc=f"Training {model_name}")
 
     for idx, (inp, tgt) in enumerate(loader):
@@ -127,22 +133,27 @@ def train_and_profile(model, loader, use_act: bool, steps: int, lr: float, model
             logits = output[0]
         else:
             logits = output
+
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), tgt.view(-1))
         loss.backward()
         opt.step()
         losses.append(loss.item())
 
-        with torch.autograd.profiler.profile(enabled=True, use_cuda=DEVICE == "cuda") as prof:
-            _ = forward_pass(inp)
-        flops = sum(e.flops or 0 for e in prof.function_events)
-        flop_samples.append(flops)
-
         progress_bar.update(1)
         progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
 
     progress_bar.close()
-    avg_flops = float(sum(flop_samples) / max(1, len(flop_samples)))
-    return {"losses": losses, "avg_flops": avg_flops, "final_loss": losses[-1] if losses else None}
+    end_time = time.time()
+
+    training_time = end_time - start_time
+    num_params = count_parameters(model)
+
+    return {
+        "losses": losses,
+        "training_time_sec": training_time,
+        "num_params": num_params,
+        "final_loss": losses[-1] if losses else None
+    }
 
 
 def main():
@@ -177,20 +188,21 @@ def main():
 
     # --- Enhanced Console Output ---
     print("\n--- Benchmark Results ---")
-    print(f"Configuration: sequence_length={args.seq_length}, d_model={args.d_model}, n_layers={args.n_layers}")
-    print("-" * 50)
-    print(f"{'Model':<20} | {'Avg FLOPs (GFLOPs)':<20} | {'Final Loss':<15}")
-    print("-" * 50)
+    print(f"Configuration: sequence_length={args.seq_length}, d_model={args.d_model}, n_layers={args.n_layers}, steps={args.train_steps}")
+    print("-" * 70)
+    print(f"{'Model':<20} | {'Parameters (M)':<15} | {'Training Time (s)':<20} | {'Final Loss':<15}")
+    print("-" * 70)
 
     models = ["resnet_bk", "resnet_bk_act", "mamba"]
     display_names = ["ResNet-BK", "ResNet-BK (GC)", "Mamba"]
 
     for model_key, display_name in zip(models, display_names):
-        flops_g = results[model_key]['avg_flops'] / 1e9 if results[model_key]['avg_flops'] else 0
+        params_m = results[model_key]['num_params'] / 1e6
+        train_time = results[model_key]['training_time_sec']
         final_loss = results[model_key]['final_loss'] if results[model_key]['final_loss'] else 'N/A'
-        print(f"{display_name:<20} | {flops_g:<20.4f} | {final_loss:<15.4f}")
+        print(f"{display_name:<20} | {params_m:<15.2f} | {train_time:<20.2f} | {final_loss:<15.4f}")
 
-    print("-" * 50)
+    print("-" * 70)
 
     # --- Unique Filename and Saving ---
     out_dir = Path(args.out_dir)
