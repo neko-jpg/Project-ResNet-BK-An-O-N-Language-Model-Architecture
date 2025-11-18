@@ -55,19 +55,21 @@ def sieve_of_eratosthenes(limit: int) -> List[int]:
 
 class PrimeBumpPotential(nn.Module):
     """
-    Prime-Bump potential with GUE eigenvalue statistics.
+    Implements the prime-bump potential V_ε used for model initialization.
     
-    Implements V_ε(x) = Σ_p α_{p,k}(ε) ψ_ε(x - log p) where:
-    - Primes p are placed at positions corresponding to log(p)
-    - Gaussian bumps ψ_ε have width controlled by ε
-    - Canonical coefficients α_{p,k} ensure finite L2 norm
+    This class constructs a potential based on the distribution of prime numbers,
+    as described in `riemann_hypothesis_main.tex`. The formula implemented is a
+    discretized version of:
+        V_ε(x) = Σ_{p,k} α_{p,k}(ε) ψ_ε(x - k log p)
     
-    Mathematical properties (from paper):
-    - Finite overlap: supp(ψ_ε(· - log p)) ∩ supp(ψ_ε(· - log q)) = ∅ 
-      for |log p - log q| > 2√ε
-    - GUE statistics: eigenvalue spacing follows Wigner surmise s·exp(-πs²/4)
-    - Spectral shift: ξ(λ) matches prime counting function
-    - Canonical coefficients: α_{p,k}(ε) = (log p) p^{-k(1/2+ε)}
+    - The coefficients `α_{p,k}(ε)` are the "canonical coefficients" computed in
+      `_compute_alpha_coefficients` (see Corollary cor:canonical-V).
+    - `ψ_ε` is a Gaussian bump function implemented in `compute_gaussian_cutoff`,
+      which acts as a smooth cutoff.
+
+    This potential provides a structured, theoretically-grounded initialization
+    for the model's embeddings, injecting an inductive bias related to the
+    spectral properties of the Riemann zeta function.
     
     Args:
         n_seq: sequence length (determines max prime)
@@ -117,12 +119,15 @@ class PrimeBumpPotential(nn.Module):
         
     def _compute_alpha_coefficients(self) -> Dict[Tuple[int, int], float]:
         """
-        Compute canonical coefficients α_{p,k}(ε) = (log p) / p^{k(1/2+ε)}.
+        Computes the canonical coefficients for the prime-bump potential.
         
-        These coefficients ensure:
-        - Finite L2 norm: ||V_ε||_L2 < ∞
-        - Proper scaling with prime magnitude
-        - Convergence of the series
+        This method implements the formula for `α_{p,k}(ε)` described in
+        Corollary cor:canonical-V of `riemann_hypothesis_main.tex`:
+            α_{p,k}(ε) = (log p) / p^{k(1/2+ε)}
+
+        These coefficients are chosen to ensure the resulting potential `V_ε` has a
+        finite L^2 norm for ε > 0, a critical property for the trace-class
+        bounds of the Birman-Schwinger operator.
         
         Returns:
             Dictionary mapping (prime, k) -> coefficient
@@ -169,7 +174,15 @@ class PrimeBumpPotential(nn.Module):
         positions: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        Compute V_ε(x) = Σ_p α_{p,k}(ε) ψ_ε(x - log p).
+        Computes the full potential V_ε(x) as a sum over prime bumps.
+
+        This method implements the superposition principle for the potential
+        from Eq. (prime-bump-realisation) in `riemann_hypothesis_main.tex`:
+            V_ε(x) = Σ_{p,k} α_{p,k}(ε) ψ_ε(x - k log p)
+
+        It iterates through the pre-computed primes and their powers, combines
+        the canonical coefficients `α_{p,k}` with the Gaussian bumps `ψ_ε`, and
+        sums them up to form the final potential.
         
         Args:
             positions: (N,) position values (default: self.positions)

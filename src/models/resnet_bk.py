@@ -1,6 +1,15 @@
 """
 ResNet-BK Architecture
 Combines BK-Core with MoE for O(N) language modeling.
+
+This file defines the main building blocks of the ResNet-BK model.
+The architecture is designed to implement the operator-theoretic concepts
+described in the accompanying paper "Weil's Explicit Formula as a Birman-Krein
+Phase Identity" (see `paper/theory/riemann_hypothesis_main.tex`).
+
+The core idea is to treat the input sequence as a potential `V_ε` in a
+quantum scattering problem, and use the spectral properties of the corresponding
+Hamiltonian `H_ε = H_0 + V_ε` as features for the language model.
 """
 
 import torch
@@ -15,10 +24,24 @@ from .prime_bump_potential import PrimeBumpPotential
 class MoEResNetBKLayer(nn.Module):
     """
     MoE-ResNet-BK Layer: combines MoE FFN with BK-Core spectral features.
+
+    This layer forms the core of the ResNet-BK model. It treats the input
+    features `x` as a source to define a potential `V_ε`, which perturbs a
+    base Hamiltonian `H_0`. The spectral response of this perturbed system,
+    `H_ε = H_0 + V_ε`, is then computed and used as learned features.
+
+    Architectural Flow (Forward Pass):
+    1.  Input `x` (B, N, D) is projected to a scalar potential `v_prelim` (B, N).
+        This corresponds to defining the perturbation `V_ε` in the theory.
+    2.  The `BirmanSchwingerCore` or `BKCoreFunction` computes the spectral
+        features (diagonal of the Green's function) of the system. This step
+        is a numerical implementation of solving the scattering problem
+        described in `riemann_hypothesis_main.tex`.
+    3.  These spectral features are projected back to `d_model` and added to
+        the output of a standard MoE-FFN layer, mixing sequence-level spectral
+        information with token-level features.
     
-    Architecture:
-        Input -> MoE-FFN -> Potential v_i -> BK-Core -> Features -> Output
-        Output = FFN_out + bk_scale * BK_out
+    The output is a residual combination: `Output = FFN_out + bk_scale * BK_out`.
     """
     
     def __init__(
@@ -201,8 +224,19 @@ class LanguageModel(nn.Module):
     """
     ResNet-BK Language Model.
     
+    This class combines the ResNet-BK blocks into a full language model.
+    It includes token and position embeddings, a stack of ResNetBKBlocks,
+    and a final layer norm and language model head.
+
+    A key feature is the optional "Prime-Bump Initialization", which is
+    inspired by the theoretical construction of the potential `V_ε` from
+    the prime numbers. See `riemann_hypothesis_main.tex` for the mathematical
+    background. When enabled, the position embeddings are initialized with a
+    pattern derived from the prime numbers, providing a structured inductive
+    bias related to the spectral properties of the Riemann zeta function.
+
     Architecture:
-        Token Embedding + Position Embedding
+        Token Embedding + Position Embedding (with optional Prime-Bump)
         -> ResNetBKBlock × n_layers
         -> LayerNorm
         -> LM Head
