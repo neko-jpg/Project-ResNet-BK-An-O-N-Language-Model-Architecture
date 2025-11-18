@@ -177,7 +177,7 @@ Zero-parameter MoE routing using scattering phase:
 
 The theoretical foundations are documented in:
 **"Riemann Hypothesis and AI: Emergent Theory"** by Teppei Arai  
-📄 Available at: [https://doi.org/10.5281/zenodo.17600573](https://doi.org/10.5281/zenodo.17600573)  
+📄 Available at:[ [https://doi.org/10.5281/zenodo.17600573](https://doi.org/10.5281/zenodo.17600573)  
 License: CC BY-NC-ND 4.0
 
 ---
