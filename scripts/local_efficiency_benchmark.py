@@ -15,12 +15,14 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from datasets import load_dataset
+import time
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 from transformers import AutoTokenizer
 
 from src.models.mamba_baseline import MambaLM, create_mamba_from_resnetbk_config
+from torch.utils.checkpoint import checkpoint
 from src.models.resnet_bk import LanguageModel as ResNetBK
-from src.training.gradient_caching import GradientCache
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -44,7 +46,8 @@ def make_loader(seq_length: int, batch_size: int, seed: int, dataset_name: str, 
     def tok_fn(examples):
         return tokenizer(examples["text"], add_special_tokens=False)
 
-    tokenized = raw["train"].map(tok_fn, batched=True, remove_columns=["text"])
+    # Use only a small subset of the data to avoid timeout during preprocessing
+    tokenized = raw["train"].select(range(1000)).map(tok_fn, batched=True, remove_columns=["text"])
     seq_plus_one = seq_length + 1
 
     def group(examples):
@@ -53,7 +56,7 @@ def make_loader(seq_length: int, batch_size: int, seed: int, dataset_name: str, 
         concat = concat[:total]
         return {"input_ids": [concat[i : i + seq_plus_one] for i in range(0, total, seq_plus_one)]}
 
-    grouped = tokenized.map(group, batched=True, remove_columns=tokenized["train"].column_names)
+    grouped = tokenized.map(group, batched=True, remove_columns=tokenized.column_names)
     grouped.set_format(type="torch", columns=["input_ids"])
     g = torch.Generator().manual_seed(seed)
 
@@ -62,7 +65,7 @@ def make_loader(seq_length: int, batch_size: int, seed: int, dataset_name: str, 
         targets = torch.stack([b["input_ids"][1:] for b in batch])
         return inputs, targets
 
-    return DataLoader(grouped["train"], batch_size=batch_size, shuffle=True, drop_last=True, generator=g, collate_fn=collate)
+    return DataLoader(grouped, batch_size=batch_size, shuffle=True, drop_last=True, generator=g, collate_fn=collate)
 
 
 def build_models(seq_length: int, vocab_size: int, d_model: int, n_layers: int, dropout: float):
@@ -95,12 +98,20 @@ def build_models(seq_length: int, vocab_size: int, d_model: int, n_layers: int, 
     return bk_base, bk_act, mamba
 
 
-def train_and_profile(model, loader, use_act: bool, steps: int, lr: float):
+def count_parameters(model):
+    """Counts the number of trainable parameters in a model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def train_and_profile(model, loader, use_act: bool, steps: int, lr: float, model_name: str = "Model"):
     model = model.to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     losses = []
-    flop_samples = []
     model.train()
+
+    start_time = time.time()
+    progress_bar = tqdm(total=steps, desc=f"Training {model_name}")
+
     for idx, (inp, tgt) in enumerate(loader):
         if idx >= steps:
             break
@@ -112,21 +123,37 @@ def train_and_profile(model, loader, use_act: bool, steps: int, lr: float):
             return model(x)
 
         if use_act:
-            cache = GradientCache(chunk_size=max(1, inp.shape[1] // 2))
-            logits = cache(forward_pass, inp)
+            # Use torch's built-in activation checkpointing
+            output = checkpoint(forward_pass, inp, use_reentrant=False)
         else:
-            logits = forward_pass(inp)
+            output = forward_pass(inp)
+
+        # Handle tuple output from Mamba model
+        if isinstance(output, tuple):
+            logits = output[0]
+        else:
+            logits = output
+
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), tgt.view(-1))
         loss.backward()
         opt.step()
         losses.append(loss.item())
 
-        with torch.autograd.profiler.profile(enabled=True, use_cuda=DEVICE == "cuda") as prof:
-            _ = forward_pass(inp)
-        flops = sum(e.flops or 0 for e in prof.function_events)
-        flop_samples.append(flops)
-    avg_flops = float(sum(flop_samples) / max(1, len(flop_samples)))
-    return {"losses": losses, "avg_flops": avg_flops}
+        progress_bar.update(1)
+        progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+
+    progress_bar.close()
+    end_time = time.time()
+
+    training_time = end_time - start_time
+    num_params = count_parameters(model)
+
+    return {
+        "losses": losses,
+        "training_time_sec": training_time,
+        "num_params": num_params,
+        "final_loss": losses[-1] if losses else None
+    }
 
 
 def main():
@@ -134,6 +161,8 @@ def main():
     parser.add_argument("--seq-length", type=int, default=2048)
     parser.add_argument("--train-steps", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--n-layers", type=int, default=6)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dataset-name", default="wikitext")
@@ -148,19 +177,42 @@ def main():
         args.seq_length, args.batch_size, args.seed, args.dataset_name, args.dataset_config, tok
     )
     bk_base, bk_act, mamba = build_models(
-        args.seq_length, tok.vocab_size, d_model=256, n_layers=6, dropout=0.1
+        args.seq_length, tok.vocab_size, d_model=args.d_model, n_layers=args.n_layers, dropout=0.1
     )
 
-    res_base = train_and_profile(bk_base, loader, use_act=False, steps=args.train_steps, lr=args.lr)
-    res_act = train_and_profile(bk_act, loader, use_act=True, steps=args.train_steps, lr=args.lr)
-    res_mamba = train_and_profile(mamba, loader, use_act=False, steps=args.train_steps, lr=args.lr)
+    res_base = train_and_profile(bk_base, loader, use_act=False, steps=args.train_steps, lr=args.lr, model_name="ResNet-BK")
+    res_act = train_and_profile(bk_act, loader, use_act=True, steps=args.train_steps, lr=args.lr, model_name="ResNet-BK (GC)")
+    res_mamba = train_and_profile(mamba, loader, use_act=False, steps=args.train_steps, lr=args.lr, model_name="Mamba")
 
     results = {"resnet_bk": res_base, "resnet_bk_act": res_act, "mamba": res_mamba}
+
+    # --- Enhanced Console Output ---
+    print("\n--- Benchmark Results ---")
+    print(f"Configuration: sequence_length={args.seq_length}, d_model={args.d_model}, n_layers={args.n_layers}, steps={args.train_steps}")
+    print("-" * 70)
+    print(f"{'Model':<20} | {'Parameters (M)':<15} | {'Training Time (s)':<20} | {'Final Loss':<15}")
+    print("-" * 70)
+
+    models = ["resnet_bk", "resnet_bk_act", "mamba"]
+    display_names = ["ResNet-BK", "ResNet-BK (GC)", "Mamba"]
+
+    for model_key, display_name in zip(models, display_names):
+        params_m = results[model_key]['num_params'] / 1e6
+        train_time = results[model_key]['training_time_sec']
+        final_loss = results[model_key]['final_loss'] if results[model_key]['final_loss'] else 'N/A'
+        print(f"{display_name:<20} | {params_m:<15.2f} | {train_time:<20.2f} | {final_loss:<15.4f}")
+
+    print("-" * 70)
+
+    # --- Unique Filename and Saving ---
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "local_efficiency_results.json"
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    filename = f"efficiency_seq{args.seq_length}_d{args.d_model}_l{args.n_layers}_{timestamp}.json"
+    out_path = out_dir / filename
+
     out_path.write_text(json.dumps(results, indent=2))
-    print("Saved", out_path)
+    print(f"Results saved to: {out_path}")
 
 
 if __name__ == "__main__":

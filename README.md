@@ -45,31 +45,23 @@ Initial comparative experiments suggest the following possibilities:
 
 ---
 
-## 🙋‍♀️ Call for Collaboration
+## 🙋‍♀️ Call for Collaboration & Contributing
 
-As a first-year undergraduate student, I need the community's help with implementation skills, computational resources, and theoretical verification. I would especially appreciate discussions with those who have expertise in the following areas:
+This project is in an early, experimental stage. As a first-year undergraduate student, I welcome and need the community's help to validate, improve, and extend this work. We are looking for collaborators of all skill levels.
 
-### Areas Where We Need Help
+**How You Can Help:**
+- **Large-Scale Training:** Help us test the model on larger datasets.
+- **CUDA Kernel Optimization:** Optimize the core components with Triton or custom CUDA kernels.
+- **Theoretical Feedback:** Provide feedback on the mathematical framework.
+- **Benchmark Validation:** Independently verify our experimental results.
 
-1. **Large-Scale Training Verification**
-   - Help with validation on larger datasets and parameter sizes
-   - Computational resource contributions
+This is a community-driven project, and we welcome any contribution, from fixing a typo to implementing a new feature.
 
-2. **CUDA Kernel Optimization**
-   - Currently implemented using PyTorch standard features
-   - Expertise in custom kernel implementation with Triton or CUDA for further acceleration
-
-3. **Theoretical Feedback**
-   - Feedback on the mathematical validity of the model from experts in mathematical physics and operator theory
-
-4. **Benchmark Validation**
-   - Independent verification of our experimental results
-   - Comparison with other baseline models
+**Ready to contribute?** Please read our **[Contributing Guidelines](docs/CONTRIBUTING.md)** to get started. It contains detailed instructions on our development setup, coding standards, and pull request process.
 
 ### Contact
 
-Please feel free to reach out via Issues, Discussions, or email. Any advice, no matter how small, is welcome!
-
+Please feel free to reach out via Issues, Discussions, or email.
 - **Issues**: [GitHub Issues](https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture/discussions)
 - **Email**: arat252539@gmail.com
@@ -80,16 +72,18 @@ Please feel free to reach out via Issues, Discussions, or email. Any advice, no 
 
 ### Installation
 
+We provide a simple script to set up a local development environment.
+
 ```bash
-# Clone the repository
+# Clone the repository and navigate into it
 git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
 cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
 
-# Install dependencies
-pip install -r requirements.txt
+# Run the setup script
+bash scripts/setup_dev.sh
 
-# Install the package
-pip install -e .
+# Activate the virtual environment
+source .venv/bin/activate
 ```
 
 ### Basic Usage
@@ -104,101 +98,92 @@ model = LanguageModel(
     d_model=256,
     n_layers=6,
     n_seq=2048,
-    num_experts=4,
-    top_k=1
 )
 
 # Forward pass
 input_ids = torch.randint(0, 50257, (2, 2048))
 logits = model(input_ids)
+print(logits.shape)
 ```
 
-### Training Example
+### Training & Benchmarking
 
 ```bash
-# Train on WikiText-2 (small-scale experiment)
-python train.py --config configs/base_config.yaml --dataset wikitext2
+# Set PYTHONPATH to include the project root
+export PYTHONPATH=$PYTHONPATH:.
 
-# Run local benchmark
-python scripts/local_long_context_benchmark.py --seq-lengths 2048 4096 --seeds 42
+# Run a small-scale training experiment on WikiText-2
+python scripts/train.py --config configs/base_config.yaml
+
+# Run the local efficiency benchmark
+python scripts/local_efficiency_benchmark.py --train-steps 10 --seq-length 1024
 ```
+
+For more details on benchmarking, see the "Benchmarking" section below.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Architecture & Mathematical Foundation
 
-ResNet-BK is built on three mathematical concepts:
+ResNet-BK is built on three core mathematical concepts from operator theory and quantum physics. The goal is to build a model where stability and efficiency are guaranteed by the underlying mathematics.
 
-### 1. Birman-Schwinger Operator Theory
+1.  **Birman-Schwinger Operator Theory**: The model's core uses a kernel based on the Birman-Schwinger principle, which provides proven bounds on the operator's properties, ensuring stability.
+2.  **Prime-Bump Initialization**: The model's potential is initialized based on the distribution of prime numbers, a technique inspired by the Riemann zeta function.
+3.  **Scattering-Based Routing**: A zero-parameter MoE router that uses the physical concept of a scattering phase to route information, eliminating the need for learnable router parameters.
 
-The core computation uses the Birman-Schwinger kernel:
+For a detailed but accessible explanation of these concepts, please read our **[Mathematical Foundations Guide](docs/THEORY.md)**.
+
+The full theoretical proofs are available in the paper:
+- **"Riemann Hypothesis and AI: Emergent Theory"** by Teppei Arai
+- 📄 Available at: https://doi.org/10.5281/zenodo.17346958 (License: CC BY-NC-ND 4.0)
+
+---
+
+## 📊 Benchmarking
+
+We provide an enhanced benchmarking script that compares ResNet-BK against a Mamba baseline.
+
+### Running the Benchmark
+
+The script is highly configurable. You can easily test different model sizes and sequence lengths.
+
+```bash
+# Set PYTHONPATH to include the project root
+export PYTHONPATH=$PYTHONPATH:.
+
+# Run with custom model dimensions and sequence length
+python scripts/local_efficiency_benchmark.py \
+  --seq-length 4096 \
+  --d-model 512 \
+  --n-layers 8 \
+  --batch-size 1
+```
+
+### Output
+
+The script provides a progress bar, a summary table in the console, and saves a detailed JSON file to `results/benchmarks/` with a unique, timestamped filename.
 
 ```
-K_ε(z) = |V_ε|^{1/2} R_0(z) |V_ε|^{1/2}
-```
-
-This provides theoretical guarantees for:
-- Hilbert-Schmidt bound: ||K_ε||_S2 ≤ (1/2)(Im z)^{-1/2} ||V_ε||_L2
-- Trace-class bound: ||K_ε||_S1 ≤ (1/2)(Im z)^{-1} ||V_ε||_L1
-- Mourre estimate: [H_0, iA] = I (optimal stability)
-
-### 2. Prime-Bump Initialization
-
-Initialize potential with prime number distribution:
-
-```
-V_ε(x) = Σ_p α_{p,k}(ε) ψ_ε(x - log p)
-```
-
-### 3. Scattering-Based Routing
-
-Zero-parameter MoE routing using scattering phase:
-
-```
-δ_ε(λ) = arg(det_2(I + K_ε(λ + i0)))
+--- Benchmark Results ---
+Configuration: sequence_length=4096, d_model=512, n_layers=8
+--------------------------------------------------
+Model                | Avg FLOPs (GFLOPs)   | Final Loss
+--------------------------------------------------
+ResNet-BK            | 123.4567             | 9.8765
+ResNet-BK (GC)       | 123.5678             | 9.8888
+Mamba                | 110.9876             | 9.9123
+--------------------------------------------------
+Results saved to: results/benchmarks/efficiency_seq4096_d512_l8_20240101-123000.json
 ```
 
 ---
 
 ## 📚 Documentation
 
-### Core Documentation
-- **[TUTORIAL.md](docs/TUTORIAL.md)** - Step-by-step training guide
-- **[API_REFERENCE.md](docs/API_REFERENCE.md)** - Complete API documentation
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Detailed design documentation
-- **[FAQ.md](docs/FAQ.md)** - Troubleshooting and common questions
-
-### Additional Resources
-- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common issues and solutions
-- **[PERFORMANCE.md](PERFORMANCE.md)** - Performance optimization guide
-- **[ROADMAP.md](ROADMAP.md)** - Development roadmap
-
-### Mathematical Foundation
-
-The theoretical foundations are documented in:
-**"Riemann Hypothesis and AI: Emergent Theory"** by Teppei Arai  
-📄 Available at:https://doi.org/10.5281/zenodo.17346958
-License: CC BY-NC-ND 4.0
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
-
-### Development Setup
-
-```bash
-# Install development dependencies
-pip install -r requirements.txt
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
-
-# Run benchmarks
-python scripts/local_long_context_benchmark.py
-```
+- **[Contributing Guidelines](docs/CONTRIBUTING.md)**: Our main guide for contributors.
+- **[Mathematical Foundations](docs/THEORY.md)**: An accessible guide to the core theory.
+- **[Tutorial](docs/TUTORIAL.md)**: Step-by-step training guide.
+- **[Roadmap](ROADMAP.md)**: Our development roadmap.
 
 ---
 

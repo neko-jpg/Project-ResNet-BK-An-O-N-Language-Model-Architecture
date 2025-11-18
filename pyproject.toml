@@ -110,9 +110,6 @@ Changelog = "https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model
 mamba-killer-train = "scripts.train:main"
 resnet-bk-train = "scripts.train:main"
 
-[tool.setuptools]
-packages = ["src"]
-
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.json"]
 
