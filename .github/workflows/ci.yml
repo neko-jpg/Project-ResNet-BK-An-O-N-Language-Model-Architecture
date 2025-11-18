@@ -14,7 +14,7 @@ jobs:
     name: Lint Code
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -52,7 +52,7 @@ jobs:
             pytorch-version: '2.2.0'
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
@@ -95,7 +95,7 @@ jobs:
       options: --gpus all
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Install dependencies
         run: |
@@ -118,7 +118,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -172,7 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -199,7 +199,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Run Bandit security scan
         uses: tj-actions/bandit@v5.1
@@ -222,7 +222,7 @@ jobs:
         python-version: ['3.10']
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Set up Python
         uses: actions/setup-python@v4
