@@ -1,7 +1,7 @@
 # Dockerfile for Mamba-Killer ResNet-BK
 # Provides reproducible environment with all dependencies
 
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
