@@ -133,6 +133,10 @@ class HolographicTTEmbedding(nn.Module):
         self.phase_encoding = phase_encoding
         self.init_scale = init_scale
         
+        # Memory optimization flags
+        self.use_triton_kernel = False  # Enable Triton TT contraction
+        self.use_checkpointing = False  # Enable gradient checkpointing
+        
         # Automatic factorization (sqrt decomposition for balanced cores)
         # 語彙数の因数分解: V = v1 × v2
         # 平方根分解により、コアサイズをバランスさせる
@@ -251,30 +255,35 @@ class HolographicTTEmbedding(nn.Module):
         # 5. Memory-Efficient Contraction
         # 物理的直観: 量子もつれ状態の測定（縮約）
         # 
-        # 従来: einsum('blrd,blrf->bldf', c1, c2) → O(B*L*d1*d2) 中間メモリ
-        # 新実装: 次元ごとの縮約 → O(B*L*max(d1,d2)) メモリ
-        # 
-        # Algorithm:
-        #   Step 1: Contract c1 over rank → (B, L, d1)
-        #   Step 2: Contract c2 over rank → (B, L, d2)
-        #   Step 3: Outer product → (B, L, d1*d2)
-        # 
-        # Wait, this still creates outer product...
-        # 
-        # Better approach: Use bmm (batched matrix multiplication)
-        #   c1: (B, L, rank, d1) → reshape → (B*L, rank, d1)
-        #   c2: (B, L, rank, d2) → reshape → (B*L, rank, d2)
-        #   bmm(c1.transpose, c2) → (B*L, d1, d2)
-        # 
-        # But bmm still creates (d1, d2) intermediate per batch!
-        # 
-        # Final approach: Use einsum but with gradient checkpointing
-        # This trades compute for memory during backward pass
+        # 最適化戦略:
+        # 1. Triton Kernel使用可能 → 最速・最省メモリ
+        # 2. Gradient Checkpointing → メモリ削減
+        # 3. 標準einsum → フォールバック
         
-        # Use einsum for forward (PyTorch optimizes this well)
-        # Memory: O(B*L*d1*d2) but only during forward
-        # Backward: Can use gradient checkpointing to reduce memory
-        out_tensor = torch.einsum('blrd,blrf->bldf', c1, c2)  # (B, L, d1, d2)
+        # Try Triton kernel first (if available)
+        use_triton = hasattr(self, 'use_triton_kernel') and self.use_triton_kernel
+        
+        if use_triton and torch.cuda.is_available():
+            try:
+                from ...kernels.tt_contraction import tt_contraction_triton
+                # Triton kernel: メモリ効率的なTT縮約
+                out_tensor = tt_contraction_triton(c1, c2)  # (B, L, d1, d2)
+            except (ImportError, Exception):
+                # Fallback to einsum
+                use_triton = False
+        
+        if not use_triton:
+            # Use gradient checkpointing for memory efficiency
+            if self.training and hasattr(self, 'use_checkpointing') and self.use_checkpointing:
+                from torch.utils.checkpoint import checkpoint
+                
+                def contraction_fn(c1_inner, c2_inner):
+                    return torch.einsum('blrd,blrf->bldf', c1_inner, c2_inner)
+                
+                out_tensor = checkpoint(contraction_fn, c1, c2, use_reentrant=False)
+            else:
+                # Standard einsum
+                out_tensor = torch.einsum('blrd,blrf->bldf', c1, c2)  # (B, L, d1, d2)
         
         # 6. Reshape to (B, L, D)
         out = out_tensor.reshape(B, L, -1)  # (B, L, d1*d2)

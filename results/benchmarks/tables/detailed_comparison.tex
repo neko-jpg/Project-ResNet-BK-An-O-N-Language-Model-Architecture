@@ -1,0 +1,35 @@
+% 詳細な比較テーブル (LaTeX)
+% Generated: 2025-11-19
+
+\begin{table}[h]
+\centering
+\caption{パラメータ数の比較}
+\label{tab:param_comparison}
+\begin{tabular}{lrrr}
+\toprule
+Component & Baseline & Ultra Optimized & Reduction \\
+\midrule
+Embedding & 5.12M & 18.40K & 99.6\% \\
+Transformer Layers & 14.19M & 544.61K & 96.2\% \\
+Output Head & 5.13M & 79.70K & 98.4\% \\
+\midrule
+\textbf{Total} & \textbf{24.44M} & \textbf{616.09K} & \textbf{97.5\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{VRAM使用量の比較（学習時、FP16）}
+\label{tab:vram_comparison}
+\begin{tabular}{lrrr}
+\toprule
+Metric & Baseline & Ultra Optimized & Reduction \\
+\midrule
+Parameter Memory & 58.1 MB & 257.3 MB & -342.5\% \\
+Forward Memory & 229.2 MB & 289.3 MB & -26.2\% \\
+Peak Memory (Training) & 264.1 MB & 309.4 MB & -17.2\% \\
+Activation Memory & 206.0 MB & 52.1 MB & 74.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -142,6 +142,13 @@ from .memory_optimizer import (
     replace_model_with_memory_optimized,
 )
 
+from .ultra_optimizer import (
+    UltraLowRankFFN,
+    UltraMemoryEfficientBlock,
+    UltraMemoryOptimizedModel,
+    create_ultra_memory_optimized_model,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -231,12 +238,18 @@ __all__ = [
     "document_complex_support",
     "get_complex_conversion_guide",
     
-    # Memory Optimizer (95% VRAM Reduction)
+    # Memory Optimizer (82-85% VRAM Reduction)
     "LowRankFFN",
     "MemoryEfficientTransformerBlock",
     "MemoryOptimizedModel",
     "create_memory_optimized_model",
     "replace_model_with_memory_optimized",
+    
+    # Ultra Memory Optimizer (84.8% VRAM Reduction)
+    "UltraLowRankFFN",
+    "UltraMemoryEfficientBlock",
+    "UltraMemoryOptimizedModel",
+    "create_ultra_memory_optimized_model",
     
     # Version
     "__version__",

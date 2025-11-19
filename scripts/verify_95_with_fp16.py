@@ -20,6 +20,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from src.models.phase1.memory_optimizer import create_memory_optimized_model
+from src.models.phase1.ultra_optimizer import create_ultra_memory_optimized_model
 from src.models.phase1.config import Phase1Config
 
 
@@ -220,27 +221,87 @@ def main():
     if results['optimized_fp32']:
         print_result(results['optimized_fp32'])
     
-    # 4. Memory Optimized (FP16) - 最終形態
-    print(f"\n4. Memory Optimized Model (Phase 1, FP16) - FINAL")
+    # 4. Memory Optimized (FP16) - 標準モード
+    print(f"\n4. Memory Optimized Model (Phase 1, FP16) - Standard")
     
     results['optimized_fp16'] = benchmark_model(
         create_optimized,
         input_shape,
-        "Memory Optimized Model",
+        "Memory Optimized Model (Standard)",
         use_fp16=True
     )
     
     if results['optimized_fp16']:
         print_result(results['optimized_fp16'])
     
-    # 5. 削減率の計算と判定
+    # 5. Memory Optimized (FP16) - 極端モード (95%+削減を目指す)
+    print(f"\n5. Memory Optimized Model (Phase 1, FP16) - EXTREME MODE")
+    
+    def create_extreme():
+        return create_memory_optimized_model(
+            vocab_size=VOCAB_SIZE,
+            d_model=D_MODEL,
+            n_layers=N_LAYERS,
+            config=config,
+            extreme_mode=True,  # 極端な最適化
+        )
+    
+    results['extreme_fp16'] = benchmark_model(
+        create_extreme,
+        input_shape,
+        "Memory Optimized Model (EXTREME)",
+        use_fp16=True
+    )
+    
+    if results['extreme_fp16']:
+        print_result(results['extreme_fp16'])
+    
+    # 6. Memory Optimized (FP16) - ULTRA MODE (95%+削減を目指す)
+    print(f"\n6. Memory Optimized Model (Phase 1, FP16) - ULTRA MODE")
+    
+    def create_ultra():
+        return create_ultra_memory_optimized_model(
+            vocab_size=VOCAB_SIZE,
+            d_model=D_MODEL,
+            n_layers=N_LAYERS,
+        )
+    
+    results['ultra_fp16'] = benchmark_model(
+        create_ultra,
+        input_shape,
+        "Memory Optimized Model (ULTRA)",
+        use_fp16=True
+    )
+    
+    if results['ultra_fp16']:
+        print_result(results['ultra_fp16'])
+    
+    # 7. 削減率の計算と判定
     print(f"\n" + "="*80)
     print(f"FINAL VERDICT")
     print(f"="*80 + "\n")
     
-    if results['baseline_fp32'] and results['optimized_fp16']:
+    # Ultraモードの結果を最優先
+    if results['baseline_fp32'] and results.get('ultra_fp16'):
+        baseline = results['baseline_fp32']
+        optimized = results['ultra_fp16']
+        mode_name = "ULTRA MODE"
+    elif results['baseline_fp32'] and results.get('extreme_fp16'):
+        baseline = results['baseline_fp32']
+        optimized = results['extreme_fp16']
+        mode_name = "EXTREME MODE"
+    elif results['baseline_fp32'] and results['optimized_fp16']:
         baseline = results['baseline_fp32']
         optimized = results['optimized_fp16']
+        mode_name = "Standard Mode"
+    else:
+        baseline = None
+        optimized = None
+        mode_name = "Unknown"
+    
+    if baseline and optimized:
+        
+        print(f"Mode: {mode_name}\n")
         
         # Parameter Memory Reduction
         param_reduction = (1 - optimized['param_mem_mb'] / baseline['param_mem_mb']) * 100
@@ -295,10 +356,25 @@ def main():
             print(f"  Activations: {fp32_opt['activation_mem_mb']:>8.1f} MB")
             print(f"  Peak:        {fp32_opt['peak_mem_mb']:>8.1f} MB")
         
-        print(f"\nOptimized (FP16) - FINAL:")
-        print(f"  Params:      {optimized['param_mem_mb']:>8.1f} MB")
-        print(f"  Activations: {optimized['activation_mem_mb']:>8.1f} MB")
-        print(f"  Peak:        {optimized['peak_mem_mb']:>8.1f} MB")
+        print(f"\nOptimized (FP16) - Standard:")
+        if results.get('optimized_fp16'):
+            opt_std = results['optimized_fp16']
+            print(f"  Params:      {opt_std['param_mem_mb']:>8.1f} MB")
+            print(f"  Activations: {opt_std['activation_mem_mb']:>8.1f} MB")
+            print(f"  Peak:        {opt_std['peak_mem_mb']:>8.1f} MB")
+        
+        if results.get('extreme_fp16'):
+            ext = results['extreme_fp16']
+            print(f"\nOptimized (FP16) - EXTREME:")
+            print(f"  Params:      {ext['param_mem_mb']:>8.1f} MB")
+            print(f"  Activations: {ext['activation_mem_mb']:>8.1f} MB")
+            print(f"  Peak:        {ext['peak_mem_mb']:>8.1f} MB")
+        
+        if results.get('ultra_fp16'):
+            print(f"\nOptimized (FP16) - ULTRA:")
+            print(f"  Params:      {optimized['param_mem_mb']:>8.1f} MB")
+            print(f"  Activations: {optimized['activation_mem_mb']:>8.1f} MB")
+            print(f"  Peak:        {optimized['peak_mem_mb']:>8.1f} MB")
         
         # 各最適化の寄与度
         print(f"\n" + "="*80)
@@ -314,13 +390,35 @@ def main():
             print(f"   {arch_reduction:>6.1f}% reduction")
             
             # 2. Mixed Precision (FP32 optimized -> FP16 optimized)
-            fp16_reduction = (1 - optimized['peak_mem_mb'] / fp32_opt['peak_mem_mb']) * 100
-            print(f"2. Mixed Precision (FP16):")
-            print(f"   {fp16_reduction:>6.1f}% additional reduction")
+            if results.get('optimized_fp16'):
+                fp16_std = results['optimized_fp16']
+                fp16_reduction = (1 - fp16_std['peak_mem_mb'] / fp32_opt['peak_mem_mb']) * 100
+                print(f"2. Mixed Precision (FP16):")
+                print(f"   {fp16_reduction:>6.1f}% additional reduction")
             
-            # 3. Total
-            print(f"3. Total Reduction:")
+            # 3. Extreme optimizations
+            if results.get('extreme_fp16'):
+                extreme_additional = (1 - optimized['peak_mem_mb'] / fp32_opt['peak_mem_mb']) * 100
+                print(f"3. Extreme Optimizations (Weight Tying + Extreme Checkpointing):")
+                print(f"   {extreme_additional:>6.1f}% additional reduction")
+            
+            # 4. Total
+            print(f"4. Total Reduction ({mode_name}):")
             print(f"   {peak_reduction:>6.1f}% (combined)")
+        
+        # 95%達成の判定
+        print(f"\n" + "="*80)
+        if peak_reduction >= 95.0:
+            print(f"🎉 SUCCESS: 95%削減目標を達成しました！")
+            print(f"   Peak VRAM: {baseline['peak_mem_mb']:.1f} MB -> {optimized['peak_mem_mb']:.1f} MB")
+            print(f"   削減率: {peak_reduction:.1f}%")
+        elif peak_reduction >= 90.0:
+            print(f"⚠️  CLOSE: {peak_reduction:.1f}%削減を達成（目標95%）")
+            print(f"   あと {95.0 - peak_reduction:.1f}% で目標達成です。")
+        else:
+            print(f"📊 PROGRESS: {peak_reduction:.1f}%削減を達成（目標95%）")
+            print(f"   さらなる最適化が必要です。")
+        print(f"="*80)
     
     else:
         print("ERROR: Benchmark failed. Could not compute reduction.")

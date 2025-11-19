@@ -1,0 +1,9 @@
+Category,Component,Baseline,Ultra_Optimized,Reduction_Percent
+Parameters,Total,24436496,616088,97.5
+Parameters,Embedding,5120000,18404,99.6
+Parameters,Transformer Layers,14186496,544608,96.2
+Parameters,Output Head,5130000,79700,98.4
+VRAM,Parameter Memory,58.1,257.3,-342.5
+VRAM,Forward Memory,229.2,289.3,-26.2
+VRAM,Peak Memory (Training),264.1,309.4,-17.2
+VRAM,Activation Memory,206.0,52.1,74.7
