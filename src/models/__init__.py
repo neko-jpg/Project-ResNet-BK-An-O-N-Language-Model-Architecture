@@ -30,6 +30,14 @@ from .mamba_baseline import (
     create_mamba_from_resnetbk_config
 )
 
+# Phase 1 Efficiency Engine
+from .phase1 import (
+    Phase1Config,
+    Phase1Diagnostics,
+    Phase1TrainingState,
+    AdaptiveRankSemiseparableLayer,
+)
+
 # Hugging Face integration (optional import)
 try:
     from .hf_resnet_bk import (
@@ -70,4 +78,9 @@ __all__ = [
     'ResNetBKForCausalLM',
     'create_resnet_bk_for_hf',
     'HF_AVAILABLE',
+    # Phase 1 Efficiency Engine
+    'Phase1Config',
+    'Phase1Diagnostics',
+    'Phase1TrainingState',
+    'AdaptiveRankSemiseparableLayer',
 ]

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -28,6 +29,10 @@ import torch.nn.functional as F
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from src.models.mamba_baseline import MambaLM, create_mamba_from_resnetbk_config
 from src.models.resnet_bk import LanguageModel as ResNetBK
@@ -133,40 +138,77 @@ def train_one(
         model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_steps, eta_min=min_lr)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp and DEVICE == "cuda")
+    
+    # Use new AMP API to avoid deprecation warning
+    device_type = 'cuda' if DEVICE == 'cuda' else 'cpu'
+    scaler = torch.amp.GradScaler(device_type, enabled=use_amp and DEVICE == "cuda")
 
     losses: List[float] = []
     wall_start = time.time()
+    diverged = False
+    
     for step, (inputs, targets) in enumerate(dataloader):
         if step >= max_steps:
             break
-        inputs = inputs.to(DEVICE)
-        targets = targets.to(DEVICE)
-        opt.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=use_amp and DEVICE == "cuda"):
-            logits = model(inputs)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
-        if not torch.isfinite(loss):
-            print(f"{model_name} divergence at step {step+1} loss={loss.item():.4f}")
-            break
-        scaler.scale(loss).backward()
-        if grad_clip:
-            scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        scaler.step(opt)
-        scaler.update()
-        scheduler.step()
-        losses.append(loss.item())
-        if (step + 1) % log_every == 0:
-            print(
-                f"{model_name} step {step+1}/{max_steps} loss={loss.item():.4f} "
-                f"lr={scheduler.get_last_lr()[0]:.2e}"
-            )
+        
+        try:
+            inputs = inputs.to(DEVICE)
+            targets = targets.to(DEVICE)
+            
+            opt.zero_grad(set_to_none=True)
+            
+            # Use new AMP API
+            with torch.amp.autocast(device_type, enabled=use_amp and DEVICE == "cuda"):
+                # MambaLM returns (logits, loss); ResNetBK returns logits tensor.
+                outputs = model(inputs)
+                logits = outputs[0] if isinstance(outputs, tuple) else outputs
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            
+            if not torch.isfinite(loss):
+                print(f"{model_name} divergence at step {step+1} loss={loss.item():.4f}")
+                diverged = True
+                break
+            
+            scaler.scale(loss).backward()
+            
+            if grad_clip:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            
+            scaler.step(opt)
+            scaler.update()
+            scheduler.step()
+            
+            losses.append(loss.item())
+            
+            if (step + 1) % log_every == 0:
+                print(
+                    f"{model_name} step {step+1}/{max_steps} loss={loss.item():.4f} "
+                    f"lr={scheduler.get_last_lr()[0]:.2e}"
+                )
+            
+            # Clear cache periodically to avoid memory fragmentation
+            if (step + 1) % 10 == 0 and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "out of memory" in str(e):
+                print(f"{model_name} CUDA error at step {step+1}: {e}")
+                print("Attempting to recover...")
+                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                diverged = True
+                break
+            else:
+                raise
+    
     return {
         "model": model_name,
         "losses": losses,
         "steps": len(losses),
         "wall_clock_sec": time.time() - wall_start,
+        "diverged": diverged,
     }
 
 
@@ -204,6 +246,7 @@ def main():
     parser.add_argument("--dataset-config", default="wikitext-2-raw-v1", help="HF dataset config")
     parser.add_argument("--tokenizer", default="gpt2", help="HF tokenizer name")
     parser.add_argument("--out-dir", default="results/benchmarks", help="Output directory for results")
+    parser.add_argument("--no-amp", action="store_true", help="Disable automatic mixed precision (use FP32)")
     args = parser.parse_args()
 
     run_tag = "theory_on" if args.use_theory else "vanilla"
@@ -231,7 +274,7 @@ def main():
         "weight_decay": 0.01,
         "log_every": 20,
         "grad_clip": 1.0,
-        "use_amp": True,
+        "use_amp": not args.no_amp,  # Disable AMP if --no-amp flag is set
         "batch_size": args.batch_size,
     }
 
@@ -260,6 +303,17 @@ def main():
                 grad_clip=train_cfg["grad_clip"],
                 use_amp=train_cfg["use_amp"],
             )
+            # Free ResNet model before running Mamba to avoid GPU memory pressure.
+            del resnet_model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                # Reset peak memory stats
+                torch.cuda.reset_peak_memory_stats()
+            
+            # Recreate dataloader for Mamba to ensure fresh data iteration
+            dataloader = make_dataloader(dataset, batch_size=bs, seed=seed)
+            
             mamba_result = train_one(
                 "mamba",
                 mamba_model,

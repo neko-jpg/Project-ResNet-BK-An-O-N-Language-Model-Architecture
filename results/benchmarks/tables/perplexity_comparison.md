@@ -1,0 +1,6 @@
+# Perplexity Comparison
+
+| Model                | Dataset                        |   Perplexity |   Bits per Byte |   Avg Loss |   Samples | Degradation vs Baseline   | < 5% Threshold   |
+|:---------------------|:-------------------------------|-------------:|----------------:|-----------:|----------:|:--------------------------|:-----------------|
+| Baseline (ResNet-BK) | wikitext (wikitext-103-raw-v1) |      50738.9 |         15.6308 |    10.8344 |       106 | nan                       | nan              |
+| Phase 1 (Config 0)   | wikitext (wikitext-103-raw-v1) |      50505.6 |         15.6242 |    10.8298 |       106 | -0.46%                    | ✅                |

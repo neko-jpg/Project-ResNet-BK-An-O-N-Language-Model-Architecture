@@ -44,10 +44,13 @@ venv.bak/
 # IDEs
 .vscode/
 .idea/
+.kiro/
+.Algorithm/
 *.swp
 *.swo
 *~
 .DS_Store
+
 
 # Windows
 Thumbs.db

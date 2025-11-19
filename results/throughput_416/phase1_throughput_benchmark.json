@@ -1,0 +1,84 @@
+{
+  "baseline": {
+    "model_name": "Baseline (ResNet-BK)",
+    "measurements": [
+      {
+        "model_name": "Baseline (ResNet-BK)",
+        "seq_length": 1024,
+        "batch_size": 1,
+        "forward_time_ms": 766.5821050002705,
+        "backward_time_ms": 1013.3321500012244,
+        "total_time_ms": 1779.914255001495,
+        "tokens_per_second": 575.3086122674712,
+        "samples_per_second": 0.5618248166674523,
+        "peak_memory_mb": 1090.12158203125,
+        "config": {
+          "vocab_size": 50257,
+          "d_model": 416,
+          "n_layers": 4,
+          "num_experts": 4,
+          "top_k": 1,
+          "dropout_p": 0.1,
+          "n_seq": 1024
+        }
+      }
+    ],
+    "complexity_order": "O(N^2)",
+    "scaling_coefficient": 0.0,
+    "r_squared": NaN
+  },
+  "phase1": {
+    "model_name": "Phase 1 (AR-SSM + HTT)",
+    "measurements": [
+      {
+        "model_name": "Phase 1 (AR-SSM + HTT)",
+        "seq_length": 1024,
+        "batch_size": 1,
+        "forward_time_ms": 912.2531499997422,
+        "backward_time_ms": 946.2776150023274,
+        "total_time_ms": 1858.5307650020695,
+        "tokens_per_second": 550.972854086093,
+        "samples_per_second": 0.5380594278184502,
+        "peak_memory_mb": 938.60205078125,
+        "config": {
+          "vocab_size": 50257,
+          "d_model": 416,
+          "n_layers": 4,
+          "n_seq": 1024,
+          "phase1_config": {
+            "ar_ssm_enabled": true,
+            "ar_ssm_max_rank": 32,
+            "ar_ssm_min_rank": 4,
+            "ar_ssm_gate_hidden_dim": null,
+            "ar_ssm_l1_regularization": 0.001,
+            "ar_ssm_use_fused_scan": true,
+            "htt_enabled": true,
+            "htt_rank": 16,
+            "htt_num_cores": 2,
+            "htt_phase_encoding": true,
+            "htt_compression_target": 0.1,
+            "lns_enabled": false,
+            "lns_block_size_m": 128,
+            "lns_block_size_n": 128,
+            "lns_block_size_k": 32,
+            "lns_use_max_log": true,
+            "stability_monitoring_enabled": true,
+            "stability_threshold": 1e-06,
+            "schatten_s1_bound": 100.0,
+            "schatten_s2_bound": 50.0,
+            "gradient_norm_threshold": 10.0,
+            "use_gradient_checkpointing": true,
+            "checkpoint_ar_ssm": true,
+            "checkpoint_htt": false,
+            "target_vram_gb": 8.0,
+            "target_ppl_degradation": 0.05,
+            "target_speedup": 3.0
+          }
+        }
+      }
+    ],
+    "complexity_order": "O(N^2)",
+    "scaling_coefficient": 0.0,
+    "r_squared": NaN
+  }
+}
