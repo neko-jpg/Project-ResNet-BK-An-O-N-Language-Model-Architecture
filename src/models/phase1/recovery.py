@@ -61,7 +61,9 @@ class Phase1ErrorRecovery:
     def __init__(
         self,
         max_recovery_attempts: int = 3,
-        enable_logging: bool = True
+        enable_logging: bool = True,
+        enable_checkpoint_rollback: bool = True,
+        checkpoint_save_interval: int = 100,
     ):
         """
         Phase1ErrorRecoveryを初期化します。
@@ -69,14 +71,23 @@ class Phase1ErrorRecovery:
         Args:
             max_recovery_attempts: 最大回復試行回数
             enable_logging: ログ記録を有効にするかどうか
+            enable_checkpoint_rollback: チェックポイントロールバックを有効にするか
+            checkpoint_save_interval: チェックポイント保存間隔（ステップ数）
         """
         self.max_recovery_attempts = max_recovery_attempts
         self.enable_logging = enable_logging
+        self.enable_checkpoint_rollback = enable_checkpoint_rollback
+        self.checkpoint_save_interval = checkpoint_save_interval
         
         # 回復履歴
         self.recovery_history: List[RecoveryAction] = []
         self.vram_recovery_attempts = 0
         self.stability_recovery_attempts = 0
+        
+        # チェックポイント管理
+        self.last_stable_checkpoint: Optional[Dict[str, Any]] = None
+        self.last_stable_step: int = 0
+        self.checkpoint_history: List[Dict[str, Any]] = []
     
     def handle_vram_exhausted(
         self,
@@ -309,6 +320,24 @@ class Phase1ErrorRecovery:
             self._log_info("Recovery successful: Gradient clipping enabled")
             return True
         
+        # 戦略4: チェックポイントロールバック
+        if self.enable_checkpoint_rollback and model:
+            self._log_warning("Attempting recovery: Rolling back to last stable checkpoint")
+            
+            success = self.rollback_to_checkpoint(model, optimizer)
+            if success:
+                self._log_info("Recovery successful: Rolled back to stable checkpoint")
+                return True
+        
+        # 戦略5: 不安定な層の部分的再初期化
+        if model and error.component:
+            self._log_warning(f"Attempting recovery: Reinitializing unstable layer {error.component}")
+            
+            success = self.reinitialize_layer(model, error.component, init_scale=0.01)
+            if success:
+                self._log_info(f"Recovery successful: Layer {error.component} reinitialized")
+                return True
+        
         # すべての戦略が失敗
         self._log_error("All stability recovery strategies exhausted")
         self.recovery_history.append(RecoveryAction(
@@ -322,6 +351,176 @@ class Phase1ErrorRecovery:
         ))
         
         return False
+    
+    def save_checkpoint(
+        self,
+        model: nn.Module,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        step: int = 0,
+        additional_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        安定したチェックポイントを保存します。
+        
+        Args:
+            model: モデルインスタンス
+            optimizer: オプティマイザインスタンス
+            step: 現在のステップ数
+            additional_state: 追加の状態情報
+        """
+        if not self.enable_checkpoint_rollback:
+            return
+        
+        checkpoint = {
+            'step': step,
+            'model_state_dict': {k: v.cpu().clone() for k, v in model.state_dict().items()},
+        }
+        
+        if optimizer is not None:
+            checkpoint['optimizer_state_dict'] = {
+                k: v if not isinstance(v, torch.Tensor) else v.cpu().clone()
+                for k, v in optimizer.state_dict().items()
+            }
+        
+        if additional_state is not None:
+            checkpoint['additional_state'] = additional_state
+        
+        self.last_stable_checkpoint = checkpoint
+        self.last_stable_step = step
+        
+        # 履歴に追加（最大10個まで保持）
+        self.checkpoint_history.append(checkpoint)
+        if len(self.checkpoint_history) > 10:
+            self.checkpoint_history.pop(0)
+        
+        self._log_info(f"Checkpoint saved at step {step}")
+    
+    def rollback_to_checkpoint(
+        self,
+        model: nn.Module,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+    ) -> bool:
+        """
+        最後の安定したチェックポイントにロールバックします。
+        
+        Args:
+            model: モデルインスタンス
+            optimizer: オプティマイザインスタンス
+        
+        Returns:
+            ロールバックが成功した場合True
+        """
+        if not self.enable_checkpoint_rollback or self.last_stable_checkpoint is None:
+            self._log_warning("No checkpoint available for rollback")
+            return False
+        
+        import time
+        timestamp = time.time()
+        
+        try:
+            # モデルの状態を復元
+            model_state = {
+                k: v.to(next(model.parameters()).device)
+                for k, v in self.last_stable_checkpoint['model_state_dict'].items()
+            }
+            model.load_state_dict(model_state)
+            
+            # オプティマイザの状態を復元
+            if optimizer is not None and 'optimizer_state_dict' in self.last_stable_checkpoint:
+                optimizer.load_state_dict(self.last_stable_checkpoint['optimizer_state_dict'])
+            
+            self.recovery_history.append(RecoveryAction(
+                action_type="checkpoint_rollback",
+                timestamp=timestamp,
+                success=True,
+                details={
+                    "rollback_to_step": self.last_stable_step,
+                }
+            ))
+            
+            self._log_info(f"Successfully rolled back to step {self.last_stable_step}")
+            return True
+        
+        except Exception as e:
+            self._log_error(f"Checkpoint rollback failed: {e}")
+            self.recovery_history.append(RecoveryAction(
+                action_type="checkpoint_rollback",
+                timestamp=timestamp,
+                success=False,
+                details={
+                    "error": str(e),
+                }
+            ))
+            return False
+    
+    def reinitialize_layer(
+        self,
+        model: nn.Module,
+        layer_name: str,
+        init_scale: float = 0.02,
+    ) -> bool:
+        """
+        特定の層を部分的に再初期化します。
+        
+        特にG_ii（対角要素）が不安定になった場合に有効です。
+        
+        Args:
+            model: モデルインスタンス
+            layer_name: 再初期化する層の名前
+            init_scale: 初期化スケール
+        
+        Returns:
+            再初期化が成功した場合True
+        """
+        import time
+        timestamp = time.time()
+        
+        try:
+            # 層を取得
+            layer = None
+            for name, module in model.named_modules():
+                if name == layer_name:
+                    layer = module
+                    break
+            
+            if layer is None:
+                self._log_warning(f"Layer {layer_name} not found in model")
+                return False
+            
+            # 層のパラメータを再初期化
+            for param in layer.parameters():
+                if param.dim() >= 2:
+                    # 重み行列: Xavier初期化
+                    nn.init.xavier_uniform_(param, gain=init_scale)
+                else:
+                    # バイアス: ゼロ初期化
+                    nn.init.zeros_(param)
+            
+            self.recovery_history.append(RecoveryAction(
+                action_type="layer_reinitialization",
+                timestamp=timestamp,
+                success=True,
+                details={
+                    "layer_name": layer_name,
+                    "init_scale": init_scale,
+                }
+            ))
+            
+            self._log_info(f"Successfully reinitialized layer: {layer_name}")
+            return True
+        
+        except Exception as e:
+            self._log_error(f"Layer reinitialization failed: {e}")
+            self.recovery_history.append(RecoveryAction(
+                action_type="layer_reinitialization",
+                timestamp=timestamp,
+                success=False,
+                details={
+                    "layer_name": layer_name,
+                    "error": str(e),
+                }
+            ))
+            return False
     
     def reset_recovery_counters(self) -> None:
         """回復試行カウンタをリセットします。"""

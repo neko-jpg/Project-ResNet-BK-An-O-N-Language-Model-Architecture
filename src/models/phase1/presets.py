@@ -427,6 +427,7 @@ def get_preset(name: str) -> Phase1Config:
     Args:
         name: プリセット名（"8gb", "10gb", "24gb", "inference", 
               "max_quality", "max_efficiency"）
+              または "speed_oriented", "memory_oriented" などのエイリアス
     
     Returns:
         Phase1Config
@@ -437,14 +438,27 @@ def get_preset(name: str) -> Phase1Config:
     Example:
         >>> config = get_preset("8gb")
         >>> config = get_preset("inference")
+        >>> config = get_preset("speed_oriented")  # エイリアス
     """
-    if name not in PRESET_REGISTRY:
-        available = ", ".join(PRESET_REGISTRY.keys())
+    # エイリアスのマッピング
+    aliases = {
+        "speed_oriented": "24gb",
+        "memory_oriented": "8gb",
+        "balanced": "10gb",
+        "quality": "max_quality",
+        "efficiency": "max_efficiency",
+    }
+    
+    # エイリアスを解決
+    resolved_name = aliases.get(name, name)
+    
+    if resolved_name not in PRESET_REGISTRY:
+        available = ", ".join(list(PRESET_REGISTRY.keys()) + list(aliases.keys()))
         raise ValueError(
             f"Unknown preset '{name}'. Available presets: {available}"
         )
     
-    return PRESET_REGISTRY[name]
+    return PRESET_REGISTRY[resolved_name]
 
 
 def list_presets() -> Dict[str, str]:

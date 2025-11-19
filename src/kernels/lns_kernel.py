@@ -49,6 +49,19 @@ except ImportError:
 
 
 if TRITON_AVAILABLE:
+    @triton.autotune(
+        configs=[
+            triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 64}, num_stages=3, num_warps=8),
+            triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 256, 'BLOCK_SIZE_K': 32}, num_stages=4, num_warps=4),
+            triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 32}, num_stages=4, num_warps=4),
+            triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 32}, num_stages=4, num_warps=4),
+            triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 32}, num_stages=4, num_warps=4),
+            triton.Config({'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 32}, num_stages=4, num_warps=4),
+            triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 32}, num_stages=5, num_warps=2),
+            triton.Config({'BLOCK_SIZE_M': 32, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 32}, num_stages=5, num_warps=2),
+        ],
+        key=['M', 'N', 'K'],
+    )
     @triton.jit
     def lns_matmul_kernel(
         # Pointers to matrices
@@ -135,14 +148,29 @@ if TRITON_AVAILABLE:
             # 物理的直観: 乗算を加算に変換
             log_prod = a + b
             
-            # Requirement 3.2: Max-log accumulation
-            # Instead of: acc += exp(log_prod) (expensive)
-            # We use: acc = max(acc, log_prod) (cheap approximation)
+            # Requirement 3.2: Improved log-sum-exp accumulation
+            # Standard: log(exp(x) + exp(y)) = max(x,y) + log(1 + exp(-|x-y|))
+            # 物理的直観: log1p を使用した高精度な数値安定実装
             # 
-            # 物理的直観: 支配的な項のみを保持
-            # This approximation works well for sparse activations
-            # where one term dominates the sum
-            accumulator = tl.maximum(accumulator, log_prod)
+            # Max-log approximation: log(Σ exp(x_i)) ≈ max(x_i)
+            # Improved: log(Σ exp(x_i)) ≈ max(x_i) + log(1 + Σ exp(x_i - max(x_i)))
+            # 
+            # For numerical stability, we use:
+            # log_add(a, b) = max(a, b) + log1p(exp(-|a - b|))
+            
+            # Compute correction term for better accuracy
+            max_val = tl.maximum(accumulator, log_prod)
+            min_val = tl.minimum(accumulator, log_prod)
+            
+            # Correction: log(1 + exp(min - max))
+            # Use log1p for numerical stability when min ≈ max
+            diff = min_val - max_val
+            # Clamp diff to avoid overflow in exp
+            diff = tl.maximum(diff, -20.0)  # exp(-20) ≈ 2e-9, negligible
+            correction = tl.log1p(tl.exp(diff))
+            
+            # Update accumulator with correction
+            accumulator = max_val + correction
             
             # Advance pointers to next K block
             a_ptrs += BLOCK_SIZE_K * stride_ak

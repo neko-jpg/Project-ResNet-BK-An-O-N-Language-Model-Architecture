@@ -1,0 +1,32 @@
+{
+  "standard": {
+    "embedding_type": "Standard nn.Embedding",
+    "vocab_size": 10000,
+    "d_model": 512,
+    "batch_size": 2,
+    "seq_length": 1024,
+    "param_count": 5120000,
+    "param_memory_mb": 19.53125,
+    "initial_vram_mb": 20.0,
+    "after_forward_vram_mb": 24.015625,
+    "after_backward_vram_mb": 48.0166015625,
+    "peak_vram_mb": 68.0166015625,
+    "baseline_peak_vram_mb": null,
+    "vram_reduction_percent": null
+  },
+  "htt": {
+    "embedding_type": "HTT Embedding",
+    "vocab_size": 10000,
+    "d_model": 512,
+    "batch_size": 2,
+    "seq_length": 1024,
+    "param_count": 36808,
+    "param_memory_mb": 0.140411376953125,
+    "initial_vram_mb": 0.14111328125,
+    "after_forward_vram_mb": 23.7587890625,
+    "after_backward_vram_mb": 32.447265625,
+    "peak_vram_mb": 36.892578125,
+    "baseline_peak_vram_mb": 68.0166015625,
+    "vram_reduction_percent": 45.75945096124855
+  }
+}

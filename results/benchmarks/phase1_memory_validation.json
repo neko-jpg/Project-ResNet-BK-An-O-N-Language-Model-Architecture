@@ -3,79 +3,79 @@
     "model_name": "Baseline (ResNet-BK)",
     "config": {
       "vocab_size": 50257,
-      "d_model": 256,
-      "n_layers": 4,
-      "n_seq": 1024,
+      "d_model": 1024,
+      "n_layers": 6,
+      "n_seq": 512,
       "num_experts": 4,
       "top_k": 1,
       "dropout_p": 0.1
     },
-    "batch_size": 2,
-    "seq_length": 1024,
+    "batch_size": 1,
+    "seq_length": 512,
     "vocab_size": 50257,
-    "d_model": 256,
-    "n_layers": 4,
+    "d_model": 1024,
+    "n_layers": 6,
     "snapshots": [
       {
         "stage": "initial",
-        "allocated_mb": 117.33642578125,
-        "reserved_mb": 118.0,
-        "max_allocated_mb": 117.33642578125,
+        "allocated_mb": 779.39794921875,
+        "reserved_mb": 878.0,
+        "max_allocated_mb": 779.39794921875,
         "timestamp_ms": 0.0
       },
       {
         "stage": "before_forward",
-        "allocated_mb": 117.36767578125,
-        "reserved_mb": 118.0,
-        "max_allocated_mb": 117.36767578125,
-        "timestamp_ms": 28.607845306396484
+        "allocated_mb": 779.40576171875,
+        "reserved_mb": 878.0,
+        "max_allocated_mb": 779.40576171875,
+        "timestamp_ms": 27.000904083251953
       },
       {
         "stage": "after_forward",
-        "allocated_mb": 992.20361328125,
-        "reserved_mb": 1004.0,
-        "max_allocated_mb": 992.20361328125,
-        "timestamp_ms": 1713.3493423461914
+        "allocated_mb": 1109.08203125,
+        "reserved_mb": 1156.0,
+        "max_allocated_mb": 1109.08203125,
+        "timestamp_ms": 1123.5911846160889
       },
       {
         "stage": "before_backward",
-        "allocated_mb": 992.20361328125,
-        "reserved_mb": 1002.0,
-        "max_allocated_mb": 992.20361328125,
-        "timestamp_ms": 1714.3495082855225
+        "allocated_mb": 1109.08203125,
+        "reserved_mb": 1154.0,
+        "max_allocated_mb": 1109.08203125,
+        "timestamp_ms": 1124.4840621948242
       },
       {
         "stage": "after_backward",
-        "allocated_mb": 641.79052734375,
-        "reserved_mb": 1792.0,
-        "max_allocated_mb": 1777.46923828125,
-        "timestamp_ms": 1999.0520477294922
+        "allocated_mb": 1673.20947265625,
+        "reserved_mb": 1872.0,
+        "max_allocated_mb": 1675.2099609375,
+        "timestamp_ms": 1409.1272354125977
       },
       {
         "stage": "final",
-        "allocated_mb": 641.79052734375,
-        "reserved_mb": 1792.0,
-        "max_allocated_mb": 1777.46923828125,
-        "timestamp_ms": 1999.0520477294922
+        "allocated_mb": 1673.20947265625,
+        "reserved_mb": 1872.0,
+        "max_allocated_mb": 1675.2099609375,
+        "timestamp_ms": 1410.2122783660889
       },
       {
         "stage": "before_full_pass",
-        "allocated_mb": 641.79052734375,
-        "reserved_mb": 958.0,
-        "max_allocated_mb": 641.79052734375,
-        "timestamp_ms": 2005.0528049468994
+        "allocated_mb": 1673.20947265625,
+        "reserved_mb": 1848.0,
+        "max_allocated_mb": 1673.20947265625,
+        "timestamp_ms": 1418.7226295471191
       },
       {
         "stage": "after_full_pass",
-        "allocated_mb": 641.79052734375,
-        "reserved_mb": 2166.0,
-        "max_allocated_mb": 1902.39404296875,
-        "timestamp_ms": 3147.0119953155518
+        "allocated_mb": 1673.20947265625,
+        "reserved_mb": 2372.0,
+        "max_allocated_mb": 2093.2021484375,
+        "timestamp_ms": 2192.1231746673584
       }
     ],
-    "peak_forward_mb": 992.20361328125,
-    "peak_backward_mb": 1777.46923828125,
-    "peak_total_mb": 1902.39404296875,
+    "peak_forward_mb": 1109.08203125,
+    "peak_backward_mb": 1675.2099609375,
+    "peak_total_mb": 2093.2021484375,
     "baseline_peak_mb": null,
     "memory_reduction_percent": null,
     "passes_8gb_target": true,
@@ -85,9 +85,9 @@
     "model_name": "Phase 1 (AR-SSM + HTT)",
     "config": {
       "vocab_size": 50257,
-      "d_model": 256,
-      "n_layers": 4,
-      "n_seq": 1024,
+      "d_model": 1024,
+      "n_layers": 6,
+      "n_seq": 512,
       "phase1_config": {
         "ar_ssm_enabled": true,
         "ar_ssm_max_rank": 32,
@@ -118,74 +118,74 @@
         "target_speedup": 3.0
       }
     },
-    "batch_size": 2,
-    "seq_length": 1024,
+    "batch_size": 1,
+    "seq_length": 512,
     "vocab_size": 50257,
-    "d_model": 256,
-    "n_layers": 4,
+    "d_model": 1024,
+    "n_layers": 6,
     "snapshots": [
       {
         "stage": "initial",
-        "allocated_mb": 82.16748046875,
-        "reserved_mb": 432.0,
-        "max_allocated_mb": 82.16748046875,
+        "allocated_mb": 598.29931640625,
+        "reserved_mb": 700.0,
+        "max_allocated_mb": 598.29931640625,
         "timestamp_ms": 0.0
       },
       {
         "stage": "before_forward",
-        "allocated_mb": 82.19873046875,
-        "reserved_mb": 432.0,
-        "max_allocated_mb": 82.19873046875,
-        "timestamp_ms": 1.0037422180175781
+        "allocated_mb": 598.30712890625,
+        "reserved_mb": 700.0,
+        "max_allocated_mb": 598.30712890625,
+        "timestamp_ms": 0.9889602661132812
       },
       {
         "stage": "after_forward",
-        "allocated_mb": 958.02099609375,
-        "reserved_mb": 1260.0,
-        "max_allocated_mb": 958.02099609375,
-        "timestamp_ms": 1097.8119373321533
+        "allocated_mb": 927.51611328125,
+        "reserved_mb": 962.0,
+        "max_allocated_mb": 927.51611328125,
+        "timestamp_ms": 645.9894180297852
       },
       {
         "stage": "before_backward",
-        "allocated_mb": 958.02099609375,
-        "reserved_mb": 1258.0,
-        "max_allocated_mb": 958.02099609375,
-        "timestamp_ms": 1098.8123416900635
+        "allocated_mb": 927.51611328125,
+        "reserved_mb": 960.0,
+        "max_allocated_mb": 927.51611328125,
+        "timestamp_ms": 654.9887657165527
       },
       {
         "stage": "after_backward",
-        "allocated_mb": 540.79443359375,
-        "reserved_mb": 2048.0,
-        "max_allocated_mb": 1743.28662109375,
-        "timestamp_ms": 1176.2657165527344
+        "allocated_mb": 1278.51220703125,
+        "reserved_mb": 1480.0,
+        "max_allocated_mb": 1295.55908203125,
+        "timestamp_ms": 707.7553272247314
       },
       {
         "stage": "final",
-        "allocated_mb": 540.79443359375,
-        "reserved_mb": 2048.0,
-        "max_allocated_mb": 1743.28662109375,
-        "timestamp_ms": 1176.2657165527344
+        "allocated_mb": 1278.51220703125,
+        "reserved_mb": 1480.0,
+        "max_allocated_mb": 1295.55908203125,
+        "timestamp_ms": 707.7553272247314
       },
       {
         "stage": "before_full_pass",
-        "allocated_mb": 540.79443359375,
-        "reserved_mb": 854.0,
-        "max_allocated_mb": 540.79443359375,
-        "timestamp_ms": 1183.398723602295
+        "allocated_mb": 1278.51220703125,
+        "reserved_mb": 1444.0,
+        "max_allocated_mb": 1278.51220703125,
+        "timestamp_ms": 711.26389503479
       },
       {
         "stage": "after_full_pass",
-        "allocated_mb": 540.79443359375,
-        "reserved_mb": 2066.0,
-        "max_allocated_mb": 1810.39453125,
-        "timestamp_ms": 2277.1732807159424
+        "allocated_mb": 1278.51220703125,
+        "reserved_mb": 1980.0,
+        "max_allocated_mb": 1707.18408203125,
+        "timestamp_ms": 1532.019853591919
       }
     ],
-    "peak_forward_mb": 958.02099609375,
-    "peak_backward_mb": 1743.28662109375,
-    "peak_total_mb": 1810.39453125,
-    "baseline_peak_mb": 1902.39404296875,
-    "memory_reduction_percent": 4.835986112276806,
+    "peak_forward_mb": 927.51611328125,
+    "peak_backward_mb": 1295.55908203125,
+    "peak_total_mb": 1707.18408203125,
+    "baseline_peak_mb": 2093.2021484375,
+    "memory_reduction_percent": 18.441509182206726,
     "passes_8gb_target": true,
     "passes_10gb_target": true
   }

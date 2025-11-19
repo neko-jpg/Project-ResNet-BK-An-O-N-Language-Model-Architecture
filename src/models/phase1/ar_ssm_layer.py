@@ -119,6 +119,10 @@ class AdaptiveRankSemiseparableLayer(nn.Module):
             nn.Sigmoid()  # Output ∈ [0, 1] for soft gating
         )
         
+        # Gate discretization mode: 'soft' (default), 'ste' (Straight-Through Estimator), 'gumbel' (Gumbel-Softmax)
+        self.gate_mode = 'soft'  # Can be changed via set_gate_mode()
+        self.gumbel_temperature = 1.0  # Temperature for Gumbel-Softmax
+        
         # U Projection: Input → Low-rank space
         # "Source currents" in physical analogy
         # Requirement 1.1: Add initialization for U_proj
@@ -663,6 +667,23 @@ class AdaptiveRankSemiseparableLayer(nn.Module):
         
         return y, diagnostics
     
+    def set_gate_mode(self, mode: str, gumbel_temperature: float = 1.0):
+        """
+        Set gate discretization mode for improved gradient flow.
+        
+        物理的直観:
+        - 'soft': 連続的なゲート（デフォルト、学習初期に推奨）
+        - 'ste': Straight-Through Estimator（推論時の離散化、勾配は連続）
+        - 'gumbel': Gumbel-Softmax（確率的離散化、温度制御可能）
+        
+        Args:
+            mode: 'soft', 'ste', or 'gumbel'
+            gumbel_temperature: Temperature for Gumbel-Softmax (lower = more discrete)
+        """
+        assert mode in ['soft', 'ste', 'gumbel'], f"Invalid gate mode: {mode}"
+        self.gate_mode = mode
+        self.gumbel_temperature = gumbel_temperature
+    
     def estimate_rank_gate(self, x: torch.Tensor) -> torch.Tensor:
         """
         Estimate per-position complexity and generate rank-wise gate coefficients.
@@ -675,6 +696,7 @@ class AdaptiveRankSemiseparableLayer(nn.Module):
         Implementation:
         - Uses complexity_gate network: Linear → ReLU → Linear → Sigmoid
         - Outputs soft gates ∈ [0, 1] for differentiability
+        - Supports STE and Gumbel-Softmax for improved gradient flow
         - L1 regularization encourages sparsity (automatic rank reduction)
         - Supports rank scheduling for curriculum learning
         
@@ -692,7 +714,45 @@ class AdaptiveRankSemiseparableLayer(nn.Module):
         
         # Apply complexity gate network
         # (B, L, D) → (B, L, max_rank)
-        gates = self.complexity_gate(x)
+        gates_soft = self.complexity_gate(x)
+        
+        # Apply gate discretization based on mode
+        if self.gate_mode == 'soft':
+            # Soft gating (default): continuous values ∈ [0, 1]
+            gates = gates_soft
+        
+        elif self.gate_mode == 'ste':
+            # Straight-Through Estimator: discrete forward, continuous backward
+            # Forward: gate = (gate >= 0.5).float()
+            # Backward: gradient flows through as if gate = gate_soft
+            # 物理的直観: 推論時は離散化、学習時は勾配を保持
+            gates_hard = (gates_soft >= 0.5).float()
+            # STE trick: gates = gates_hard - gates_soft.detach() + gates_soft
+            # This makes forward use gates_hard, backward use gates_soft
+            gates = gates_hard - gates_soft.detach() + gates_soft
+        
+        elif self.gate_mode == 'gumbel':
+            # Gumbel-Softmax: differentiable sampling from categorical distribution
+            # 物理的直観: 確率的離散化、温度パラメータで制御
+            # Convert sigmoid outputs to logits for Gumbel-Softmax
+            # sigmoid(x) = 1 / (1 + exp(-x)) → x = log(sigmoid / (1 - sigmoid))
+            eps = 1e-8
+            logits = torch.log(gates_soft + eps) - torch.log(1 - gates_soft + eps)
+            
+            # Apply Gumbel-Softmax
+            # Sample Gumbel noise
+            if self.training:
+                gumbel_noise = -torch.log(-torch.log(torch.rand_like(logits) + eps) + eps)
+                logits_with_noise = (logits + gumbel_noise) / self.gumbel_temperature
+            else:
+                logits_with_noise = logits / self.gumbel_temperature
+            
+            # Softmax over binary choice (on/off for each rank)
+            # For binary gates, we use sigmoid instead of softmax
+            gates = torch.sigmoid(logits_with_noise)
+        
+        else:
+            raise ValueError(f"Unknown gate mode: {self.gate_mode}")
         
         # Apply rank scheduling if enabled (curriculum learning)
         # During early training, limit effective rank to current_max_rank

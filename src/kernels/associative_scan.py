@@ -150,6 +150,15 @@ if TRITON_AVAILABLE:
         tl.store(output_ptr + offsets, x, mask=mask)
 
 
+    @triton.autotune(
+        configs=[
+            triton.Config({'BLOCK_SIZE': 256}, num_stages=3, num_warps=4),
+            triton.Config({'BLOCK_SIZE': 512}, num_stages=3, num_warps=8),
+            triton.Config({'BLOCK_SIZE': 1024}, num_stages=2, num_warps=8),
+            triton.Config({'BLOCK_SIZE': 128}, num_stages=4, num_warps=4),
+        ],
+        key=['N'],
+    )
     @triton.jit  
     def fused_associative_scan_kernel_optimized(
         input_ptr,
