@@ -134,6 +134,14 @@ from .complex_utils import (
     get_complex_conversion_guide,
 )
 
+from .memory_optimizer import (
+    LowRankFFN,
+    MemoryEfficientTransformerBlock,
+    MemoryOptimizedModel,
+    create_memory_optimized_model,
+    replace_model_with_memory_optimized,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -222,6 +230,13 @@ __all__ = [
     "ComplexLinear",
     "document_complex_support",
     "get_complex_conversion_guide",
+    
+    # Memory Optimizer (95% VRAM Reduction)
+    "LowRankFFN",
+    "MemoryEfficientTransformerBlock",
+    "MemoryOptimizedModel",
+    "create_memory_optimized_model",
+    "replace_model_with_memory_optimized",
     
     # Version
     "__version__",

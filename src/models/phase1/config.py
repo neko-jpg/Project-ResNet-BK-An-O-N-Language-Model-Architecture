@@ -101,6 +101,10 @@ class Phase1Config:
     checkpoint_ar_ssm: bool = True
     checkpoint_htt: bool = False  # HTT is already memory-efficient
     
+    # FFN Compression Configuration
+    ffn_rank: Optional[int] = None  # Default: d_model // 16
+    ffn_compression_enabled: bool = True
+    
     # Performance Targets (for validation)
     target_vram_gb: float = 8.0
     target_ppl_degradation: float = 0.05  # 5% max
