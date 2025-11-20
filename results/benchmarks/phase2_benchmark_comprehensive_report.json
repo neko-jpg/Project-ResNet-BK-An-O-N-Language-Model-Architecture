@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "timestamp": "2025-11-20T22:35:35.924568",
+    "platform": "Windows",
+    "device": "cuda",
+    "cuda_available": true,
+    "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "cuda_version": "12.1"
+  },
+  "kpi_summary": {},
+  "benchmark_files": []
+}

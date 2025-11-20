@@ -1,0 +1,850 @@
+{
+  "summary": {
+    "total_files": 10,
+    "files_with_module_docstring": 10,
+    "total_classes": 16,
+    "classes_with_docstring": 16,
+    "total_functions": 80,
+    "functions_with_docstring": 66,
+    "total_methods": 0,
+    "methods_with_docstring": 0,
+    "files_with_physical": 7,
+    "files_with_math": 9
+  },
+  "details": [
+    {
+      "filepath": "src\\kernels\\bk_scan.py",
+      "module_docstring": "BK-Core Triton Kernel: O(N) Tridiagonal Inverse Diagonal Computation\n\nImplements parallel associative scan for computing diag((H - zI)^-1) using Triton.\nThis provides 3x+ speedup over PyTorch vmap implementation.\n\nPhysical Background:\n- Theta recursion (forward): θ_i = α_i * θ_{i-1} + β_i * θ_{i-2}\n- Phi recursion (backward): φ_i = α_{i+1} * φ_{i+1} + β_i * φ_{i+2}\n- Diagonal elements: G_ii = θ_i * φ_i / det(T)\n\nMatrix form:\n[θ_i  ]   [α_i  β_i] [θ_{i-1}]\n[θ_{i-1}] = [1    0  ] [θ_{i-2}]\n\nComplex numbers are handled via manual expansion (real/imag separation).",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "BKScanTriton",
+          "docstring": "Autograd-compatible Triton BK-Core function.\n\nForward: Triton-accelerated O(N) computation\nBackward: Reuses existing BKCoreFunction.backward for gradient computation",
+          "has_docstring": true,
+          "lineno": 430
+        }
+      ],
+      "functions": [
+        {
+          "name": "complex_mul",
+          "docstring": "Complex multiplication: (r1 + i1*j) * (r2 + i2*j)\n\nFormula:\n    (r1 + i1*j) * (r2 + i2*j) = (r1*r2 - i1*i2) + (r1*i2 + i1*r2)*j\n\nArgs:\n    r1, i1: Real and imaginary parts of first complex number\n    r2, i2: Real and imaginary parts of second complex number\n\nReturns:\n    r_out, i_out: Real and imaginary parts of result",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 29
+        },
+        {
+          "name": "complex_mat_mul_2x2",
+          "docstring": "2x2 complex matrix multiplication: C = A * B\n\nMatrix form:\n[a11  a12]   [b11  b12]   [c11  c12]\n[a21  a22] * [b21  b22] = [c21  c22]\n\nEach element is a complex number represented as (real, imag) pair.\n\nReturns:\n    c11_r, c11_i, c12_r, c12_i, c21_r, c21_i, c22_r, c22_i",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 49
+        },
+        {
+          "name": "bk_scan_fwd_kernel",
+          "docstring": "Forward scan kernel for Theta recursion.\n\nRecursion: θ_i = α_i * θ_{i-1} + β_i * θ_{i-2}\n\nInitial conditions:\n    θ_0 = 1 + 0j\n    θ_1 = α_0\n\nStrategy: Serial scan within each block (simplicity over maximum parallelism)\nFuture: Can be extended to parallel scan across blocks",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 99
+        },
+        {
+          "name": "bk_scan_bwd_kernel",
+          "docstring": "Backward scan kernel for Phi recursion.\n\nRecursion: φ_i = α_{i+1} * φ_{i+1} + β_i * φ_{i+2}\n\nInitial conditions:\n    φ_{N-1} = 1 + 0j\n    φ_{N-2} = α_{N-1} (if N > 1)\n\nStrategy: Serial scan in reverse order",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 187
+        },
+        {
+          "name": "bk_scan_triton_forward",
+          "docstring": "Triton-accelerated forward scan for BK-Core.\n\nArgs:\n    alpha: (B, N) complex64 - shifted diagonal (a - z)\n    beta: (B, N-1) complex64 - product (-c*b)\n\nReturns:\n    theta: (B, N+1) complex64 - theta recursion results",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 274
+        },
+        {
+          "name": "bk_scan_triton_backward",
+          "docstring": "Triton-accelerated backward scan for BK-Core.\n\nArgs:\n    alpha: (B, N) complex64 - shifted diagonal (a - z)\n    beta: (B, N-1) complex64 - product (-c*b)\n    N: int - sequence length\n\nReturns:\n    phi: (B, N) complex64 - phi recursion results",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 318
+        },
+        {
+          "name": "bk_scan_triton",
+          "docstring": "Complete Triton-accelerated BK-Core computation.\n\nComputes diag((T - zI)^-1) where T is tridiagonal with:\n- Main diagonal: a\n- Super-diagonal: b\n- Sub-diagonal: c\n\nArgs:\n    a: (B, N) float32 - main diagonal\n    b: (B, N-1) float32 - super-diagonal\n    c: (B, N-1) float32 - sub-diagonal\n    z: complex64 scalar - shift\n\nReturns:\n    diag_inv: (B, N) complex64 - diagonal of inverse",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 363
+        },
+        {
+          "name": "forward",
+          "docstring": "Forward pass using Triton kernels.\n\nArgs:\n    he_diag: (B, N) effective Hamiltonian diagonal\n    h0_super: (B, N-1) super-diagonal\n    h0_sub: (B, N-1) sub-diagonal\n    z: complex scalar shift\n\nReturns:\n    features: (B, N, 2) [real(G_ii), imag(G_ii)]",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 439
+        },
+        {
+          "name": "backward",
+          "docstring": "Backward pass: reuse existing gradient computation.\n\nThis is identical to BKCoreFunction.backward since the gradient\ncomputation is independent of how the forward pass was computed.",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 464
+        },
+        {
+          "name": "is_triton_available",
+          "docstring": "Check if Triton is available and functional.",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 481
+        },
+        {
+          "name": "test_kernel",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": false,
+          "lineno": 487
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 1,
+      "total_functions": 11,
+      "total_methods": 0,
+      "classes_with_docstring": 1,
+      "functions_with_docstring": 10,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\non_hermitian.py",
+      "module_docstring": "Non-Hermitian Potential Layer for Phase 2\n\nImplements complex potential V - iΓ where:\n- V (real part): Semantic potential\n- Γ (imaginary part): Dissipation rate (always positive)\n\nPhysical interpretation:\n- Open quantum system Hamiltonian: H_eff = H_0 + V - iΓ\n- Time evolution: ||ψ(t)||² = exp(-2Γt) ||ψ(0)||²\n- Natural forgetting through energy dissipation",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "NonHermitianPotential",
+          "docstring": "Complex potential generator: V - iΓ\n\nArgs:\n    d_model: Model dimension\n    n_seq: Sequence length\n    base_decay: Minimum decay rate (default: 0.01)\n    adaptive_decay: Use input-dependent decay (default: True)\n    schatten_p: Schatten norm p-value (default: 1.0 = Nuclear norm)\n    stability_threshold: Threshold for stability warnings (default: 1e-3)",
+          "has_docstring": true,
+          "lineno": 23
+        },
+        {
+          "name": "DissipativeBKLayer",
+          "docstring": "Integrate NonHermitian potential with BK-Core.\n\nThis layer combines:\n1. NonHermitianPotential: generates V - iΓ\n2. BK-Core: computes G_ii = diag((H - zI)^-1)\n\nThe complex potential modulates the effective Hamiltonian,\nenabling natural forgetting through dissipation.\n\nArgs:\n    d_model: Model dimension\n    n_seq: Sequence length\n    use_triton: Use Triton kernel if available (default: True)\n    **potential_kwargs: Arguments for NonHermitianPotential",
+          "has_docstring": true,
+          "lineno": 165
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 36
+        },
+        {
+          "name": "forward",
+          "docstring": "Generate complex potential from input features.\n\nArgs:\n    x: (B, N, D) input features\n\nReturns:\n    complex_potential: (B, N) complex64 tensor\n        real part: semantic potential V\n        imag part: -Γ (negative for dissipation)",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 71
+        },
+        {
+          "name": "_monitor_stability",
+          "docstring": "Monitor Schatten norm and detect overdamping.\n\nOverdamping condition: Γ >> |V|\nWhen this occurs, the system becomes purely dissipative\nand information vanishes immediately.\n\nArgs:\n    v: (B, N) real potential\n    gamma: (B, N) decay rate",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 104
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "Get stability statistics.\n\nReturns:\n    Dictionary with gamma and energy ratio statistics",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 137
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 183
+        },
+        {
+          "name": "forward",
+          "docstring": "Forward pass with complex gradient support.\n\nArgs:\n    x: (B, N, D) input features\n    return_potential: Return complex potential for diagnostics\n\nReturns:\n    features: (B, N, 2) [Re(G_ii), Im(G_ii)]\n    potential: (B, N) complex potential (if return_potential=True)",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 204
+        },
+        {
+          "name": "get_gamma",
+          "docstring": "Extract decay rate Γ from input.\n\nArgs:\n    x: (B, N, D) input features\n\nReturns:\n    gamma: (B, N) decay rate",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 250
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 2,
+      "total_functions": 7,
+      "total_methods": 0,
+      "classes_with_docstring": 2,
+      "functions_with_docstring": 5,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\gradient_safety.py",
+      "module_docstring": "Gradient Safety Mechanisms for Phase 2\n\nImplements gradient clipping and NaN/Inf handling for complex gradients.\nEnsures numerical stability during backpropagation through complex potentials.",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "GradientSafetyModule",
+          "docstring": "Gradient safety wrapper for complex potential layers.\n\nProvides:\n1. Gradient clipping to prevent explosion\n2. NaN/Inf detection and replacement\n3. Gradient statistics monitoring\n\nArgs:\n    max_grad_norm: Maximum gradient norm (default: 1000.0)\n    replace_nan_with_zero: Replace NaN/Inf with zero (default: True)\n    monitor_stats: Track gradient statistics (default: True)",
+          "has_docstring": true,
+          "lineno": 13
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 28
+        },
+        {
+          "name": "apply_safety",
+          "docstring": "Apply gradient safety mechanisms.\n\nArgs:\n    grad: Gradient tensor (any shape)\n    param_name: Parameter name for logging\n\nReturns:\n    safe_grad: Gradient with safety mechanisms applied",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 50
+        },
+        {
+          "name": "_update_statistics",
+          "docstring": "Update gradient statistics buffers.",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 104
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "Get gradient statistics.\n\nReturns:\n    Dictionary with gradient statistics",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 126
+        },
+        {
+          "name": "reset_statistics",
+          "docstring": "Reset gradient statistics buffers.",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 159
+        },
+        {
+          "name": "safe_complex_backward",
+          "docstring": "Apply gradient safety to all parameters in a module.\n\nThis function should be called after loss.backward() but before optimizer.step().\n\nArgs:\n    module: PyTorch module\n    max_grad_norm: Maximum gradient norm\n    replace_nan: Replace NaN/Inf with zero\n\nExample:\n    >>> loss.backward()\n    >>> safe_complex_backward(model, max_grad_norm=1000.0)\n    >>> optimizer.step()",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 168
+        },
+        {
+          "name": "clip_grad_norm_safe",
+          "docstring": "Safe version of torch.nn.utils.clip_grad_norm_ with NaN/Inf handling.\n\nArgs:\n    parameters: Iterable of parameters\n    max_norm: Maximum gradient norm\n    norm_type: Type of norm (default: 2.0)\n    error_if_nonfinite: Raise error if non-finite (default: False)\n\nReturns:\n    Total norm of the parameters (before clipping)",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 206
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": false,
+      "has_math_formulas": true,
+      "total_classes": 1,
+      "total_functions": 7,
+      "total_methods": 0,
+      "classes_with_docstring": 1,
+      "functions_with_docstring": 6,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\dissipative_hebbian.py",
+      "module_docstring": "Dissipative Hebbian Layer - Phase 2 Dynamic Memory Mechanism\n\nThis module implements the Dissipative Hebbian learning mechanism that integrates\nmemory formation (Hebbian) with natural forgetting (dissipation).\n\nPhysical Background:\n    The dissipative Hebbian equation unifies synaptic plasticity with energy dissipation:\n    \n    dW/dt = η(k^T v) - ΓW\n    \n    Where:\n    - η(k^T v): Hebbian strengthening (memory formation)\n    - -ΓW: Synaptic decay (forgetting)\n    - Γ: Decay rate from NonHermitianPotential\n    \n    Discrete time solution:\n    W_new = exp(-Γ * dt) * W_old + η * (k^T v)\n\nKey Features:\n    - Fast Weights: Dynamically updated short-term memory\n    - Lyapunov Stability: Mathematically guaranteed stability via energy monitoring\n    - Potential Feedback: Memory influences the potential V(x, M) in BK-Core\n    - O(N) Complexity: Maintains Phase 1 efficiency guarantees\n\nAuthor: Project MUSE Team\nDate: 2025-01-20",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "LyapunovStabilityMonitor",
+          "docstring": "Lyapunov Stability Monitor for Fast Weights\n\nMonitors the energy E = ||W||²_F of Fast Weights and ensures\nthe Lyapunov stability condition dE/dt ≤ 0 is satisfied.\n\nPhysical Interpretation:\n    - E = ||W||²: Total synaptic energy\n    - dE/dt > 0: Energy increasing (unstable)\n    - dE/dt ≤ 0: Energy decreasing or stable (Lyapunov stable)\n\nArgs:\n    gamma_adjust_rate: Rate of Γ adjustment when instability detected (default: 0.01)",
+          "has_docstring": true,
+          "lineno": 37
+        },
+        {
+          "name": "DissipativeHebbianLayer",
+          "docstring": "Dissipative Hebbian Layer - Dynamic Memory with Natural Forgetting\n\nThis layer implements the dissipative Hebbian equation:\n    W_new = exp(-Γ * dt) * W_old + η * (k^T v)\n\nPhysical Interpretation:\n    - exp(-Γ*dt): Time evolution operator (dissipation)\n    - η*(k^T v): Hebbian update (memory formation)\n    - W: Fast Weight matrix (short-term memory)\n\nKey Innovation:\n    Memory feedback to potential: W → V(x, M) → BK-Core\n    This allows Phase 2 to be viewed as \"dynamically adjusting Phase 1's\n    Hamiltonian H based on memory state M\".\n\nArgs:\n    d_model: Model dimension\n    head_dim: Dimension per attention head (default: 64)\n    num_heads: Number of attention heads (default: 8)\n    eta: Hebbian learning rate (default: 0.1)\n    dt: Time step for discretization (default: 1.0)\n    enable_potential_feedback: Enable memory→potential feedback (default: True)",
+          "has_docstring": true,
+          "lineno": 151
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 53
+        },
+        {
+          "name": "check",
+          "docstring": "Check Lyapunov stability and suggest Γ adjustments\n\nArgs:\n    state: Current Fast Weight (B, H, D_h, D_h)\n    decay: Decay coefficient exp(-Γ*dt) (B, 1, 1, 1)\n    update: Hebbian update term η*(k^T v) (B, H, D_h, D_h)\n\nReturns:\n    metrics: Dictionary containing:\n        - energy: Current energy ||W||²\n        - dE_dt: Energy derivative\n        - is_stable: Whether Lyapunov condition is satisfied\n        - suggested_gamma_adjust: Suggested Γ adjustment\n        - violation_count: Cumulative stability violations",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 59
+        },
+        {
+          "name": "reset",
+          "docstring": "Reset monitor state",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 126
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "Get energy statistics",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 132
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 177
+        },
+        {
+          "name": "forward",
+          "docstring": "Forward pass with dissipative Hebbian update\n\nArgs:\n    x: Input tensor (B, N, D)\n    gamma: Decay rate from NonHermitianPotential (B, N)\n    state: Previous Fast Weight state (B, H, D_h, D_h), optional\n    return_potential_feedback: Return potential feedback signal\n\nReturns:\n    output: Output tensor (B, N, D)\n    new_state: Updated Fast Weight state (B, H, D_h, D_h)\n    potential_feedback: Potential adjustment from memory (B, N) if requested",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 216
+        },
+        {
+          "name": "forward_step",
+          "docstring": "Single-step forward for sequential inference\n\nArgs:\n    x_t: Input at time t (B, D)\n    gamma_t: Decay rate at time t (B,)\n    state: Current Fast Weight state (B, H, D_h, D_h)\n\nReturns:\n    output_t: Output at time t (B, D)\n    new_state: Updated Fast Weight state (B, H, D_h, D_h)",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 327
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "Get layer statistics",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 359
+        },
+        {
+          "name": "reset_state",
+          "docstring": "Reset Fast Weight state and monitors",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 376
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 2,
+      "total_functions": 9,
+      "total_methods": 0,
+      "classes_with_docstring": 2,
+      "functions_with_docstring": 7,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\memory_selection.py",
+      "module_docstring": "SNRベースの記憶選択機構\n\nこのモジュールは、信号対雑音比（SNR）に基づいて重要な記憶を選択的に保持する機構を提供します。\n\n生物学的動機:\n- 脳は重要な記憶だけを長期保持する\n- ノイズは自動的に忘却される\n- 記憶の重要度は信号強度とノイズレベルの比で評価される\n\n物理的背景:\n- SNR = |Signal| / σ_noise\n- 高SNR: 明確な信号 → 保持・強化\n- 低SNR: ノイズ優勢 → 急速忘却\n\nRequirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "SNRMemoryFilter",
+          "docstring": "SNRベースの記憶フィルタリング\n\n生物学的動機:\n- 脳は重要な記憶だけを長期保持する\n- ノイズは自動的に忘却される\n\nSNR定義:\nSNR_i = |W_i| / σ_noise\n\nArgs:\n    threshold: SNR閾値（デフォルト: 2.0）\n    gamma_boost: 低SNR成分のΓ増加率（デフォルト: 2.0）\n    eta_boost: 高SNR成分のη増加率（デフォルト: 1.5）\n\nRequirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6",
+          "has_docstring": true,
+          "lineno": 25
+        },
+        {
+          "name": "MemoryImportanceEstimator",
+          "docstring": "記憶の重要度を推定するモジュール\n\n重要度の定義:\n- SNRベース: 信号対雑音比が高いほど重要\n- エネルギーベース: ||W_i||² が大きいほど重要\n- 時間ベース: 最近更新された記憶ほど重要\n\nArgs:\n    snr_weight: SNRの重み（デフォルト: 0.5）\n    energy_weight: エネルギーの重み（デフォルト: 0.3）\n    recency_weight: 最近性の重み（デフォルト: 0.2）\n\nRequirement: 9.7",
+          "has_docstring": true,
+          "lineno": 139
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 44
+        },
+        {
+          "name": "forward",
+          "docstring": "SNRに基づいてΓとηを調整する\n\nArgs:\n    weights: (B, H, D, D) Fast Weights\n    gamma: (B,) 現在の減衰率\n    eta: 現在のHebbian学習率\n\nReturns:\n    adjusted_gamma: (B,) 調整された減衰率\n    adjusted_eta: 調整された学習率\n\nRequirements: 9.1, 9.2, 9.3, 9.4, 9.5",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 59
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "SNR統計を取得\n\nReturns:\n    統計情報の辞書\n\nRequirement: 9.6",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 112
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 156
+        },
+        {
+          "name": "forward",
+          "docstring": "記憶の重要度を計算\n\nArgs:\n    weights: (B, H, D, D) Fast Weights\n    snr: (B, H, D, D) SNR値（オプション、Noneの場合は計算）\n\nReturns:\n    importance: (B, H, D, D) 重要度スコア [0, 1]\n\nRequirement: 9.7",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 174
+        },
+        {
+          "name": "get_top_k_memories",
+          "docstring": "上位k個の重要な記憶を取得\n\nArgs:\n    weights: (B, H, D, D) Fast Weights\n    k: 保持する記憶の数\n    snr: (B, H, D, D) SNR値（オプション）\n\nReturns:\n    top_weights: (B, H, k) 上位k個の重み値\n    top_indices: (B, H, k) 上位k個のインデックス\n\nRequirement: 9.7",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 237
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 2,
+      "total_functions": 6,
+      "total_methods": 0,
+      "classes_with_docstring": 2,
+      "functions_with_docstring": 4,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\memory_resonance.py",
+      "module_docstring": "Memory Resonance Layer - 記憶共鳴層\n\nPhase 2: Breath of Life\n\n物理的背景:\n- 量子系の固有状態は互いに直交する\n- ゼータ零点は「最も規則的なランダム性」を持つ\n- この基底で対角化すると、記憶の干渉が最小化される\n\n数学的定式化:\nW' = U^(-1) W U\nここで U はゼータ零点由来の周波数基底",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "ZetaBasisTransform",
+          "docstring": "ゼータ零点に基づく周波数基底の生成\n\n基底行列 U の構成:\nU[i, j] = exp(2πi * gamma_j * i / N)\nここで gamma_j はj番目のゼータ零点の虚部\n\n重要: 基底行列は **モデル固定** であり、入力に依存しない。\nこれにより、事前計算とキャッシュが可能となり、\n毎ステップの対角化コストを大幅に削減できる。\n\nArgs:\n    max_dim: 最大次元（デフォルト: 512）",
+          "has_docstring": true,
+          "lineno": 23
+        },
+        {
+          "name": "MemoryResonanceLayer",
+          "docstring": "記憶共鳴層\n\n物理的背景:\n- 量子系の固有状態は互いに直交する\n- ゼータ零点は「最も規則的なランダム性」を持つ\n- この基底で対角化すると、記憶の干渉が最小化される\n\n数学的定式化:\nW' = U^(-1) W U\nここで U はゼータ零点由来の周波数基底\n\nArgs:\n    d_model: モデル次元\n    head_dim: ヘッド次元（デフォルト: 64）\n    num_heads: ヘッド数（デフォルト: 8）\n    energy_threshold: 共鳴エネルギー閾値（デフォルト: 0.1）",
+          "has_docstring": true,
+          "lineno": 167
+        },
+        {
+          "name": "MemoryImportanceEstimator",
+          "docstring": "記憶の重要度を推定するモジュール\n\n共鳴エネルギーとSNRを組み合わせて、\n記憶の重要度を総合的に評価する。\n\nArgs:\n    head_dim: ヘッド次元\n    num_heads: ヘッド数",
+          "has_docstring": true,
+          "lineno": 304
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 39
+        },
+        {
+          "name": "get_zeta_zeros",
+          "docstring": "最初のn個のゼータ零点の虚部を取得\n\nn <= 10: 精密値を使用\nn > 10: GUE統計に基づく近似生成\n\nArgs:\n    n: 取得する零点の数\n\nReturns:\n    zeros: (n,) ゼータ零点の虚部",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 46
+        },
+        {
+          "name": "get_basis_matrix",
+          "docstring": "ゼータ基底行列を生成（キャッシュ付き）\n\n重要: この基底行列は入力に依存せず、モデル固定である。\n一度計算すれば、同じ次元・デバイスの組み合わせでは\nキャッシュから取得できる。\n\nArgs:\n    dim: 行列次元\n    device: デバイス\n\nReturns:\n    U: (dim, dim) complex64 基底行列",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 121
+        },
+        {
+          "name": "clear_cache",
+          "docstring": "キャッシュをクリア（メモリ節約用）",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 161
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 187
+        },
+        {
+          "name": "forward",
+          "docstring": "Args:\n    weights: (B, H, D_h, D_h) Fast Weights\n    x: (B, N, D) 入力（共鳴検出用）\n\nReturns:\n    filtered_weights: (B, H, D_h, D_h) フィルタ後の重み\n    resonance_info: 共鳴情報の辞書",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 206
+        },
+        {
+          "name": "get_resonance_strength",
+          "docstring": "2つの記憶モード間の共鳴強度を計算\n\nArgs:\n    weights: (B, H, D_h, D_h) Fast Weights\n    mode_i: モードiのインデックス\n    mode_j: モードjのインデックス\n\nReturns:\n    strength: (B, H) 共鳴強度",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 272
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 316
+        },
+        {
+          "name": "forward",
+          "docstring": "Args:\n    resonance_energy: (B, H, D_h) 共鳴エネルギー\n    snr: (B, H, D_h) 信号対雑音比\n\nReturns:\n    importance: (B, H, D_h) 重要度スコア",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 324
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 3,
+      "total_functions": 9,
+      "total_methods": 0,
+      "classes_with_docstring": 3,
+      "functions_with_docstring": 6,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\zeta_init.py",
+      "module_docstring": "Phase 2: Riemann-Zeta Regularization (フラクタル記憶配置)\n\n物理的直観 (Physical Intuition):\n    リーマン・ゼータ関数の非自明な零点の虚部（14.13, 21.02, ...）は、\n    「最もランダムかつ規則的」な分布（GUE統計）に従います。\n    これは量子カオス系におけるエネルギー準位の間隔と同じです。\n    \n    MUSEでは、記憶素子（Expertやニューロン）の初期配置や\n    活性化関数のバイアスをこの分布に従わせることで、\n    「情報の衝突（干渉）」を最小化し、効率的な分散表現を実現します。\n\n数学的背景:\n    - GUE (Gaussian Unitary Ensemble): ランダム行列理論における確率分布\n    - Montgomery-Odlyzko Law: ゼータ零点の間隔分布がGUE固有値間隔と一致\n    - Wigner Surmise: P(s) ~ 32/π² * s² * exp(-4s²/π)\n    \n    これにより、記憶の干渉を最小化し、情報の効率的な分散表現を実現します。\n\nRequirements:\n    - 5.1: リーマンゼータ関数の零点近似計算\n    - 5.2: n <= 10 で精密値、n > 10 で GUE統計ベース近似\n    - 5.3: GUE行列生成による零点分布の近似\n    - 5.4: 線形層の特異値をゼータ零点分布で初期化\n    - 5.5: ゼータ零点を周波数とする位置埋め込み\n    - 5.6: PE(pos, 2i) = sin(pos / zero_i), PE(pos, 2i+1) = cos(pos / zero_i)",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "ZetaInitializer",
+          "docstring": "ゼータ関数に基づく初期化ユーティリティ\n\nリーマンゼータ関数の零点分布（GUE統計）を用いて、\nニューラルネットワークの重みを初期化します。\nこれにより、情報の干渉を最小化し、効率的な分散表現を実現します。\n\n使用例:\n    >>> linear = nn.Linear(512, 512)\n    >>> ZetaInitializer.initialize_linear_zeta(linear)\n    >>> \n    >>> embedding = nn.Embedding(1024, 512)\n    >>> ZetaInitializer.initialize_embedding_zeta(embedding)\n\n物理的解釈:\n    - ゼータ零点 = 量子カオス系のエネルギー準位\n    - GUE統計 = 最大エントロピー分布（最もランダムかつ規則的）\n    - 特異値分布 = 情報の分散度合い",
+          "has_docstring": true,
+          "lineno": 36
+        },
+        {
+          "name": "ZetaEmbedding",
+          "docstring": "ゼータ零点ベースの位置埋め込み\n\n標準のSinusoidal Embeddingの代替として、\nリーマンゼータ関数の零点を周波数として使用します。\n\nArgs:\n    max_len: 最大シーケンス長\n    d_model: モデル次元\n    trainable: 学習可能にするか（デフォルト: False）\n    scale: 初期化スケール（デフォルト: 1.0）\n\n数式:\n    PE(pos, 2i) = sin(pos * gamma_i / (2π))\n    PE(pos, 2i+1) = cos(pos * gamma_i / (2π))\n    \n    ここで gamma_i はi番目のゼータ零点の虚部\n\n物理的解釈:\n    - 標準のSinusoidal: 等間隔の周波数（10000^(2i/d)）\n    - Zeta Embedding: 不規則な周波数（ゼータ零点）\n    - 利点: 情報の干渉を最小化、フラクタル的な記憶配置\n\n使用例:\n    >>> pos_emb = ZetaEmbedding(max_len=1024, d_model=512, trainable=False)\n    >>> positions = torch.arange(0, 100).unsqueeze(0)  # (1, 100)\n    >>> embeddings = pos_emb(positions)  # (1, 100, 512)\n\nRequirements: 5.5, 5.6",
+          "has_docstring": true,
+          "lineno": 239
+        }
+      ],
+      "functions": [
+        {
+          "name": "get_approx_zeta_zeros",
+          "docstring": "最初のn個のリーマンゼータ関数の零点の虚部を近似計算\n\nArgs:\n    n: 取得する零点の数\n\nReturns:\n    zeros: (n,) テンソル。ゼータ零点の虚部\n\n実装詳細:\n    - n <= 10: 精密な零点値を使用（Odlyzkoの計算結果）\n    - n > 10: GUE統計に基づく近似生成\n        1. ランダムエルミート行列を生成\n        2. 固有値を計算（GUE統計に従う）\n        3. 固有値間隔をゼータ零点の間隔にスケーリング\n\n数学的背景:\n    N(T) ~ (T/2π) log(T/2π) - T/2π  (零点の累積個数)\n    平均間隔 ~ 2π / log(T)\n\nRequirements: 5.1, 5.2, 5.3",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 58
+        },
+        {
+          "name": "initialize_linear_zeta",
+          "docstring": "線形層の特異値をゼータ零点分布に基づいて初期化\n\nArgs:\n    module: 初期化する線形層\n    scale: スケーリング係数（デフォルト: 10.0）\n\n実装詳細:\n    1. 重み行列をSVD分解: W = U S V^T\n    2. 特異値をゼータ零点の逆数でスケーリング: S_i = scale / zero_i\n    3. 重み行列を再構成: W = U S_new V^T\n\n物理的解釈:\n    - 特異値 = 情報の伝達強度\n    - ゼータ零点の逆数 = 減衰率\n    - 高周波成分（大きい零点）ほど弱く初期化\n\nRequirements: 5.4",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 141
+        },
+        {
+          "name": "initialize_embedding_zeta",
+          "docstring": "Embeddingをゼータ零点ベースの位相パターンで初期化\n\nArgs:\n    embedding: 初期化するEmbedding層\n    scale: スケーリング係数（デフォルト: 1.0）\n\n実装詳細:\n    位置エンコーディング:\n    PE(pos, 2i) = sin(pos / zero_i)\n    PE(pos, 2i+1) = cos(pos / zero_i)\n\n物理的解釈:\n    - ゼータ零点 = 周波数成分\n    - Sin/Cos = 位相エンコーディング\n    - 不規則な周波数 = 情報の干渉最小化\n\nRequirements: 5.4",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 186
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 271
+        },
+        {
+          "name": "forward",
+          "docstring": "位置埋め込みを計算\n\nArgs:\n    positions: (B, N) 位置インデックス\n\nReturns:\n    embeddings: (B, N, D) 位置埋め込み\n\n注意:\n    - positions は [0, max_len) の範囲内である必要があります\n    - 範囲外の位置は自動的にクリップされます",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 297
+        },
+        {
+          "name": "extra_repr",
+          "docstring": "モジュールの追加情報を返す",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 327
+        },
+        {
+          "name": "apply_zeta_initialization",
+          "docstring": "モデル全体にゼータ初期化を適用\n\nArgs:\n    model: 初期化するモデル\n    scale: スケーリング係数\n\n使用例:\n    >>> model = MyModel()\n    >>> apply_zeta_initialization(model, scale=10.0)\n\n注意:\n    - すべてのnn.Linearとnn.Embeddingに適用されます\n    - 既存の初期化を上書きします",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 337
+        },
+        {
+          "name": "get_zeta_statistics",
+          "docstring": "ゼータ零点の統計情報を取得\n\nArgs:\n    n: 計算する零点の数\n\nReturns:\n    stats: 統計情報の辞書\n        - 'zeros': 零点のリスト\n        - 'mean_spacing': 平均間隔\n        - 'std_spacing': 間隔の標準偏差\n        - 'min_spacing': 最小間隔\n        - 'max_spacing': 最大間隔\n\n使用例:\n    >>> stats = get_zeta_statistics(n=100)\n    >>> print(f\"Mean spacing: {stats['mean_spacing']:.3f}\")",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 360
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 2,
+      "total_functions": 8,
+      "total_methods": 0,
+      "classes_with_docstring": 2,
+      "functions_with_docstring": 7,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\integrated_model.py",
+      "module_docstring": "Phase 2 Integrated Model - Breath of Life\n\nThis module implements the complete Phase 2 architecture that integrates:\n1. Non-Hermitian Forgetting (散逸的忘却)\n2. Dissipative Hebbian Dynamics (散逸的Hebbian動力学)\n3. SNR-based Memory Selection (SNRベースの記憶選択)\n4. Memory Resonance (記憶共鳴)\n5. Zeta Initialization (ゼータ初期化)\n\nArchitecture:\n    Input → ZetaEmbedding → Phase2Block × N → Output\n    \n    Phase2Block:\n        x → NonHermitian → BK-Core → DissipativeHebbian → SNRFilter → MemoryResonance → FFN → x\n\nPhysical Interpretation:\n    Phase 2 transforms the static Phase 1 Hamiltonian into a dynamic system where:\n    - Memory state M influences potential V(x, M)\n    - Natural forgetting through dissipation Γ\n    - Adaptive memory selection via SNR\n    - Resonance-based memory organization\n\nRequirements: 6.1, 6.2, 6.3, 6.4, 6.5\nAuthor: Project MUSE Team\nDate: 2025-01-20",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "Phase2Block",
+          "docstring": "Phase 2の単一ブロック\n\n構造:\n    x → [LN] → NonHermitian+BK-Core → [Residual]\n      → [LN] → DissipativeHebbian → SNRFilter → MemoryResonance → [Residual]\n      → [LN] → FFN → [Residual]\n\nデータフロー:\n    1. NonHermitian: 複素ポテンシャル V - iΓ を生成\n    2. BK-Core: 三重対角行列の逆行列対角要素を計算\n    3. DissipativeHebbian: Fast Weightsを更新 (W_new = exp(-Γ*dt)*W_old + η*(k^T v))\n    4. SNRFilter: 重要な記憶を選択的に保持\n    5. MemoryResonance: ゼータ基底で対角化し、共鳴する記憶を強化\n    6. FFN: 標準的なフィードフォワード層\n\nArgs:\n    d_model: モデル次元\n    n_seq: シーケンス長\n    num_heads: ヘッド数 (default: 8)\n    head_dim: ヘッド次元 (default: 64)\n    use_triton: Tritonカーネルを使用するか (default: True)\n    ffn_dim: FFN中間次元 (default: 4 * d_model)\n    dropout: ドロップアウト率 (default: 0.1)\n    **kwargs: 各コンポーネントへの追加引数\n\nRequirements: 6.1, 6.2, 6.3",
+          "has_docstring": true,
+          "lineno": 43
+        },
+        {
+          "name": "Phase2IntegratedModel",
+          "docstring": "Phase 2統合モデル - 生命の息吹\n\nアーキテクチャ:\n    Input → Token Embedding + Zeta Position Embedding\n          → Phase2Block × N\n          → Layer Norm\n          → LM Head\n          → Output Logits\n\nPhase2Block:\n    x → NonHermitian → BK-Core → DissipativeHebbian → SNRFilter → MemoryResonance → FFN → x\n\n物理的解釈:\n    Phase 2は静的なPhase 1ハミルトニアンを動的システムに変換:\n    - 記憶状態Mがポテンシャル V(x, M) に影響\n    - 散逸Γによる自然な忘却\n    - SNRによる適応的記憶選択\n    - 共鳴ベースの記憶組織化\n\nArgs:\n    vocab_size: 語彙サイズ\n    d_model: モデル次元 (default: 512)\n    n_layers: レイヤー数 (default: 6)\n    n_seq: シーケンス長 (default: 1024)\n    num_heads: ヘッド数 (default: 8)\n    head_dim: ヘッド次元 (default: 64)\n    use_triton: Tritonカーネルを使用するか (default: True)\n    ffn_dim: FFN中間次元 (default: None = 4 * d_model)\n    dropout: ドロップアウト率 (default: 0.1)\n    zeta_embedding_trainable: Zeta埋め込みを学習可能にするか (default: False)\n    phase1_config: Phase 1設定（互換性のため、オプション）\n    **kwargs: 各コンポーネントへの追加引数\n\nRequirements: 6.1, 6.2, 6.3, 6.4, 6.5",
+          "has_docstring": true,
+          "lineno": 294
+        }
+      ],
+      "functions": [
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 73
+        },
+        {
+          "name": "forward",
+          "docstring": "Forward pass through Phase2Block\n\nArgs:\n    x: (B, N, D) 入力テンソル\n    return_diagnostics: 診断情報を返すか (Requirement 6.2)\n\nReturns:\n    output: (B, N, D) 出力テンソル\n    diagnostics: 診断情報の辞書 (return_diagnostics=True の場合)\n\nRequirements: 6.2, 6.3",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 147
+        },
+        {
+          "name": "reset_state",
+          "docstring": "Fast Weight状態をリセット",
+          "has_docstring": true,
+          "has_type_hints": false,
+          "lineno": 279
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "ブロック全体の統計情報を取得",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 284
+        },
+        {
+          "name": "__init__",
+          "docstring": null,
+          "has_docstring": false,
+          "has_type_hints": true,
+          "lineno": 332
+        },
+        {
+          "name": "_init_weights",
+          "docstring": "ゼータ初期化を適用\n\n実装詳細:\n    1. Token Embeddingにゼータ初期化\n    2. すべてのLinear層にゼータ初期化\n    3. Position Embeddingは既にZetaEmbeddingで初期化済み\n\nRequirements: 6.1",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 409
+        },
+        {
+          "name": "forward",
+          "docstring": "Forward pass through Phase2IntegratedModel\n\nArgs:\n    input_ids: (B, N) トークンID\n    attention_mask: (B, N) アテンションマスク（オプション、現在未使用）\n    return_diagnostics: 診断情報を返すか (Requirement 6.2, 6.5)\n\nReturns:\n    logits: (B, N, V) 出力ロジット\n    diagnostics: 診断情報の辞書 (return_diagnostics=True の場合)\n\nRequirements: 6.2, 6.5",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 447
+        },
+        {
+          "name": "reset_state",
+          "docstring": "すべてのブロックのFast Weight状態をリセット\n\n使用例:\n    >>> model.reset_state()  # 新しいシーケンスの開始時",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 521
+        },
+        {
+          "name": "get_statistics",
+          "docstring": "モデル全体の統計情報を取得\n\nReturns:\n    stats: 統計情報の辞書\n        - 'num_parameters': パラメータ数\n        - 'num_layers': レイヤー数\n        - 'block_stats': 各ブロックの統計",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 531
+        },
+        {
+          "name": "extra_repr",
+          "docstring": "モジュールの追加情報を返す",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 563
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": true,
+      "has_math_formulas": true,
+      "total_classes": 2,
+      "total_functions": 10,
+      "total_methods": 0,
+      "classes_with_docstring": 2,
+      "functions_with_docstring": 8,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\factory.py",
+      "module_docstring": "Phase 2 Model Factory and Configuration Presets\n\nこのモジュールは、Phase 2モデルの生成とPhase 1からの変換を提供します。\n\n主要機能:\n1. create_phase2_model: 設定からPhase 2モデルを生成\n2. convert_phase1_to_phase2: Phase 1モデルをPhase 2に変換\n3. プリセット設定 (small, base, large)\n\nRequirements: 6.1, 6.2\nAuthor: Project MUSE Team\nDate: 2025-01-20",
+      "has_module_docstring": true,
+      "classes": [
+        {
+          "name": "Phase2Config",
+          "docstring": "Phase 2の設定クラス\n\nPhase 1の設定を継承し、Phase 2固有のパラメータを追加します。\n\nAttributes:\n    # Phase 1互換性\n    phase1_config: Phase 1設定（オプション）\n    \n    # BK-Core Triton\n    use_triton_bk: Tritonカーネルを使用するか\n    triton_block_size: Tritonブロックサイズ\n    \n    # Non-Hermitian Potential\n    base_decay: 最小減衰率 Γ_min\n    adaptive_decay: 入力依存の減衰を使用するか\n    schatten_p: Schatten Normのp値\n    stability_threshold: 安定性閾値\n    \n    # Dissipative Hebbian\n    hebbian_eta: Hebbian学習率 η\n    hebbian_dt: 時間ステップ dt\n    num_heads: ヘッド数\n    head_dim: ヘッド次元\n    \n    # Lyapunov Stability\n    gamma_adjust_rate: Γの自動調整係数\n    energy_monitor_enabled: エネルギー監視を有効化するか\n    \n    # SNR Memory Filter\n    snr_threshold: SNR閾値 τ\n    snr_gamma_boost: 低SNR成分のΓ増加率\n    snr_eta_boost: 高SNR成分のη増加率\n    \n    # Memory Resonance\n    resonance_enabled: 共鳴層を有効化するか\n    resonance_energy_threshold: 共鳴エネルギー閾値\n    \n    # Zeta Initialization\n    use_zeta_init: ゼータ初期化を使用するか\n    zeta_embedding_trainable: ゼータ埋め込みを学習可能にするか\n    \n    # Model Architecture\n    vocab_size: 語彙サイズ\n    d_model: モデル次元\n    n_layers: レイヤー数\n    n_seq: シーケンス長\n    ffn_dim: FFN中間次元（Noneの場合は4*d_model）\n    dropout: ドロップアウト率\n    \n    # Performance Targets\n    target_vram_gb: 目標VRAM使用量（GB）\n    target_speedup_triton: Tritonカーネルの目標高速化率\n\nExample:\n    >>> # デフォルト設定\n    >>> config = Phase2Config()\n    >>> \n    >>> # Phase 1から変換\n    >>> phase1_config = Phase1Config.for_hardware(vram_gb=8.0)\n    >>> config = Phase2Config.from_phase1(phase1_config)\n    >>> \n    >>> # カスタム設定\n    >>> config = Phase2Config(\n    ...     vocab_size=50000,\n    ...     d_model=1024,\n    ...     n_layers=12,\n    ...     base_decay=0.02,\n    ...     hebbian_eta=0.15\n    ... )",
+          "has_docstring": true,
+          "lineno": 30
+        }
+      ],
+      "functions": [
+        {
+          "name": "validate",
+          "docstring": "設定の整合性を検証\n\nRaises:\n    ValueError: 設定が無効な場合",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 151
+        },
+        {
+          "name": "from_phase1",
+          "docstring": "Phase 1設定からPhase 2設定を生成\n\nArgs:\n    phase1_config: Phase 1の設定\n    **overrides: 上書きするパラメータ\n\nReturns:\n    Phase2Config\n\nExample:\n    >>> phase1_config = Phase1Config.for_hardware(vram_gb=8.0)\n    >>> phase2_config = Phase2Config.from_phase1(\n    ...     phase1_config,\n    ...     base_decay=0.02,\n    ...     hebbian_eta=0.15\n    ... )",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 197
+        },
+        {
+          "name": "to_dict",
+          "docstring": "辞書形式に変換",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 223
+        },
+        {
+          "name": "from_dict",
+          "docstring": "辞書から設定を生成",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 228
+        },
+        {
+          "name": "get_phase2_preset",
+          "docstring": "プリセット設定を取得\n\nArgs:\n    preset_name: プリセット名 (\"small\", \"base\", \"large\")\n\nReturns:\n    Phase2Config\n\nRaises:\n    ValueError: 未知のプリセット名\n\nExample:\n    >>> config = get_phase2_preset(\"base\")\n    >>> model = create_phase2_model(config=config)",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 234
+        },
+        {
+          "name": "create_phase2_model",
+          "docstring": "Phase 2統合モデルを作成するファクトリ関数\n\n設定またはプリセットからPhase 2モデルを生成します。\n\nArgs:\n    config: Phase2Config（Noneの場合はデフォルトまたはプリセット）\n    preset: プリセット名 (\"small\", \"base\", \"large\")\n    vocab_size: 語彙サイズ（configを上書き）\n    d_model: モデル次元（configを上書き）\n    n_layers: レイヤー数（configを上書き）\n    n_seq: シーケンス長（configを上書き）\n    device: デバイス（Noneの場合は自動検出）\n    **kwargs: Phase2IntegratedModelへの追加引数\n\nReturns:\n    Phase2IntegratedModel\n\nExample:\n    >>> # デフォルト設定\n    >>> model = create_phase2_model()\n    >>> \n    >>> # プリセット使用\n    >>> model = create_phase2_model(preset=\"base\")\n    >>> \n    >>> # カスタム設定\n    >>> config = Phase2Config(\n    ...     vocab_size=50000,\n    ...     d_model=1024,\n    ...     n_layers=12\n    ... )\n    >>> model = create_phase2_model(config=config)\n    >>> \n    >>> # パラメータ直接指定\n    >>> model = create_phase2_model(\n    ...     vocab_size=50000,\n    ...     d_model=1024,\n    ...     n_layers=12,\n    ...     n_seq=2048\n    ... )\n\nRequirements: 6.1",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 293
+        },
+        {
+          "name": "_get_phase2_summary",
+          "docstring": "Phase 2モデルのサマリーを生成\n\nArgs:\n    model: Phase2IntegratedModel\n    config: Phase2Config\n\nReturns:\n    サマリー文字列",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 410
+        },
+        {
+          "name": "convert_phase1_to_phase2",
+          "docstring": "Phase 1モデルをPhase 2モデルに変換\n\n互換性のある層の重みをコピーし、新規層はゼータ初期化します。\n\nArgs:\n    phase1_model: Phase 1モデル\n    phase2_config: Phase 2設定（Noneの場合はPhase 1から推定）\n    copy_compatible_weights: 互換性のある重みをコピーするか\n    freeze_phase1_weights: Phase 1由来の重みを凍結するか\n\nReturns:\n    Phase2IntegratedModel\n\nExample:\n    >>> # Phase 1モデルをロード\n    >>> phase1_model = Phase1IntegratedModel(...)\n    >>> \n    >>> # Phase 2に変換\n    >>> phase2_model = convert_phase1_to_phase2(phase1_model)\n    >>> \n    >>> # Phase 1の重みを凍結して、Phase 2固有の層のみ学習\n    >>> phase2_model = convert_phase1_to_phase2(\n    ...     phase1_model,\n    ...     freeze_phase1_weights=True\n    ... )\n\nRequirements: 6.2",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 462
+        },
+        {
+          "name": "_infer_phase2_config_from_model",
+          "docstring": "モデルからPhase 2設定を推定\n\nArgs:\n    model: ベースモデル\n\nReturns:\n    Phase2Config",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 534
+        },
+        {
+          "name": "_copy_compatible_weights",
+          "docstring": "互換性のある重みをコピー\n\nArgs:\n    source_model: ソースモデル（Phase 1）\n    target_model: ターゲットモデル（Phase 2）\n    freeze_source_weights: ソース由来の重みを凍結するか",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 571
+        },
+        {
+          "name": "_is_compatible_linear",
+          "docstring": "2つのLinear層が互換性があるかチェック\n\nArgs:\n    src: ソース層\n    tgt: ターゲット層\n\nReturns:\n    互換性があるか",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 631
+        },
+        {
+          "name": "_apply_zeta_init_to_new_layers",
+          "docstring": "新規層にゼータ初期化を適用\n\nArgs:\n    model: Phase2IntegratedModel",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 646
+        },
+        {
+          "name": "_get_conversion_summary",
+          "docstring": "変換サマリーを生成\n\nArgs:\n    phase1_model: Phase 1モデル\n    phase2_model: Phase 2モデル\n    config: Phase2Config\n\nReturns:\n    サマリー文字列",
+          "has_docstring": true,
+          "has_type_hints": true,
+          "lineno": 673
+        }
+      ],
+      "methods": [],
+      "has_physical_intuition": false,
+      "has_math_formulas": true,
+      "total_classes": 1,
+      "total_functions": 13,
+      "total_methods": 0,
+      "classes_with_docstring": 1,
+      "functions_with_docstring": 13,
+      "methods_with_docstring": 0
+    },
+    {
+      "filepath": "src\\models\\phase2\\__init__.py",
+      "module_docstring": "Phase 2: Breath of Life - Dynamic Memory and Forgetting Mechanisms\n\nThis module implements Phase 2 of Project MUSE, introducing:\n- Non-Hermitian Forgetting (散逸的忘却)\n- Dissipative Hebbian Dynamics (散逸的Hebbian動力学)\n- Memory Resonance and Selection (記憶共鳴と選択)",
+      "has_module_docstring": true,
+      "classes": [],
+      "functions": [],
+      "methods": [],
+      "has_physical_intuition": false,
+      "has_math_formulas": false,
+      "total_classes": 0,
+      "total_functions": 0,
+      "total_methods": 0,
+      "classes_with_docstring": 0,
+      "functions_with_docstring": 0,
+      "methods_with_docstring": 0
+    }
+  ]
+}

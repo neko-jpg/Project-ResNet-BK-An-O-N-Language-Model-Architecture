@@ -92,50 +92,39 @@
 \@writefile{toc}{\contentsline {section}{\numberline {6}Experimental Evaluation}{13}{section.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Experimental Setup}{13}{subsection.6.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Parameter Compression Results}{13}{subsection.6.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Parameter compression by component. The baseline uses standard Transformer architecture. Optimized model uses HTT Embedding (rank=4), AR-SSM layers (max\_rank=8), and ultra low-rank FFN (rank=d/64).}}{13}{table.10}\protected@file@percent }
-\newlabel{tab:param_compression}{{10}{13}{Parameter compression by component. The baseline uses standard Transformer architecture. Optimized model uses HTT Embedding (rank=4), AR-SSM layers (max\_rank=8), and ultra low-rank FFN (rank=d/64)}{table.10}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Parameter compression by component. HTT Embedding (rank=4), AR-SSM (max\_rank=8).}}{13}{table.10}\protected@file@percent }
+\newlabel{tab:param_compression}{{10}{13}{Parameter compression by component. HTT Embedding (rank=4), AR-SSM (max\_rank=8)}{table.10}{}}
 \newlabel{tab:param_compression@cref}{{[table][10][]10}{[1][13][]13}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Memory Consumption During Training}{13}{subsection.6.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces VRAM consumption during training with FP16 mixed precision. Measurements include parameter storage, forward pass activations, and backward pass gradients.}}{13}{table.11}\protected@file@percent }
-\newlabel{tab:vram_training}{{11}{13}{VRAM consumption during training with FP16 mixed precision. Measurements include parameter storage, forward pass activations, and backward pass gradients}{table.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces VRAM consumption during training with FP16 mixed precision.}}{13}{table.11}\protected@file@percent }
+\newlabel{tab:vram_training}{{11}{13}{VRAM consumption during training with FP16 mixed precision}{table.11}{}}
 \newlabel{tab:vram_training@cref}{{[table][11][]11}{[1][13][]13}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Performance Characteristics}{14}{subsection.6.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Scalability and Maximum Model Size}{14}{subsection.6.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.1}Experimental Methodology}{14}{subsubsection.6.5.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.2}Maximum Model Size Results}{14}{subsubsection.6.5.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Maximum model size achievable under 8GB VRAM constraint. Phase 2 with BK-Core achieves 93.0\% memory reduction through Semiseparable structure, enabling significantly larger models on consumer hardware.}}{15}{table.12}\protected@file@percent }
-\newlabel{tab:max_model_size}{{12}{15}{Maximum model size achievable under 8GB VRAM constraint. Phase 2 with BK-Core achieves 93.0\% memory reduction through Semiseparable structure, enabling significantly larger models on consumer hardware}{table.12}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.3}Analysis of Semiseparable Structure Benefits}{14}{subsubsection.6.5.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Maximum model size under 8GB VRAM. Phase 2 achieves 93\% memory reduction.}}{15}{table.12}\protected@file@percent }
+\newlabel{tab:max_model_size}{{12}{15}{Maximum model size under 8GB VRAM. Phase 2 achieves 93\% memory reduction}{table.12}{}}
 \newlabel{tab:max_model_size@cref}{{[table][12][]12}{[1][14][]15}{}{}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.3}Analysis of Semiseparable Structure Benefits}{15}{subsubsection.6.5.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.4}Scalability Implications}{15}{subsubsection.6.5.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {6.6}BK-Core Triton Kernel Performance}{16}{subsection.6.6}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.1}Benchmark Configuration}{16}{subsubsection.6.6.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.2}Performance Results}{16}{subsubsection.6.6.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces BK-Core Triton kernel performance comparison. The Triton implementation achieves 185.10$\times $ speedup over PyTorch vmap, significantly exceeding the target of 3.0$\times $.}}{16}{table.13}\protected@file@percent }
-\newlabel{tab:bk_triton_performance}{{13}{16}{BK-Core Triton kernel performance comparison. The Triton implementation achieves 185.10$\times $ speedup over PyTorch vmap, significantly exceeding the target of 3.0$\times $}{table.13}{}}
-\newlabel{tab:bk_triton_performance@cref}{{[table][13][]13}{[1][16][]16}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces BK-Core Triton kernel performance. The Triton implementation achieves 185$\times $ speedup over PyTorch vmap, significantly exceeding the target of 3$\times $.}}{16}{table.13}\protected@file@percent }
+\newlabel{tab:bk_triton_perf}{{13}{16}{BK-Core Triton kernel performance. The Triton implementation achieves 185$\times $ speedup over PyTorch vmap, significantly exceeding the target of 3$\times $}{table.13}{}}
+\newlabel{tab:bk_triton_perf@cref}{{[table][13][]13}{[1][16][]16}{}{}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.3}JSON Benchmark Output}{16}{subsubsection.6.6.3}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.4}Analysis}{17}{subsubsection.6.6.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.7}Future Work}{17}{subsection.6.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.8}Broader Impact}{18}{subsection.6.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.7}Phase 2: Dynamic Memory and Stability Improvements}{17}{subsection.6.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.7.1}Stability Improvements}{18}{subsubsection.6.7.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Phase 2 stability improvements. Base decay $\Gamma $ reduced to 0.001.}}{18}{table.14}\protected@file@percent }
+\newlabel{tab:phase2_stability}{{14}{18}{Phase 2 stability improvements. Base decay $\Gamma $ reduced to 0.001}{table.14}{}}
+\newlabel{tab:phase2_stability@cref}{{[table][14][]14}{[1][18][]18}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.7.2}Physical Interpretation}{18}{subsubsection.6.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.7.3}Integration Test Results}{18}{subsubsection.6.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.8}Future Work}{19}{subsection.6.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.9}Broader Impact}{19}{subsection.6.9}\protected@file@percent }
 \bibstyle{plain}
 \bibdata{references}
-\bibcite{banino2021pondernet}{1}
-\bibcite{birman1962spectral}{2}
-\bibcite{du2022glam}{3}
-\bibcite{fedus2022switch}{4}
-\bibcite{frantar2022gptq}{5}
-\bibcite{fu2023hungry}{6}
-\bibcite{graves2016adaptive}{7}
-\bibcite{gu2023mamba}{8}
-\bibcite{gu2022efficiently}{9}
-\bibcite{jacob2018quantization}{10}
-\bibcite{lin2023awq}{11}
-\bibcite{martin2018implicit}{12}
-\bibcite{mehta2004random}{13}
-\bibcite{peng2023rwkv}{14}
-\bibcite{poli2023hyena}{15}
-\bibcite{schwinger1961brownian}{16}
-\bibcite{sun2023retentive}{17}
-\bibcite{vaswani2017attention}{18}
 \gdef \@abspage@last{20}

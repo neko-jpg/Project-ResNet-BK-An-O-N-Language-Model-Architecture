@@ -1,0 +1,783 @@
+name: Phase 2 Tests
+
+on:
+  push:
+    branches: [ main, develop, phase2/* ]
+    paths:
+      - 'src/models/phase2/**'
+      - 'src/kernels/bk_scan.py'
+      - 'tests/test_phase2_*.py'
+      - 'tests/test_bk_triton.py'
+      - 'tests/test_complex_grad.py'
+      - 'tests/test_non_hermitian.py'
+      - 'tests/test_dissipative_hebbian.py'
+      - 'tests/test_memory_*.py'
+      - 'tests/test_zeta_init.py'
+      - 'scripts/train_phase2.py'
+      - 'scripts/test_long_context.py'
+      - 'scripts/visualize_phase2.py'
+      - '.github/workflows/phase2_tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/models/phase2/**'
+      - 'src/kernels/bk_scan.py'
+      - 'tests/test_phase2_*.py'
+      - 'tests/test_bk_triton.py'
+      - 'tests/test_complex_grad.py'
+      - 'tests/test_non_hermitian.py'
+      - 'tests/test_dissipative_hebbian.py'
+      - 'tests/test_memory_*.py'
+      - 'tests/test_zeta_init.py'
+  schedule:
+    # Run Phase 2 tests daily at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - unit
+          - integration
+          - benchmarks
+          - long_context
+
+env:
+  PYTHON_VERSION: '3.10'
+  PYTORCH_VERSION: '2.1.0'
+
+jobs:
+  # ============================================================================
+  # Priority 0: BK-Core Triton Tests
+  # ============================================================================
+  test-bk-triton:
+    name: BK-Core Triton Kernel Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-xdist pytest-timeout
+      
+      - name: Run BK-Triton unit tests
+        run: |
+          pytest tests/test_bk_triton.py -v --cov=src.kernels.bk_scan --cov-report=xml --cov-report=term --timeout=300
+      
+      - name: Verify Triton correctness
+        run: |
+          python scripts/verify_triton_correctness.py --quick
+      
+      - name: Upload BK-Triton coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-bk-triton
+          name: phase2-bk-triton
+
+  # ============================================================================
+  # Priority 0: Complex Gradient Safety Tests
+  # ============================================================================
+  test-complex-gradient:
+    name: Complex Gradient Safety Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run complex gradient tests
+        run: |
+          pytest tests/test_complex_grad.py -v --cov=src.models.phase2.gradient_safety --cov-report=xml --timeout=300
+      
+      - name: Upload complex gradient coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-complex-grad
+          name: phase2-complex-grad
+
+  # ============================================================================
+  # Priority 1: Core Algorithm Tests
+  # ============================================================================
+  test-non-hermitian:
+    name: Non-Hermitian Forgetting Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Non-Hermitian tests
+        run: |
+          pytest tests/test_non_hermitian.py -v --cov=src.models.phase2.non_hermitian --cov-report=xml --timeout=300
+      
+      - name: Upload Non-Hermitian coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-non-hermitian
+          name: phase2-non-hermitian
+
+  test-dissipative-hebbian:
+    name: Dissipative Hebbian Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Dissipative Hebbian tests
+        run: |
+          pytest tests/test_dissipative_hebbian.py -v --cov=src.models.phase2.dissipative_hebbian --cov-report=xml --timeout=300
+      
+      - name: Upload Dissipative Hebbian coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-dissipative-hebbian
+          name: phase2-dissipative-hebbian
+
+  test-memory-selection:
+    name: Memory Selection Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Memory Selection tests
+        run: |
+          pytest tests/test_memory_selection.py -v --cov=src.models.phase2.memory_selection --cov-report=xml --timeout=300
+      
+      - name: Upload Memory Selection coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-memory-selection
+          name: phase2-memory-selection
+
+  test-memory-resonance:
+    name: Memory Resonance Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Memory Resonance tests
+        run: |
+          pytest tests/test_memory_resonance.py -v --cov=src.models.phase2.memory_resonance --cov-report=xml --timeout=300
+      
+      - name: Upload Memory Resonance coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-memory-resonance
+          name: phase2-memory-resonance
+
+  test-zeta-init:
+    name: Zeta Initialization Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Zeta initialization tests
+        run: |
+          pytest tests/test_zeta_init.py -v --cov=src.models.phase2.zeta_init --cov-report=xml --timeout=300
+      
+      - name: Upload Zeta initialization coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-zeta-init
+          name: phase2-zeta-init
+
+  # ============================================================================
+  # Priority 2: Integration Tests
+  # ============================================================================
+  test-phase2-block:
+    name: Phase2 Block Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Phase2 Block tests
+        run: |
+          pytest tests/test_phase2_block.py -v --cov=src.models.phase2.integrated_model --cov-report=xml --timeout=300
+      
+      - name: Upload Phase2 Block coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-block
+          name: phase2-block
+
+  test-phase2-integrated:
+    name: Phase2 Integrated Model Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Phase2 Integrated Model tests
+        run: |
+          pytest tests/test_phase2_integrated.py -v --cov=src.models.phase2 --cov-report=xml --timeout=600
+      
+      - name: Upload Phase2 Integrated coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-integrated
+          name: phase2-integrated
+
+  test-phase2-factory:
+    name: Phase2 Factory Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Phase2 Factory tests
+        run: |
+          pytest tests/test_phase2_factory.py -v --cov=src.models.phase2.factory --cov-report=xml --timeout=300
+      
+      - name: Upload Phase2 Factory coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-factory
+          name: phase2-factory
+
+  test-phase2-integration:
+    name: Phase2 Full Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test-phase2-block, test-phase2-integrated, test-phase2-factory]
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Phase2 Integration tests
+        run: |
+          pytest tests/test_phase2_integration.py -v --cov=src.models.phase2 --cov-report=xml --timeout=900
+      
+      - name: Upload Phase2 Integration coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-integration
+          name: phase2-integration
+      
+      - name: Upload integration test report
+        uses: actions/upload-artifact@v3
+        with:
+          name: phase2-integration-report
+          path: results/benchmarks/PHASE2_INTEGRATION_TEST_REPORT.md
+        if: always()
+
+  # ============================================================================
+  # Priority 3: Benchmark Tests
+  # ============================================================================
+  test-phase2-benchmarks:
+    name: Phase2 Benchmark Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.test_suite == 'benchmarks' || github.event.inputs.test_suite == 'all'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-timeout
+      
+      - name: Run Phase2 Benchmark tests
+        run: |
+          pytest tests/test_phase2_benchmarks.py -v --cov=src --cov-report=xml --timeout=1200
+      
+      - name: Run BK-Triton benchmark
+        run: |
+          python scripts/benchmark_bk_triton.py --quick
+      
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v3
+        with:
+          name: phase2-benchmark-results
+          path: |
+            results/benchmarks/*.json
+            results/benchmarks/PHASE2_BENCHMARK_REPORT.md
+        if: always()
+      
+      - name: Upload Phase2 Benchmark coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: phase2-benchmarks
+          name: phase2-benchmarks
+
+  # ============================================================================
+  # Priority 3: Long Context Tests
+  # ============================================================================
+  test-long-context:
+    name: Long Context Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.inputs.test_suite == 'long_context' || github.event.inputs.test_suite == 'all'
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-timeout
+      
+      - name: Run long context tests
+        run: |
+          python scripts/test_long_context.py --quick
+        timeout-minutes: 30
+      
+      - name: Upload long context results
+        uses: actions/upload-artifact@v3
+        with:
+          name: long-context-results
+          path: |
+            results/benchmarks/long_context_*.json
+            results/benchmarks/LONG_CONTEXT_TEST_IMPLEMENTATION_REPORT.md
+        if: always()
+
+  # ============================================================================
+  # Priority 4: Example Tests
+  # ============================================================================
+  test-examples:
+    name: Test Phase2 Examples
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-phase2-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-phase2-
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+      
+      - name: Test Phase2 basic usage
+        run: |
+          python examples/phase2_basic_usage.py
+        timeout-minutes: 5
+      
+      - name: Test Phase2 inference
+        run: |
+          python examples/phase2_inference.py
+        timeout-minutes: 5
+      
+      - name: Test Phase2 diagnostics
+        run: |
+          python examples/phase2_diagnostics.py
+        timeout-minutes: 5
+      
+      - name: Test Phase2 block demo
+        run: |
+          python examples/phase2_block_demo.py
+        timeout-minutes: 5
+      
+      - name: Test Phase2 factory demo
+        run: |
+          python examples/phase2_factory_demo.py
+        timeout-minutes: 5
+      
+      - name: Test Phase2 integrated demo
+        run: |
+          python examples/phase2_integrated_demo.py
+        timeout-minutes: 5
+
+  # ============================================================================
+  # Docstring Verification
+  # ============================================================================
+  verify-docstrings:
+    name: Verify Phase2 Docstrings
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==${{ env.PYTORCH_VERSION }} --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+      
+      - name: Verify Phase2 docstrings
+        run: |
+          python scripts/verify_phase2_docstrings.py
+      
+      - name: Upload docstring report
+        uses: actions/upload-artifact@v3
+        with:
+          name: docstring-report
+          path: results/benchmarks/TASK17_DOCSTRING_COMPLETION_REPORT.md
+        if: always()
+
+  # ============================================================================
+  # Summary Report
+  # ============================================================================
+  phase2-summary:
+    name: Phase2 Test Summary
+    runs-on: ubuntu-latest
+    needs: 
+      - test-bk-triton
+      - test-complex-gradient
+      - test-non-hermitian
+      - test-dissipative-hebbian
+      - test-memory-selection
+      - test-memory-resonance
+      - test-zeta-init
+      - test-phase2-block
+      - test-phase2-integrated
+      - test-phase2-factory
+      - test-phase2-integration
+      - test-examples
+      - verify-docstrings
+    if: always()
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Generate summary report
+        run: |
+          echo "# Phase 2 Test Summary" > phase2_summary.md
+          echo "" >> phase2_summary.md
+          echo "## Test Results" >> phase2_summary.md
+          echo "" >> phase2_summary.md
+          echo "- BK-Triton: ${{ needs.test-bk-triton.result }}" >> phase2_summary.md
+          echo "- Complex Gradient: ${{ needs.test-complex-gradient.result }}" >> phase2_summary.md
+          echo "- Non-Hermitian: ${{ needs.test-non-hermitian.result }}" >> phase2_summary.md
+          echo "- Dissipative Hebbian: ${{ needs.test-dissipative-hebbian.result }}" >> phase2_summary.md
+          echo "- Memory Selection: ${{ needs.test-memory-selection.result }}" >> phase2_summary.md
+          echo "- Memory Resonance: ${{ needs.test-memory-resonance.result }}" >> phase2_summary.md
+          echo "- Zeta Init: ${{ needs.test-zeta-init.result }}" >> phase2_summary.md
+          echo "- Phase2 Block: ${{ needs.test-phase2-block.result }}" >> phase2_summary.md
+          echo "- Phase2 Integrated: ${{ needs.test-phase2-integrated.result }}" >> phase2_summary.md
+          echo "- Phase2 Factory: ${{ needs.test-phase2-factory.result }}" >> phase2_summary.md
+          echo "- Phase2 Integration: ${{ needs.test-phase2-integration.result }}" >> phase2_summary.md
+          echo "- Examples: ${{ needs.test-examples.result }}" >> phase2_summary.md
+          echo "- Docstrings: ${{ needs.verify-docstrings.result }}" >> phase2_summary.md
+          echo "" >> phase2_summary.md
+          echo "## Workflow Information" >> phase2_summary.md
+          echo "- Trigger: ${{ github.event_name }}" >> phase2_summary.md
+          echo "- Branch: ${{ github.ref }}" >> phase2_summary.md
+          echo "- Commit: ${{ github.sha }}" >> phase2_summary.md
+          echo "- Actor: ${{ github.actor }}" >> phase2_summary.md
+          cat phase2_summary.md
+      
+      - name: Upload summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: phase2-test-summary
+          path: phase2_summary.md
+      
+      - name: Comment PR with summary
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('phase2_summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+  # ============================================================================
+  # Notification on Failure
+  # ============================================================================
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [phase2-summary]
+    if: failure()
+    
+    steps:
+      - name: Create issue on failure
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔴 Phase 2 Tests Failed',
+              body: `Phase 2 test suite failed in workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              labels: ['bug', 'phase2', 'ci-failure']
+            });
