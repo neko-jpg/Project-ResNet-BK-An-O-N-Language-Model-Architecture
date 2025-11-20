@@ -19,13 +19,13 @@
 \citation{du2022glam}
 \citation{graves2016adaptive}
 \citation{banino2021pondernet}
-\citation{frantar2022gptq}
-\citation{lin2023awq}
-\citation{jacob2018quantization}
 \@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Contributions}{3}{subsection.1.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{3}{section.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Efficient Language Models}{3}{subsection.2.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Mixture-of-Experts}{3}{subsection.2.2}\protected@file@percent }
+\citation{frantar2022gptq}
+\citation{lin2023awq}
+\citation{jacob2018quantization}
 \citation{birman1962spectral}
 \citation{schwinger1961brownian}
 \citation{mehta2004random}
@@ -36,48 +36,48 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Birman-Schwinger Operator Formulation}{4}{subsection.3.1}\protected@file@percent }
 \newlabel{thm:schatten}{{2}{4}{Schatten Bounds}{theorem.2}{}}
 \newlabel{thm:schatten@cref}{{[theorem][2][]2}{[1][4][]4}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Prime-Bump Potential Initialization}{4}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Prime-Bump Potential Initialization}{5}{subsection.3.2}\protected@file@percent }
 \newlabel{thm:gue}{{4}{5}{GUE Statistics}{theorem.4}{}}
-\newlabel{thm:gue@cref}{{[theorem][4][]4}{[1][4][]5}{}{}{}}
+\newlabel{thm:gue@cref}{{[theorem][4][]4}{[1][5][]5}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Scattering-Based Routing}{5}{subsection.3.3}\protected@file@percent }
 \newlabel{prop:birman-krein}{{6}{5}{Birman-Krein Formula}{theorem.6}{}}
 \newlabel{prop:birman-krein@cref}{{[theorem][6][]6}{[1][5][]5}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Semiseparable Matrix Structure}{5}{subsection.3.4}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces O(N) Matrix-Vector Multiplication}}{5}{algorithm.1}\protected@file@percent }
 \citation{gu2023mamba}
 \citation{vaswani2017attention}
 \citation{peng2023rwkv}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces O(N) Matrix-Vector Multiplication}}{6}{algorithm.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Semiseparable Matrix Structure}{6}{subsection.3.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Adaptive Computation Time}{6}{subsection.3.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {4}Experiments}{6}{section.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Experimental Setup}{6}{subsection.4.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Memory Efficiency and Scalability}{6}{subsection.4.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Memory efficiency comparison showing semiseparable structure benefits. ResNet-BK achieves significant memory reduction compared to dense attention.}}{7}{table.1}\protected@file@percent }
-\newlabel{tab:memory}{{1}{7}{Memory efficiency comparison showing semiseparable structure benefits. ResNet-BK achieves significant memory reduction compared to dense attention}{table.1}{}}
-\newlabel{tab:memory@cref}{{[table][1][]1}{[1][6][]7}{}{}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Validation of mathematical properties. All theoretical guarantees are empirically verified.}}{7}{table.2}\protected@file@percent }
-\newlabel{tab:validation}{{2}{7}{Validation of mathematical properties. All theoretical guarantees are empirically verified}{table.2}{}}
-\newlabel{tab:validation@cref}{{[table][2][]2}{[1][7][]7}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Memory efficiency comparison showing semiseparable structure benefits. ResNet-BK achieves significant memory reduction compared to dense attention. Larger configurations are theoretical projections.}}{7}{table.1}\protected@file@percent }
+\newlabel{tab:memory}{{1}{7}{Memory efficiency comparison showing semiseparable structure benefits. ResNet-BK achieves significant memory reduction compared to dense attention. Larger configurations are theoretical projections}{table.1}{}}
+\newlabel{tab:memory@cref}{{[table][1][]1}{[1][7][]7}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Memory Efficiency and Scalability}{7}{subsection.4.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Mathematical Validation}{7}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Validation of mathematical properties. All theoretical guarantees are empirically verified.}}{8}{table.2}\protected@file@percent }
+\newlabel{tab:validation}{{2}{8}{Validation of mathematical properties. All theoretical guarantees are empirically verified}{table.2}{}}
+\newlabel{tab:validation@cref}{{[table][2][]2}{[1][7][]8}{}{}{}}
 \@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Computational complexity comparison. ResNet-BK achieves O(N) complexity with practical memory efficiency.}}{8}{table.3}\protected@file@percent }
 \newlabel{tab:complexity}{{3}{8}{Computational complexity comparison. ResNet-BK achieves O(N) complexity with practical memory efficiency}{table.3}{}}
-\newlabel{tab:complexity@cref}{{[table][3][]3}{[1][7][]8}{}{}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Ablation study showing contribution of each component.}}{8}{table.4}\protected@file@percent }
-\newlabel{tab:ablation}{{4}{8}{Ablation study showing contribution of each component}{table.4}{}}
-\newlabel{tab:ablation@cref}{{[table][4][]4}{[1][8][]8}{}{}{}}
+\newlabel{tab:complexity@cref}{{[table][3][]3}{[1][8][]8}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Computational Complexity}{8}{subsection.4.4}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Ablation Studies}{8}{subsection.4.5}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Phase 1 Efficiency Engine Results}{8}{subsection.4.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Ablation study showing contribution of each component.}}{9}{table.4}\protected@file@percent }
+\newlabel{tab:ablation}{{4}{9}{Ablation study showing contribution of each component}{table.4}{}}
+\newlabel{tab:ablation@cref}{{[table][4][]4}{[1][8][]9}{}{}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.1}Memory Efficiency}{9}{subsubsection.4.6.1}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Memory usage comparison between baseline ResNet-BK and Phase 1 with AR-SSM + HTT optimizations. Phase 1 achieves 4.8\% memory reduction while maintaining model quality.}}{9}{table.5}\protected@file@percent }
 \newlabel{tab:phase1_memory}{{5}{9}{Memory usage comparison between baseline ResNet-BK and Phase 1 with AR-SSM + HTT optimizations. Phase 1 achieves 4.8\% memory reduction while maintaining model quality}{table.5}{}}
-\newlabel{tab:phase1_memory@cref}{{[table][5][]5}{[1][8][]9}{}{}{}}
+\newlabel{tab:phase1_memory@cref}{{[table][5][]5}{[1][9][]9}{}{}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.2}Throughput and Scaling Analysis}{9}{subsubsection.4.6.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Throughput comparison across different sequence lengths. Phase 1 demonstrates consistent performance improvements and near-linear scaling.}}{9}{table.6}\protected@file@percent }
-\newlabel{tab:phase1_throughput}{{6}{9}{Throughput comparison across different sequence lengths. Phase 1 demonstrates consistent performance improvements and near-linear scaling}{table.6}{}}
-\newlabel{tab:phase1_throughput@cref}{{[table][6][]6}{[1][9][]9}{}{}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Computational complexity analysis via empirical scaling measurements. Phase 1 achieves O(N log N) complexity with perfect fit (R²=1.0000).}}{9}{table.7}\protected@file@percent }
-\newlabel{tab:phase1_scaling}{{7}{9}{Computational complexity analysis via empirical scaling measurements. Phase 1 achieves O(N log N) complexity with perfect fit (R²=1.0000)}{table.7}{}}
-\newlabel{tab:phase1_scaling@cref}{{[table][7][]7}{[1][9][]9}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Throughput comparison across different sequence lengths. Phase 1 demonstrates consistent performance improvements and near-linear scaling.}}{10}{table.6}\protected@file@percent }
+\newlabel{tab:phase1_throughput}{{6}{10}{Throughput comparison across different sequence lengths. Phase 1 demonstrates consistent performance improvements and near-linear scaling}{table.6}{}}
+\newlabel{tab:phase1_throughput@cref}{{[table][6][]6}{[1][9][]10}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Computational complexity analysis via empirical scaling measurements. Phase 1 achieves O(N log N) complexity with perfect fit (R²=1.0000).}}{10}{table.7}\protected@file@percent }
+\newlabel{tab:phase1_scaling}{{7}{10}{Computational complexity analysis via empirical scaling measurements. Phase 1 achieves O(N log N) complexity with perfect fit (R²=1.0000)}{table.7}{}}
+\newlabel{tab:phase1_scaling@cref}{{[table][7][]7}{[1][9][]10}{}{}{}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.3}Model Quality Validation}{10}{subsubsection.4.6.3}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Perplexity comparison on WikiText-103 validation set. Phase 1 maintains quality with slight improvement over baseline.}}{10}{table.8}\protected@file@percent }
 \newlabel{tab:phase1_perplexity}{{8}{10}{Perplexity comparison on WikiText-103 validation set. Phase 1 maintains quality with slight improvement over baseline}{table.8}{}}
@@ -85,24 +85,39 @@
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {4.6.4}Configuration Summary}{11}{subsubsection.4.6.4}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Comprehensive comparison of baseline and Phase 1 configurations across all metrics.}}{11}{table.9}\protected@file@percent }
 \newlabel{tab:phase1_config}{{9}{11}{Comprehensive comparison of baseline and Phase 1 configurations across all metrics}{table.9}{}}
-\newlabel{tab:phase1_config@cref}{{[table][9][]9}{[1][10][]11}{}{}{}}
+\newlabel{tab:phase1_config@cref}{{[table][9][]9}{[1][11][]11}{}{}{}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.7}Implementation and Reproducibility}{11}{subsection.4.7}\protected@file@percent }
 \citation{vaswani2017attention}
 \@writefile{toc}{\contentsline {section}{\numberline {5}Conclusion}{12}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Experimental Evaluation}{12}{section.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Experimental Setup}{12}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Parameter Compression Results}{12}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Experimental Evaluation}{13}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Experimental Setup}{13}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Parameter Compression Results}{13}{subsection.6.2}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Parameter compression by component. The baseline uses standard Transformer architecture. Optimized model uses HTT Embedding (rank=4), AR-SSM layers (max\_rank=8), and ultra low-rank FFN (rank=d/64).}}{13}{table.10}\protected@file@percent }
 \newlabel{tab:param_compression}{{10}{13}{Parameter compression by component. The baseline uses standard Transformer architecture. Optimized model uses HTT Embedding (rank=4), AR-SSM layers (max\_rank=8), and ultra low-rank FFN (rank=d/64)}{table.10}{}}
-\newlabel{tab:param_compression@cref}{{[table][10][]10}{[1][12][]13}{}{}{}}
+\newlabel{tab:param_compression@cref}{{[table][10][]10}{[1][13][]13}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Memory Consumption During Training}{13}{subsection.6.3}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces VRAM consumption during training with FP16 mixed precision. Measurements include parameter storage, forward pass activations, and backward pass gradients.}}{13}{table.11}\protected@file@percent }
 \newlabel{tab:vram_training}{{11}{13}{VRAM consumption during training with FP16 mixed precision. Measurements include parameter storage, forward pass activations, and backward pass gradients}{table.11}{}}
-\newlabel{tab:vram_training@cref}{{[table][11][]11}{[1][12][]13}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Memory Consumption During Training}{13}{subsection.6.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Performance Characteristics}{13}{subsection.6.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Scalability Projection}{13}{subsection.6.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}Future Work}{14}{subsection.6.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.7}Broader Impact}{14}{subsection.6.7}\protected@file@percent }
+\newlabel{tab:vram_training@cref}{{[table][11][]11}{[1][13][]13}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}Performance Characteristics}{14}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.5}Scalability and Maximum Model Size}{14}{subsection.6.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.1}Experimental Methodology}{14}{subsubsection.6.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.2}Maximum Model Size Results}{14}{subsubsection.6.5.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Maximum model size achievable under 8GB VRAM constraint. Phase 2 with BK-Core achieves 93.0\% memory reduction through Semiseparable structure, enabling significantly larger models on consumer hardware.}}{15}{table.12}\protected@file@percent }
+\newlabel{tab:max_model_size}{{12}{15}{Maximum model size achievable under 8GB VRAM constraint. Phase 2 with BK-Core achieves 93.0\% memory reduction through Semiseparable structure, enabling significantly larger models on consumer hardware}{table.12}{}}
+\newlabel{tab:max_model_size@cref}{{[table][12][]12}{[1][14][]15}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.3}Analysis of Semiseparable Structure Benefits}{15}{subsubsection.6.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.5.4}Scalability Implications}{15}{subsubsection.6.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.6}BK-Core Triton Kernel Performance}{16}{subsection.6.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.1}Benchmark Configuration}{16}{subsubsection.6.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.2}Performance Results}{16}{subsubsection.6.6.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces BK-Core Triton kernel performance comparison. The Triton implementation achieves 185.10$\times $ speedup over PyTorch vmap, significantly exceeding the target of 3.0$\times $.}}{16}{table.13}\protected@file@percent }
+\newlabel{tab:bk_triton_performance}{{13}{16}{BK-Core Triton kernel performance comparison. The Triton implementation achieves 185.10$\times $ speedup over PyTorch vmap, significantly exceeding the target of 3.0$\times $}{table.13}{}}
+\newlabel{tab:bk_triton_performance@cref}{{[table][13][]13}{[1][16][]16}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.3}JSON Benchmark Output}{16}{subsubsection.6.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {6.6.4}Analysis}{17}{subsubsection.6.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.7}Future Work}{17}{subsection.6.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.8}Broader Impact}{18}{subsection.6.8}\protected@file@percent }
 \bibstyle{plain}
 \bibdata{references}
 \bibcite{banino2021pondernet}{1}
@@ -123,4 +138,4 @@
 \bibcite{schwinger1961brownian}{16}
 \bibcite{sun2023retentive}{17}
 \bibcite{vaswani2017attention}{18}
-\gdef \@abspage@last{16}
+\gdef \@abspage@last{20}

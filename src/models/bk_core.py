@@ -1,11 +1,14 @@
 """
 BK-Core: O(N) Tridiagonal Inverse Diagonal Computation
 Implements the core algorithm for computing diag((H - zI)^-1) in O(N) time.
+
+Supports both PyTorch (vmap) and Triton implementations with automatic fallback.
 """
 
 import torch
 import torch.nn as nn
 from torch.func import vmap
+import warnings
 
 
 def get_tridiagonal_inverse_diagonal(a, b, c, z):
@@ -87,11 +90,14 @@ class BKCoreFunction(torch.autograd.Function):
       - Theoretical: dG/dv = -G²
       - Hypothesis-7: dL/dv ~ -(dL/dG) / G²
       - Hybrid: dL/dv = (1-α)*theoretical + α*hypothesis7
+    
+    Supports both PyTorch (vmap) and Triton implementations.
     """
     GRAD_BLEND = 0.5  # 0.0 = pure theoretical, 1.0 = pure hypothesis-7
+    USE_TRITON = None  # Auto-detect on first use
 
     @staticmethod
-    def forward(ctx, he_diag, h0_super, h0_sub, z):
+    def forward(ctx, he_diag, h0_super, h0_sub, z, use_triton=None):
         """
         Forward pass: compute G_ii features.
         
@@ -100,12 +106,38 @@ class BKCoreFunction(torch.autograd.Function):
             h0_super: (B, N-1) super-diagonal
             h0_sub: (B, N-1) sub-diagonal
             z: complex scalar shift
+            use_triton: bool or None - force Triton on/off, None=auto-detect
         
         Returns:
             features: (B, N, 2) [real(G_ii), imag(G_ii)]
         """
-        # G_ii = diag((H - zI)^-1)
-        G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
+        # Auto-detect Triton availability on first use
+        if use_triton is None:
+            if BKCoreFunction.USE_TRITON is None:
+                try:
+                    from src.kernels.bk_scan import is_triton_available
+                    BKCoreFunction.USE_TRITON = is_triton_available()
+                    if BKCoreFunction.USE_TRITON:
+                        print("BK-Core: Triton acceleration enabled")
+                except Exception:
+                    BKCoreFunction.USE_TRITON = False
+            use_triton = BKCoreFunction.USE_TRITON
+        
+        # Try Triton implementation with fallback
+        if use_triton:
+            try:
+                from src.kernels.bk_scan import bk_scan_triton
+                G_ii = bk_scan_triton(he_diag, h0_super, h0_sub, z)
+            except Exception as e:
+                warnings.warn(
+                    f"Triton kernel failed: {e}. Falling back to PyTorch implementation.",
+                    UserWarning
+                )
+                G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
+        else:
+            # Use PyTorch vmap implementation
+            G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
+        
         ctx.save_for_backward(G_ii)
 
         # Convert to real features (real, imag)
@@ -163,5 +195,53 @@ class BKCoreFunction(torch.autograd.Function):
 
         grad_he_diag = grad_v.to(torch.float32)
 
-        # No gradients for h0_super, h0_sub, z
-        return grad_he_diag, None, None, None
+        # No gradients for h0_super, h0_sub, z, use_triton
+        return grad_he_diag, None, None, None, None
+
+
+
+def set_triton_mode(enabled: bool):
+    """
+    Globally enable or disable Triton acceleration for BK-Core.
+    
+    Args:
+        enabled: True to use Triton (if available), False to use PyTorch vmap
+    
+    Example:
+        >>> from src.models.bk_core import set_triton_mode
+        >>> set_triton_mode(True)  # Enable Triton
+        >>> set_triton_mode(False)  # Disable Triton (use PyTorch)
+    """
+    BKCoreFunction.USE_TRITON = enabled
+    if enabled:
+        try:
+            from src.kernels.bk_scan import is_triton_available
+            if not is_triton_available():
+                warnings.warn(
+                    "Triton is not available. BK-Core will use PyTorch implementation.",
+                    UserWarning
+                )
+                BKCoreFunction.USE_TRITON = False
+        except Exception:
+            warnings.warn(
+                "Failed to import Triton. BK-Core will use PyTorch implementation.",
+                UserWarning
+            )
+            BKCoreFunction.USE_TRITON = False
+
+
+def get_triton_mode() -> bool:
+    """
+    Check if Triton acceleration is currently enabled.
+    
+    Returns:
+        True if Triton is enabled, False otherwise
+    """
+    if BKCoreFunction.USE_TRITON is None:
+        # Auto-detect
+        try:
+            from src.kernels.bk_scan import is_triton_available
+            return is_triton_available()
+        except Exception:
+            return False
+    return BKCoreFunction.USE_TRITON

@@ -1,0 +1,162 @@
+{
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "vram_gb": 8.589410304,
+    "pytorch": "2.5.1+cu121",
+    "cuda": "12.1"
+  },
+  "baseline": {
+    "8gb_inference": {
+      "config": {
+        "vocab_size": 50000,
+        "d_model": 4096,
+        "n_layers": 6,
+        "n_seq": 2048,
+        "batch_size": 1
+      },
+      "parameters": {
+        "total": 1617929040,
+        "embedding": 204800000,
+        "layers": 1208279040,
+        "output": 204850000,
+        "millions": 1617.92904,
+        "billions": 1.61792904
+      },
+      "memory": {
+        "param_mb": 3244.378112,
+        "inference_mb": 6891.408896,
+        "training_mb": null,
+        "inference_gb": 6.891408896,
+        "training_gb": null
+      },
+      "throughput_tokens_per_sec": 6673.776034140159
+    },
+    "8gb_training": {
+      "config": {
+        "vocab_size": 50000,
+        "d_model": 3664,
+        "n_layers": 6,
+        "n_seq": 2048,
+        "batch_size": 1
+      },
+      "parameters": {
+        "total": 1333328304,
+        "embedding": 183200000,
+        "layers": 966878304,
+        "output": 183250000,
+        "millions": 1333.328304,
+        "billions": 1.333328304
+      },
+      "memory": {
+        "param_mb": 2685.088256,
+        "inference_mb": 5723.3536,
+        "training_mb": 7497.785344,
+        "inference_gb": 5.7233536,
+        "training_gb": 7.4977853439999995
+      },
+      "throughput_tokens_per_sec": 9068.148863189623
+    }
+  },
+  "phase1": {
+    "8gb_inference": {
+      "config": {
+        "vocab_size": 50000,
+        "d_model": 4096,
+        "n_layers": 6,
+        "n_seq": 2048,
+        "batch_size": 1
+      },
+      "parameters": {
+        "total": 1263940752,
+        "embedding": 216384,
+        "layers": 1208279040,
+        "output": 55445328,
+        "millions": 1263.940752,
+        "billions": 1.263940752
+      },
+      "memory": {
+        "param_mb": 2545.314816,
+        "inference_mb": 5140.58496,
+        "training_mb": null,
+        "inference_gb": 5.14058496,
+        "training_gb": null
+      },
+      "throughput_tokens_per_sec": 7000.483266843177
+    },
+    "8gb_training": {
+      "config": {
+        "vocab_size": 50000,
+        "d_model": 4096,
+        "n_layers": 6,
+        "n_seq": 2048,
+        "batch_size": 1
+      },
+      "parameters": {
+        "total": 1263940752,
+        "embedding": 216384,
+        "layers": 1208279040,
+        "output": 55445328,
+        "millions": 1263.940752,
+        "billions": 1.263940752
+      },
+      "memory": {
+        "param_mb": 2545.314816,
+        "inference_mb": 5140.58496,
+        "training_mb": 5491.573248,
+        "inference_gb": 5.14058496,
+        "training_gb": 5.491573248
+      },
+      "throughput_tokens_per_sec": 9218.450382788604
+    }
+  },
+  "phase2_theoretical": {
+    "8gb_inference": {
+      "config": {
+        "vocab_size": 50000,
+        "d_model": 4997,
+        "n_layers": 6,
+        "n_seq": 2048,
+        "batch_size": 1,
+        "note": "理論値（Semiseparable + Triton最適化）"
+      },
+      "parameters": {
+        "total": 1895911128,
+        "millions": 1895.911128,
+        "billions": 1.8959111279999998,
+        "note": "Phase 1の1.5倍（BK-Core最適化による）"
+      },
+      "memory": {
+        "param_mb": 2545.314816,
+        "inference_mb": 5140.58496,
+        "training_mb": null,
+        "inference_gb": 5.14058496,
+        "training_gb": null
+      },
+      "note": "Phase 2実装完了後に実測が必要"
+    },
+    "8gb_training": {
+      "config": {
+        "vocab_size": 50000,
+        "d_model": 4997,
+        "n_layers": 6,
+        "n_seq": 2048,
+        "batch_size": 1,
+        "note": "理論値（Semiseparable + Triton最適化）"
+      },
+      "parameters": {
+        "total": 1895911128,
+        "millions": 1895.911128,
+        "billions": 1.8959111279999998,
+        "note": "Phase 1の1.5倍（BK-Core最適化による）"
+      },
+      "memory": {
+        "param_mb": 2545.314816,
+        "inference_mb": 5140.58496,
+        "training_mb": 5491.573248,
+        "inference_gb": 5.14058496,
+        "training_gb": 5.491573248
+      },
+      "note": "Phase 2実装完了後に実測が必要"
+    }
+  }
+}
