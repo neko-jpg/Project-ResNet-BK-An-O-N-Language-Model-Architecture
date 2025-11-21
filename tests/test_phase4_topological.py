@@ -14,14 +14,16 @@ from src.models.phase4.topological_memory.sparse_tensor_rep import SparseKnotRep
 from src.models.phase4.topological_memory.visualization import visualize_knot_3d
 
 def generate_unknot(n_points=100):
-    t = torch.linspace(0, 2*np.pi, n_points)
+    # Use endpoint=False to avoid duplicate point at end
+    t = torch.linspace(0, 2*np.pi, n_points + 1)[:-1]
     x = torch.cos(t)
     y = torch.sin(t)
     z = torch.zeros_like(t)
     return torch.stack([x, y, z], dim=1)
 
 def generate_trefoil(n_points=100):
-    t = torch.linspace(0, 2*np.pi, n_points)
+    # Use endpoint=False
+    t = torch.linspace(0, 2*np.pi, n_points + 1)[:-1]
     x = torch.sin(t) + 2 * torch.sin(2*t)
     y = torch.cos(t) - 2 * torch.cos(2*t)
     z = -torch.sin(3*t)
