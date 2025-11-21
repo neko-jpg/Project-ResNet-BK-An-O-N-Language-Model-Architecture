@@ -108,8 +108,30 @@ class SparseKnotRepresentation:
         knot_coords = F.normalize(knot_coords, dim=-1)
 
         # Add topological structure (braiding/twisting) based on value magnitude
-        # This ensures the loop is closed and non-trivial
-        # (Simplified logic: close the loop)
+        # We modulate the Z-coordinate with a sine wave whose frequency/phase depends on the concept
+        # This helps create distinct crossing patterns for different concepts
+        t = torch.linspace(0, 2 * np.pi, n_points, device=device)
+
+        # Use concept statistics to vary the topology
+        # Increase frequency range to create more complex knots (more crossings)
+        # Use modulo to keep it in a reasonable range but varied
+        # Make dependence on concept stronger to ensure distinct knots
+        val_sum = concept.sum().item()
+        freq = 8.0 + (abs(val_sum) * 10.0) % 12.0
+        phase = concept.norm().item() * 10.0
+
+        # Apply perturbation to Z (twist) and also X/Y modulation to ensure 2D projection has crossings
+        # Use higher amplitude for distinctness
+        twist_z = 1.2 * torch.sin(freq * t + phase)
+        twist_xy_1 = 0.5 * torch.cos(freq * 0.7 * t + phase)
+        twist_xy_2 = 0.5 * torch.sin(freq * 0.3 * t)
+
+        knot_coords[:, 0] += twist_xy_1
+        knot_coords[:, 1] -= twist_xy_1
+        knot_coords[:, 2] += twist_z + twist_xy_2
+
+        # Re-normalize
+        knot_coords = F.normalize(knot_coords, dim=-1)
 
         return knot_coords
 
