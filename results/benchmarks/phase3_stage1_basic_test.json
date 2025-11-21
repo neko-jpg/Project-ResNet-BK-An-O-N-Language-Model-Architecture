@@ -1,0 +1,125 @@
+{
+  "benchmark_name": "Phase 3 Stage 1 Basic Test",
+  "timestamp": "2025-11-21",
+  "device": "cuda",
+  "model_config": {
+    "vocab_size": 50257,
+    "d_model": 512,
+    "n_layers": 6,
+    "max_seq_len": 1024,
+    "use_complex32": true,
+    "total_parameters": 80937553
+  },
+  "test_results": {
+    "model_creation": {
+      "status": "PASS",
+      "details": "Model created successfully"
+    },
+    "forward_pass": {
+      "status": "PASS",
+      "input_shape": [2, 128],
+      "output_shape": [2, 128, 50257],
+      "nan_detected": false,
+      "inf_detected": false,
+      "numerical_stability": "PASS"
+    },
+    "backward_pass": {
+      "status": "PASS",
+      "loss": 10.8828,
+      "gradient_norms": {
+        "min": 6.766319e-04,
+        "max": 1.013672
+      },
+      "gradient_health": "PASS",
+      "all_gradients_healthy": true
+    },
+    "memory_usage": {
+      "status": "PASS",
+      "batch_size": 2,
+      "seq_length": 1024,
+      "current_vram_gb": 0.52,
+      "peak_vram_gb": 1.37,
+      "target_vram_gb": 8.0,
+      "within_target": true
+    }
+  },
+  "stage1_completion_criteria": {
+    "numerical_stability": {
+      "target": "0% NaN occurrence",
+      "result": "0% NaN occurrence",
+      "status": "PASS"
+    },
+    "gradient_health": {
+      "target": "1e-6 ≤ gradient_norm ≤ 1e3",
+      "result": "6.77e-04 ≤ gradient_norm ≤ 1.01",
+      "status": "PASS"
+    },
+    "memory_layout": {
+      "target": "Planar format",
+      "result": "Planar format (ComplexTensor)",
+      "status": "PASS"
+    },
+    "perplexity": {
+      "target": "Phase 2 + 3%",
+      "result": "54430.93 (untrained model)",
+      "status": "MEASURED",
+      "note": "High PPL is expected for untrained model. Target applies after training."
+    },
+    "vram_reduction": {
+      "target": "≤ 52% of Phase 2",
+      "result": "Peak VRAM: 1.21 GB",
+      "status": "MEASURED",
+      "note": "Phase 2 comparison pending"
+    }
+  },
+  "overall_status": "PASS",
+  "summary": {
+    "passed_tests": 6,
+    "total_tests": 6,
+    "pass_rate": 1.0,
+    "completed_benchmarks": [
+      "Model creation and initialization",
+      "Forward/Backward pass validation",
+      "Numerical stability verification",
+      "Gradient health verification",
+      "Memory usage measurement",
+      "Perplexity measurement on WikiText-2"
+    ],
+    "pending_benchmarks": [
+      "Comparison with Phase 2 (requires Phase 2 model)",
+      "Training and post-training evaluation"
+    ]
+  },
+  "perplexity_measurement": {
+    "timestamp": "2025-11-21 17:30:52",
+    "dataset": "WikiText-2",
+    "ppl": 54430.93,
+    "loss": 10.90,
+    "tokens": 40960,
+    "batches": 10,
+    "nan_count": 0,
+    "inf_count": 0,
+    "stability": "100%"
+  },
+  "vram_measurement": {
+    "current_gb": 0.51,
+    "peak_gb": 1.21,
+    "forward_gb": 0.64,
+    "target_gb": 8.0,
+    "utilization": "15%"
+  },
+  "throughput_measurement": {
+    "tokens_per_sec": 137386.6,
+    "ms_per_token": 0.007
+  },
+  "notes": [
+    "All basic operation tests completed successfully",
+    "Model demonstrates numerical stability and gradient health",
+    "Memory usage is well within target (1.21 GB < 8 GB)",
+    "Dataloader bug fixed - Perplexity measurement successful",
+    "Untrained model PPL (54430.93) is expected and normal",
+    "Benchmark infrastructure fully operational",
+    "Next step: Train model and compare with Phase 2"
+  ],
+  "requirements": ["1.18", "1.19", "1.20"]
+}
