@@ -1,17 +1,5 @@
 AGENTS.md - Project MUSE AI Developer Guidelines
 
-Ubuntuの起動の仕方（linuxじゃないと動かない場合には、こちらを参照してください）
-
-PowerShell を開く
-
-wsl --shutdown
-
-wsl -d Ubuntu で起動
-
-Ubuntu のプロンプトに入る（arat2@MSI:~$）
-
-cd ~/Project-MUSEが私のubuntuでの作業ディレクトリです
-
 仮想環境は
 venv_ubuntuを使う
 
