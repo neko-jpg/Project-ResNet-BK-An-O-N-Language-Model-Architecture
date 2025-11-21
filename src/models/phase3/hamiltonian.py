@@ -78,6 +78,12 @@ class HamiltonianFunction(nn.Module):
         if hidden_dim is None:
             hidden_dim = d_model * 4
         
+        # NOTE: d_model here represents the dimension of the position vector q,
+        # which is half of the state dimension (2D).
+        # The input x to HamiltonianFunction has shape (B, N, 2 * d_model).
+        # So q has shape (B, N, d_model).
+        # The potential net should take d_model as input.
+
         self.potential_net = nn.Sequential(
             nn.Linear(d_model, hidden_dim),
             nn.GELU(),

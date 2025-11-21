@@ -96,8 +96,9 @@ class KoopmanOperator(nn.Module):
         # 物理的意味: 観測可能量の線形発展を記述する作用素
         # 初期化: 単位行列 + 小さなノイズ（恒等写像から学習開始）
         self.K = nn.Linear(d_koopman, d_koopman, bias=False)
-        nn.init.eye_(self.K.weight)
-        self.K.weight.data += torch.randn_like(self.K.weight.data) * 0.01
+        with torch.no_grad():
+            nn.init.eye_(self.K.weight)
+            self.K.weight.data += torch.randn_like(self.K.weight.data) * 0.01
         
         # Observable Decoder Ψ⁻¹: g → x
         # 物理的意味: 観測可能量から物理状態を復元

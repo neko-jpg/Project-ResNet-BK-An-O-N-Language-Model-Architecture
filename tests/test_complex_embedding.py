@@ -342,10 +342,12 @@ class TestComplexEmbeddingPhase2Compatibility:
         assert phase3_emb.d_model == 128
         
         # 実部の重みがコピーされていることを確認
+        # NOTE: phase3はfloat16(complex32モード)なので、phase2(float32)をキャストして比較
+        # float16の精度は3-4桁程度なので、atol=1e-2程度が必要な場合もある
         assert torch.allclose(
-            phase3_emb.token_embedding_real.weight.data,
+            phase3_emb.token_embedding_real.weight.data.float(),
             phase2_emb.weight.data,
-            atol=1e-5
+            atol=5e-3  # float16への変換誤差を許容（少し緩和）
         )
         
         # 虚部がゼロで初期化されていることを確認
