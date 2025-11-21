@@ -2,44 +2,52 @@
 # Python 3.10+
 
 # Core dependencies (version fixed for stability)
-torch==2.1.0
-triton==2.1.0  # Critical: Must match torch version for kernel compatibility
+torch>=2.1.0
+triton  # Critical: Must match torch version for kernel compatibility
 
 # Hugging Face ecosystem
-transformers==4.35.0
-datasets==2.14.6
-tokenizers==0.15.0
-accelerate==0.24.1
-safetensors==0.4.0
+transformers>=4.35.0
+datasets>=2.14.6
+tokenizers>=0.15.0
+accelerate>=0.24.1
+safetensors>=0.4.0
 
 # Scientific computing
-numpy==1.24.3  # Numerical stability
-scipy==1.11.4  # Scientific computing
-einops==0.7.0  # Tensor operations
+numpy>=1.24.3  # Numerical stability
+scipy>=1.11.4  # Scientific computing
+einops>=0.7.0  # Tensor operations
 
 # Visualization
-matplotlib==3.8.2
-seaborn==0.13.0
-pandas==2.1.1
+matplotlib>=3.8.2
+seaborn>=0.13.0
+pandas>=2.1.1
 
 # Utilities
-tqdm==4.66.1
-pyyaml==6.0.1
+tqdm>=4.66.1
+pyyaml>=6.0.1
 
 # Logging (optional)
-tensorboard==2.15.1
-wandb==0.16.0
+tensorboard>=2.15.1
+wandb>=0.16.0
 
 # Testing
-pytest==7.4.3
-pytest-cov==4.1.0
+pytest>=7.4.3
+pytest-cov>=4.1.0
 
 # Development
-black==23.12.1
-flake8==6.1.0
-mypy==1.6.1
+black>=23.12.1
+flake8>=6.1.0
+mypy>=1.6.1
 
 # Jupyter (optional)
-jupyter==1.0.0
-jupyterlab==4.0.7
-ipywidgets==8.1.1
+jupyter>=1.0.0
+jupyterlab>=4.0.7
+ipywidgets>=8.1.1
+
+# Phase 4 Dependencies
+pyknotid>=0.4.0
+tensornetwork>=0.4.6
+zarr>=2.16.0
+aiofiles>=23.2.1
+networkx>=3.1
+sympy>=1.12
