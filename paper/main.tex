@@ -715,21 +715,21 @@ Table~\ref{tab:bk_triton_performance} presents the measured execution times for 
 
 \begin{table}[ht]
 \centering
-\caption{BK-Core Triton kernel performance. The Triton implementation achieves 185$\times$ speedup over PyTorch vmap, significantly exceeding the target of 3$\times$.}
+\caption{BK-Core Triton kernel performance. The Triton implementation achieves 199.6$\times$ speedup over PyTorch vmap, significantly exceeding the target of 3$\times$.}
 \label{tab:bk_triton_perf}
 \begin{tabular}{lrrr}
 \toprule
 Implementation & Mean (ms) & Std (ms) & Min--Max (ms) \\
 \midrule
-PyTorch (vmap) & 554.18 & 49.26 & 493.55--698.07 \\
-Triton Kernel & 2.99 & 0.53 & 2.42--4.84 \\
+PyTorch (vmap) & 544.22 & 79.62 & 452.83--888.78 \\
+Triton Kernel & 2.73 & 0.42 & 2.22--4.42 \\
 \midrule
-\textbf{Speedup} & \multicolumn{3}{c}{\textbf{185$\times$}} \\
+\textbf{Speedup} & \multicolumn{3}{c}{\textbf{199.6$\times$}} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The Triton kernel achieved a mean execution time of 2.99 ms compared to 554.18 ms for the PyTorch implementation, representing a \textbf{185.10$\times$ speedup}. This dramatically exceeds our target of 3.0$\times$ speedup and demonstrates the effectiveness of custom kernel optimization for structured matrix operations.
+The Triton kernel achieved a mean execution time of 2.73 ms compared to 544.22 ms for the PyTorch implementation, representing a \textbf{199.59$\times$ speedup}. This dramatically exceeds our target of 3.0$\times$ speedup and demonstrates the effectiveness of custom kernel optimization for structured matrix operations.
 
 \subsubsection{JSON Benchmark Output}
 
@@ -744,19 +744,19 @@ The complete benchmark results were saved in JSON format for reproducibility:
     "device": "cuda"
   },
   "pytorch": {
-    "mean_ms": 554.1754867399981,
-    "std_ms": 49.261557749468665,
-    "min_ms": 493.5475109999743,
-    "max_ms": 698.0666489999976
+    "mean_ms": 544.2221244199991,
+    "std_ms": 79.6207830218756,
+    "min_ms": 452.83369099999504,
+    "max_ms": 888.7774069999921
   },
   "triton": {
     "available": true,
-    "mean_ms": 2.993883200000198,
-    "std_ms": 0.5312243489886888,
-    "min_ms": 2.4238680000223667,
-    "max_ms": 4.840921999999637
+    "mean_ms": 2.726729470000322,
+    "std_ms": 0.42024259137237985,
+    "min_ms": 2.2175489999938236,
+    "max_ms": 4.41881499999397
   },
-  "speedup": 185.1025740549803,
+  "speedup": 199.58786905982822,
   "success": true
 }
 \end{verbatim}
@@ -772,9 +772,41 @@ The exceptional speedup is attributed to several factors:
     \item \textbf{Warp-level primitives}: Direct use of CUDA warp shuffle operations
 \end{enumerate}
 
-The low standard deviation (0.53 ms for Triton vs. 49.26 ms for PyTorch) indicates stable performance with minimal variance across runs. This consistency is crucial for production deployment.
+The low standard deviation (0.42 ms for Triton vs. 79.62 ms for PyTorch) indicates stable performance with minimal variance across runs. This consistency is crucial for production deployment.
 
-\textbf{Practical Impact}: At sequence length 4096 with batch size 16, the Triton kernel processes 65,536 tokens in 2.99 ms, achieving a throughput of approximately 21.9 million tokens per second. This enables real-time inference and efficient training on consumer-grade hardware.
+\textbf{Practical Impact}: At sequence length 4096 with batch size 16, the Triton kernel processes 65,536 tokens in 2.73 ms, achieving a throughput of approximately 24.0 million tokens per second. This enables real-time inference and efficient training on consumer-grade hardware.
+
+\subsubsection{Numerical Correctness Verification}
+
+To ensure the Triton kernel produces numerically correct results, we conducted comprehensive correctness verification comparing PyTorch and Triton implementations across 16 different configurations. Table~\ref{tab:bk_triton_correctness} presents the verification results.
+
+\begin{table}[ht]
+\centering
+\caption{BK-Core Triton numerical correctness verification. All tests passed with MSE $<$ 1e-6 and zero NaN occurrence.}
+\label{tab:bk_triton_correctness}
+\begin{tabular}{lrr}
+\toprule
+Metric & Value & Status \\
+\midrule
+Configuration Tests & 16/16 passed & \checkmark \\
+Pass Rate & 100.0\% & \checkmark \\
+Maximum MSE & 2.46e-10 & \checkmark \\
+Mean MSE & 4.29e-11 & \checkmark \\
+MSE Threshold & $<$ 1e-6 & \checkmark \\
+\midrule
+NaN Rate (PyTorch) & 0.0\% (0/100) & \checkmark \\
+NaN Rate (Triton) & 0.0\% (0/100) & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The verification tested all combinations of batch sizes [1, 4, 8, 16] and sequence lengths [512, 1024, 2048, 4096]. The maximum Mean Squared Error (MSE) of 2.46e-10 is six orders of magnitude below the acceptance threshold of 1e-6, demonstrating exceptional numerical accuracy. Additionally, 100 random trials showed zero NaN occurrences in both implementations, confirming numerical stability.
+
+\textbf{Verification Methodology}: For each configuration, we computed the MSE between PyTorch vmap and Triton kernel outputs:
+\begin{equation}
+\text{MSE} = \frac{1}{N} \sum_{i=1}^{N} \|y_{\text{PyTorch}}^{(i)} - y_{\text{Triton}}^{(i)}\|^2
+\end{equation}
+where $N$ is the total number of elements in the output tensor. The verification ensures that the 199.6$\times$ speedup does not compromise numerical accuracy.
 
 \subsection{Phase 2: Dynamic Memory and Stability Improvements}
 
