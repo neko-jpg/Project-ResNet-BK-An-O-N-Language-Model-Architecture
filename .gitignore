@@ -194,3 +194,6 @@ scattering_analysis_model/*.json
 
 # Keep important empty directories
 !.gitkeep
+
+# Phase 4 Private Documentation
+docs/phase4/
