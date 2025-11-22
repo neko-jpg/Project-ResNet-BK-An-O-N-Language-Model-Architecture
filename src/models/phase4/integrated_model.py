@@ -200,55 +200,58 @@ class Phase4IntegratedModel(nn.Module):
             # Fallback if hook fails
             hidden_states = torch.zeros(input_ids.shape[0], input_ids.shape[1], self.d_model, device=input_ids.device)
 
-        # --- Phase 4 Active Loops ---
+        # --- Phase 4 Active Loops (Lazy Evaluation) ---
+        # Only compute heavy Phase 4 diagnostics if requested.
+        # This significantly reduces overhead during pure inference/training loops.
 
-        # A. Emotion Detection (Dynamic)
-        if self.enable_emotion:
-            target = labels if labels is not None else logits.argmax(dim=-1)
-            emotion_info = self.emotion_detector(logits, target, hidden_states)
-            diagnostics['emotion'] = emotion_info
+        if return_diagnostics:
+            # A. Emotion Detection (Dynamic)
+            if self.enable_emotion:
+                target = labels if labels is not None else logits.argmax(dim=-1)
+                emotion_info = self.emotion_detector(logits, target, hidden_states)
+                diagnostics['emotion'] = emotion_info
 
-            # Control Feedback: Skip layers if Resonance is high? (Simulated)
-            if emotion_info['state'] == 'RESONANCE':
-                diagnostics['routing_decision'] = "FAST_PATH"
-            elif emotion_info['state'] == 'DISSONANCE':
-                diagnostics['routing_decision'] = "DEEP_PATH"
+                # Control Feedback: Skip layers if Resonance is high? (Simulated)
+                if emotion_info['state'] == 'RESONANCE':
+                    diagnostics['routing_decision'] = "FAST_PATH"
+                elif emotion_info['state'] == 'DISSONANCE':
+                    diagnostics['routing_decision'] = "DEEP_PATH"
 
-        # B. Holographic Insight (Curiosity)
-        if self.enable_holographic:
-            bulk_features, bulk_info = self.bulk_generator(hidden_states)
-            diagnostics['bulk'] = bulk_info
+            # B. Holographic Insight (Curiosity)
+            if self.enable_holographic:
+                bulk_features, bulk_info = self.bulk_generator(hidden_states)
+                diagnostics['bulk'] = bulk_info
 
-            # Feedback: If geodesic complexity is high, signal cognitive load
-            # Here we just log it, but in full implementation this would recurse.
-            # bulk_features can be added to hidden_states for next step.
+                # Feedback: If geodesic complexity is high, signal cognitive load
+                # Here we just log it, but in full implementation this would recurse.
+                # bulk_features can be added to hidden_states for next step.
 
-        # C. Quantum Observation (Will)
-        if self.enable_quantum:
-            collapsed_tokens, quantum_info = self.quantum_observer(logits)
-            diagnostics['quantum'] = quantum_info
+            # C. Quantum Observation (Will)
+            if self.enable_quantum:
+                collapsed_tokens, quantum_info = self.quantum_observer(logits)
+                diagnostics['quantum'] = quantum_info
 
-            # Feedback: Adjust temperature based on entropy reduction
-            # High reduction (confidence) -> Low temperature
-            entropy_delta = quantum_info['entropy_reduction'].mean().item()
-            suggested_temp = max(0.1, 1.0 - entropy_delta)
-            diagnostics['suggested_temperature'] = suggested_temp
+                # Feedback: Adjust temperature based on entropy reduction
+                # High reduction (confidence) -> Low temperature
+                entropy_delta = quantum_info['entropy_reduction'].mean().item()
+                suggested_temp = max(0.1, 1.0 - entropy_delta)
+                diagnostics['suggested_temperature'] = suggested_temp
 
-        # D. Memory & Boundary (Context)
-        if self.enable_boundary:
-            # Simulate fetching context for the current thought
-            # In real loop, we decode `collapsed_tokens` to text and search.
-            docs = self.boundary_core.fetch(k=1)
-            diagnostics['boundary_context'] = docs
+            # D. Memory & Boundary (Context)
+            if self.enable_boundary:
+                # Simulate fetching context for the current thought
+                # In real loop, we decode `collapsed_tokens` to text and search.
+                docs = self.boundary_core.fetch(k=1)
+                diagnostics['boundary_context'] = docs
 
-        if self.enable_topological:
-             # Simulate retrieving relevant knot
-             diagnostics['memory_knot'] = "Active"
+            if self.enable_topological:
+                # Simulate retrieving relevant knot
+                diagnostics['memory_knot'] = "Active"
 
-        # E. Meta Commentary (Inner Voice)
-        if self.enable_meta:
-            commentary = self.meta_commentary.generate_commentary(diagnostics)
-            diagnostics['meta_commentary'] = commentary
+            # E. Meta Commentary (Inner Voice)
+            if self.enable_meta:
+                commentary = self.meta_commentary.generate_commentary(diagnostics)
+                diagnostics['meta_commentary'] = commentary
 
         return {
             'logits': logits,

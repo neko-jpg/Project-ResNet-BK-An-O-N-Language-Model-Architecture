@@ -94,8 +94,10 @@ class MoEResNetBKLayer(nn.Module):
             self.register_buffer("h0_sub_base",  torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
             self.register_buffer("h0_super_base",torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
 
-            # Spectral shift z as buffer
-            self.register_buffer("z", torch.tensor(1.0j, dtype=torch.complex64))
+            # Zeta Regularization: Learnable imaginary shift (epsilon)
+            # z = i * epsilon. epsilon > 0 to avoid singularities on real axis.
+            # Initial value 1.0 corresponds to previous fixed z=1.0j
+            self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
 
             self.bk_core = BKCoreFunction.apply
 
@@ -141,8 +143,14 @@ class MoEResNetBKLayer(nn.Module):
 
             he_diag = h0_diag + v_prelim                # (B, N)
 
+            # Construct dynamic z with Zeta Regularization
+            # epsilon = softplus(param) to ensure positivity
+            epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-6
+            z = 1.0j * epsilon
+            z = z.to(dtype=torch.complex64, device=he_diag.device)
+
             # BK-Core + hybrid analytic gradient
-            features = self.bk_core(he_diag, h0_super, h0_sub, self.z)  # (B, N, 2)
+            features = self.bk_core(he_diag, h0_super, h0_sub, z)  # (B, N, 2)
             
             # For original BK-Core, also extract G_ii if using scattering router
             if self.moe_ffn.use_scattering_router:
