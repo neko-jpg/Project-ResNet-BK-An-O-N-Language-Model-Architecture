@@ -105,70 +105,26 @@ class DatasetPreparator:
         
         # Configuration
         self.dataset_configs = {
-            # --- Baseline (English) ---
-            'wikitext103': {
-                'hf_name': 'wikitext',
-                'hf_config': 'wikitext-103-raw-v1',
-                'splits': ['train', 'validation', 'test'],
-                'text_col': 'text'
-            },
-            'c4': {
-                'hf_name': 'allenai/c4',
-                'hf_config': 'en',
-                'splits': ['train', 'validation'],
-                'streaming': True,
-                'text_col': 'text'
-            },
+            # --- Teppei's "High-Density" Curriculum (OSS Safe) ---
             
-            # --- Code Agent (Ab Initio + Engineering) ---
-            # 1. The Stack v2 (Base Logic)
-            'the_stack_python': {
-                'hf_name': 'bigcode/the-stack-v2',
-                'hf_config': None,
-                'subset_lang': 'python',
+            # 1. The "Brain" (Textbook Quality Logic)
+            'cosmopedia': {
+                'hf_name': 'HuggingFaceTB/cosmopedia',
+                'hf_config': 'web_samples_v2',
                 'splits': ['train'],
                 'streaming': True,
-                'text_col': 'content',
-                'gated': True
-            },
-            'the_stack_cpp': {
-                'hf_name': 'bigcode/the-stack-v2',
-                'subset_lang': 'c++',
-                'splits': ['train'],
-                'streaming': True,
-                'text_col': 'content',
-                'gated': True
-            },
-            # 2. Magicoder (Instruction Code / Refactoring Proxy)
-            # Replaces CommitPack (script-based) with high-quality Evol-Instruct
-            'magicoder': {
-                'hf_name': 'ise-uiuc/Magicoder-Evol-Instruct-110K',
-                'splits': ['train'],
-                'streaming': True,
-                'text_col': 'special_magicoder' # instruction + response
-            },
-            # Fallback for Code
-            'codeparrot': {
-                'hf_name': 'codeparrot/codeparrot-clean',
-                'splits': ['train'],
-                'streaming': True,
-                'text_col': 'content'
+                'text_col': 'text' # Contains synthesized textbook content
             },
 
-            # --- Physics & Math ---
-            'arxiv': {
-                'hf_name': 'gfissore/arxiv-abstracts-2021',
-                'splits': ['train'],
-                'text_col': 'abstract'
-            },
-            'math': {
-                'hf_name': 'open-web-math/open-web-math',
+            # 2. The "Hands" (Expert Code)
+            'evol_instruct_code': {
+                'hf_name': 'nickrosh/Evol-Instruct-Code-80k-v1',
                 'splits': ['train'],
                 'streaming': True,
-                'text_col': 'text'
+                'text_col': 'special_evol' # Instruction + Output
             },
-            
-            # --- Japanese & Cultural ---
+
+            # 3. The "Soul" (Japanese Culture & Politeness)
             'wiki_ja': {
                 'hf_name': 'izumi-lab/wikipedia-ja-20230720',
                 'splits': ['train'],
@@ -180,20 +136,20 @@ class DatasetPreparator:
                 'text_col': 'special_dolly'
             },
 
-            # --- LOGOS: Emotion & Sarcasm ---
-            'irony': {
-                'hf_name': 'tweet_eval',
-                'hf_config': 'irony',
-                'splits': ['train', 'test'],
+            # --- Legacy / Supplementary ---
+            'wikitext103': {
+                'hf_name': 'wikitext',
+                'hf_config': 'wikitext-103-raw-v1',
+                'splits': ['train', 'validation', 'test'],
                 'text_col': 'text'
             },
-            'dialogue': {
-                'hf_name': 'OpenAssistant/oasst1',
-                'splits': ['train', 'validation'],
-                'text_col': 'text'
+             # --- Physics & Math ---
+            'arxiv': {
+                'hf_name': 'gfissore/arxiv-abstracts-2021',
+                'splits': ['train'],
+                'text_col': 'abstract'
             },
-            
-            # --- Factuality (Triples) ---
+             # --- Factuality (Triples) ---
             'factuality_source': {
                 'hf_name': 'wikimedia/wikipedia',
                 'hf_config': '20231101.en',
@@ -268,6 +224,12 @@ class DatasetPreparator:
                         input_text = item.get('input', item.get('context', ''))
                         output_text = item.get('output', item.get('response', ''))
                         text = f"Instruction: {instruction}\nInput: {input_text}\nOutput: {output_text}"
+
+                    elif text_col == 'special_evol':
+                        # Evol-Instruct: instruction + output
+                        instruction = item.get('instruction', '')
+                        output = item.get('output', '')
+                        text = f"Instruction: {instruction}\nOutput: {output}"
 
                     elif text_col == 'special_magicoder':
                         # Magicoder: instruction + response

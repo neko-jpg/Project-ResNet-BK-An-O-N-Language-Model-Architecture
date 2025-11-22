@@ -1,60 +1,33 @@
 # MUSE Dataset Mixing Configuration
 # Defines the curriculum learning ratios for the "Ab Initio" training phase.
+# UPDATED: "Teppei's High-Density Curriculum" (OSS/Privacy-First Edition)
 
 # Strategy:
-# 1. Establish Base Logic (Code + Math + English Wiki) -> 50%
-# 2. Inject Engineering Reality (Instruction Code + Refactoring) -> 20%
-# 3. Inject Physics & Facts (ArXiv + Factuality) -> 15%
-# 4. Inject Culture & Empathy (Japanese + Dialogue + Sarcasm) -> 15%
+# 1. The Brain (Logic/Reasoning) -> 45%
+#    - Uses "Cosmopedia" (Synthetic Textbooks) to teach the "WHY" and "HOW".
+# 2. The Hands (Engineering/Code) -> 30%
+#    - Uses "Evol-Instruct" to teach complex implementation details.
+# 3. The Soul (Culture/Empathy) -> 15%
+#    - Uses Japanese Wiki and Dialogue to ensure cultural grounding and politeness.
+# 4. The World (Physics/Facts) -> 10%
+#    - ArXiv and Wiki Factuality for grounding in physical reality.
 
 datasets:
-  # --- Base Logic (The "Brain") ---
-  code_python:
-    path: "./data/the_stack_python"
-    weight: 0.20
-    description: "Python Logic (The Stack v2). Core reasoning."
-    license: "Permissive (varies)"
-
-  code_systems:
-    path: "./data/the_stack_cpp"
-    weight: 0.05
-    description: "System Logic (C++/Rust). Memory/Efficiency."
-    license: "Permissive (varies)"
-
-  wikitext:
-    path: "./data/wikitext103"
-    weight: 0.10
-    description: "High quality English encyclopedic text."
-    license: "CC-BY-SA 3.0"
-
-  math_logic:
-    path: "./data/math"
-    weight: 0.05
-    description: "OpenWebMath. Pure logical derivation."
-    license: "CC-BY 4.0"
-
-  # --- Engineering Reality (The "Hands") ---
-  # Replaced raw commits with Instruction Evolution for "Thoughtful" coding
-  magicoder_evol:
-    path: "./data/magicoder"
-    weight: 0.20
-    description: "Magicoder Evol-Instruct. Multi-step reasoning and refactoring flows."
+  # --- The Brain: Synthetic Textbooks (45%) ---
+  cosmopedia:
+    path: "./data/cosmopedia"
+    weight: 0.45
+    description: "Synthetic Textbooks (HuggingFaceTB). High-density reasoning and explanations."
     license: "Apache 2.0"
 
-  # --- Physics & Factuality ---
-  physics_arxiv:
-    path: "./data/arxiv"
-    weight: 0.05
-    description: "ArXiv Abstracts. Physical world modeling and meta-commentary."
-    license: "CC-BY 4.0 (varies)"
+  # --- The Hands: Expert Engineering (30%) ---
+  evol_instruct_code:
+    path: "./data/evol_instruct_code"
+    weight: 0.30
+    description: "Evol-Instruct Code. Complex, multi-step coding challenges."
+    license: "Apache 2.0"
 
-  factuality_knots:
-    path: "./data/factuality_source"
-    weight: 0.10
-    description: "Wikipedia (Full). Source for topological fact knots."
-    license: "CC-BY-SA 3.0"
-
-  # --- Cultural & Boundary Layer (The "Soul") ---
+  # --- The Soul: Culture & Empathy (15%) ---
   japanese_knowledge:
     path: "./data/wiki_ja"
     weight: 0.05
@@ -63,22 +36,22 @@ datasets:
 
   japanese_dialogue:
     path: "./data/japanese_instruct"
-    weight: 0.05
+    weight: 0.10
     description: "Databricks Dolly (JA). Politeness and instruction following."
     license: "CC-BY-SA 3.0"
 
-  # --- LOGOS: Emotion & Meta-Commentary ---
-  dialogue_general:
-    path: "./data/dialogue"
-    weight: 0.10
-    description: "OpenAssistant. Conversational flow and human interaction."
-    license: "Apache 2.0"
-
-  irony_sarcasm:
-    path: "./data/irony"
+  # --- The World: Physics & Factuality (10%) ---
+  physics_arxiv:
+    path: "./data/arxiv"
     weight: 0.05
-    description: "TweetEval Irony. Phase shifting (detecting hidden meanings)."
-    license: "Research Use"
+    description: "ArXiv Abstracts. Physical world modeling."
+    license: "CC-BY 4.0 (varies)"
+
+  factuality_knots:
+    path: "./data/factuality_source"
+    weight: 0.05
+    description: "Wikipedia (Full). Source for topological fact knots."
+    license: "CC-BY-SA 3.0"
 
 # Training Hyperparameters related to Data
 block_size: 2048
