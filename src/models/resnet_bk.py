@@ -72,8 +72,8 @@ class MoEResNetBKLayer(nn.Module):
         # BK-Core output (real, imag) -> d_model
         self.output_proj = nn.Linear(2, d_model)
 
-        # Learnable scale for BK branch contribution
-        self.bk_scale = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+        # Learnable scale for BK branch contribution (per-channel scaling)
+        self.bk_scale = nn.Parameter(torch.ones(d_model, dtype=torch.float32))
 
         # Initialize BK-Core (either Birman-Schwinger or original)
         if use_birman_schwinger:

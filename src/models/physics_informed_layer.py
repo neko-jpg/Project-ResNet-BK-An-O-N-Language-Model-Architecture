@@ -80,24 +80,28 @@ class PhysicsInformedBKLayer(nn.Module):
         # Store features for analysis
         self.output_features = None
     
-    def compute_energy(self, x, x_prev=None):
+    def compute_energy(self, x, x_prev=None, sum_over_seq=True):
         """
         Compute total energy: E = T + V
         
         Args:
             x: (B, N, D) - current state
             x_prev: (B, N, D) - previous state (for kinetic energy)
+            sum_over_seq: if True, sum energy over sequence dimension
         
         Returns:
-            E_total: (B,) - total energy per batch
-            T_total: (B,) - kinetic energy per batch
-            V_total: (B,) - potential energy per batch
+            E_total: (B,) or (B, N) - total energy
+            T_total: (B,) or (B, N) - kinetic energy
+            V_total: (B,) or (B, N) - potential energy
         """
         B, N, D = x.shape
         
         # Potential energy: V = sum_i V_i(x_i)
         V = self.potential_mlp(x).squeeze(-1)  # (B, N)
-        V_total = V.sum(dim=-1)  # (B,)
+        if sum_over_seq:
+            V_out = V.sum(dim=-1)  # (B,)
+        else:
+            V_out = V
         
         # Kinetic energy: T = sum_i T_i(momentum_i)
         if x_prev is not None and x_prev.shape[0] == B:
@@ -105,15 +109,21 @@ class PhysicsInformedBKLayer(nn.Module):
             # Only compute if batch sizes match
             momentum = x - x_prev  # (B, N, D)
             T = self.kinetic_mlp(momentum).squeeze(-1)  # (B, N)
-            T_total = T.sum(dim=-1)  # (B,)
+            if sum_over_seq:
+                T_out = T.sum(dim=-1)  # (B,)
+            else:
+                T_out = T
         else:
             # No previous state or batch size mismatch: assume zero kinetic energy
-            T_total = torch.zeros(B, device=x.device)
+            if sum_over_seq:
+                T_out = torch.zeros(B, device=x.device)
+            else:
+                T_out = torch.zeros((B, N), device=x.device)
         
         # Total energy
-        E_total = T_total + V_total
+        E_total = T_out + V_out
         
-        return E_total, T_total, V_total
+        return E_total, T_out, V_out
     
     def forward(self, x, x_prev=None, return_energy=False):
         """
@@ -134,7 +144,7 @@ class PhysicsInformedBKLayer(nn.Module):
         x_norm = self.layer_norm(x)
         
         # MoE forward pass
-        moe_out = self.moe_ffn(x_norm)  # (B, N, D)
+        moe_out, _, _ = self.moe_ffn(x_norm)  # (B, N, D), scalar, dict
         
         # Potential: v_i = potential_proj(moe_out)
         v = self.potential_proj(moe_out).squeeze(-1)  # (B, N)
