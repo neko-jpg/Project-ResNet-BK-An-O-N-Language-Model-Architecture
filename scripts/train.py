@@ -22,6 +22,7 @@ from src.utils import (
     parse_args,
     get_config_from_args,
     get_data_loader,
+    get_mixed_data_loader,
     TrainingMetrics,
     MetricsLogger,
     WandBLogger,
@@ -46,19 +47,36 @@ def train():
     
     # Load data
     print("\nLoading data...")
-    train_data, vocab, get_batch = get_data_loader(
-        batch_size=args.batch_size,
-        n_seq=args.n_seq,
-        dataset_name=args.dataset,
-        data_limit=args.data_limit
-    )
-    
-    if train_data is None:
-        print("Failed to load data. Exiting.")
-        return
-    
-    print(f"Vocabulary size: {vocab['vocab_size']}")
-    print(f"Training tokens: {train_data.numel()}")
+    use_mixed = args.use_mixed_datasets or args.dataset in ("mixed", "phase4", "phase4-mix") or args.dataset.endswith(".yaml")
+    if use_mixed:
+        mixed_loader, vocab, steps_per_epoch = get_mixed_data_loader(
+            config_path=args.dataset_mix_config if not args.dataset.endswith(".yaml") else args.dataset,
+            batch_size=args.batch_size,
+            n_seq=args.n_seq,
+            total_tokens=args.data_limit,
+            seed=args.seed,
+            vocab_size=args.vocab_size,
+        )
+        train_data = None
+        get_batch = None
+        training_tokens = steps_per_epoch * args.batch_size * args.n_seq
+        print(f"Vocabulary size: {vocab['vocab_size']}")
+        print(f"Training tokens (per epoch): {training_tokens}")
+    else:
+        train_data, vocab, get_batch = get_data_loader(
+            batch_size=args.batch_size,
+            n_seq=args.n_seq,
+            dataset_name=args.dataset,
+            data_limit=args.data_limit
+        )
+        
+        if train_data is None:
+            print("Failed to load data. Exiting.")
+            return
+        
+        training_tokens = train_data.numel()
+        print(f"Vocabulary size: {vocab['vocab_size']}")
+        print(f"Training tokens: {training_tokens}")
     
     # Create model configuration
     config = get_config_from_args(args)
@@ -83,7 +101,10 @@ def train():
     
     criterion = nn.CrossEntropyLoss()
     
-    num_total_steps = (train_data.size(0) // args.n_seq) * args.epochs
+    if use_mixed:
+        num_total_steps = steps_per_epoch * args.epochs
+    else:
+        num_total_steps = (train_data.size(0) // args.n_seq) * args.epochs
     scheduler = CosineAnnealingLR(
         optimizer,
         T_max=num_total_steps,
@@ -120,14 +141,22 @@ def train():
         total_loss = 0.0
         num_batches = 0
         
-        for i in range(0, train_data.size(0) - 1, args.n_seq):
+        if use_mixed:
+            batch_iter = mixed_loader.iter_epoch(epoch)
+        else:
+            batch_iter = range(0, train_data.size(0) - 1, args.n_seq)
+        
+        for step_idx, batch_item in enumerate(batch_iter, start=1):
             step_start = time.time()
             
-            x_batch, y_batch = get_batch(train_data, i)
-            x_batch = x_batch.t().contiguous()
-            
-            if x_batch.size(1) != args.n_seq:
-                continue
+            if use_mixed:
+                x_batch, y_batch = batch_item
+            else:
+                x_batch, y_batch = get_batch(train_data, batch_item)
+                x_batch = x_batch.t().contiguous()
+                
+                if x_batch.size(1) != args.n_seq:
+                    continue
             
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
             

@@ -2,7 +2,14 @@
 Data Loading Utilities
 """
 
+import random
+import struct
+from pathlib import Path
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+
+import numpy as np
 import torch
+import yaml
 from collections import Counter
 from datasets import load_dataset
 
@@ -213,3 +220,151 @@ def get_wikitext2_dataloaders(batch_size=32, seq_len=128, num_workers=2, vocab_s
     )
     
     return train_loader, val_loader, vocab_size
+
+
+class BinaryIndexedDataset:
+    """
+    Memory-mapped reader for .bin/.idx pairs produced by prepare_datasets.py.
+
+    The .idx file layout:
+      - 4 bytes: magic "MUSE"
+      - 4 bytes: version (uint32, little-endian)
+      - Followed by uint64 pairs: (offset, length) for each document
+    The .bin file stores uint32 token ids concatenated for all documents.
+    """
+
+    def __init__(self, path: str):
+        root = Path(path)
+        bin_path = root / "train.bin"
+        idx_path = root / "train.idx"
+
+        if not bin_path.exists() or not idx_path.exists():
+            raise FileNotFoundError(f"Missing bin/idx files under {root}")
+
+        with open(idx_path, "rb") as f:
+            magic = f.read(4)
+            if magic != b"MUSE":
+                raise ValueError(f"Invalid magic in {idx_path}: {magic}")
+            _version = struct.unpack("<I", f.read(4))[0]
+            idx_data = np.fromfile(f, dtype=np.uint64)
+
+        if idx_data.size % 2 != 0:
+            raise ValueError(f"Corrupted idx file: {idx_path}")
+
+        self.index = idx_data.reshape(-1, 2)  # (num_docs, 2): offset, length
+        self.tokens = np.memmap(bin_path, dtype=np.uint32, mode="r")
+
+    @property
+    def num_docs(self) -> int:
+        return self.index.shape[0]
+
+    def sample_sequence(self, seq_len: int, rng: random.Random) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """Sample a (input, target) pair of length seq_len from a random doc."""
+        for _ in range(8):  # retry a few times for short docs
+            doc_id = rng.randrange(self.num_docs)
+            offset, length = self.index[doc_id]
+            if length <= seq_len:
+                continue
+            start = rng.randrange(0, length - seq_len)
+            end = start + seq_len + 1  # +1 for target shift
+            slice_tokens = self.tokens[offset + start : offset + end]
+            x = slice_tokens[:-1]
+            y = slice_tokens[1:]
+            return x, y
+        return None
+
+
+class MixedBinaryDataset:
+    """
+    Weighted mixture of multiple BinaryIndexedDataset datasets.
+    """
+
+    def __init__(
+        self,
+        config_path: str,
+        batch_size: int,
+        seq_len: int,
+        total_tokens: int,
+        seed: int,
+        vocab_size: int,
+    ):
+        self.config_path = Path(config_path)
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.total_tokens = total_tokens
+        self.seed = seed
+        self.vocab_size = vocab_size
+
+        with open(self.config_path, "r") as f:
+            cfg = yaml.safe_load(f)
+
+        ds_cfg: Dict[str, Dict[str, float]] = cfg.get("datasets", {})
+        if not ds_cfg:
+            raise ValueError(f"No datasets defined in {self.config_path}")
+
+        self.datasets: List[BinaryIndexedDataset] = []
+        self.weights: List[float] = []
+        for name, info in ds_cfg.items():
+            path = info.get("path")
+            weight = float(info.get("weight", 0.0))
+            if not path or weight <= 0.0:
+                continue
+            self.datasets.append(BinaryIndexedDataset(path))
+            self.weights.append(weight)
+
+        if not self.datasets:
+            raise ValueError(f"All datasets missing or zero-weight in {self.config_path}")
+
+        weight_sum = sum(self.weights)
+        self.weights = [w / weight_sum for w in self.weights]
+
+        tokens_per_step = batch_size * seq_len
+        self.steps_per_epoch = max(1, total_tokens // tokens_per_step)
+
+    def iter_epoch(self, epoch: int) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
+        """Yield batches for one epoch."""
+        rng = random.Random(self.seed + epoch)
+        choices = list(range(len(self.datasets)))
+        for _ in range(self.steps_per_epoch):
+            x_list: List[np.ndarray] = []
+            y_list: List[np.ndarray] = []
+            while len(x_list) < self.batch_size:
+                ds_idx = rng.choices(choices, weights=self.weights, k=1)[0]
+                sample = self.datasets[ds_idx].sample_sequence(self.seq_len, rng)
+                if sample is None:
+                    continue
+                x, y = sample
+                x_list.append(x)
+                y_list.append(y)
+
+            x_batch = torch.from_numpy(np.stack(x_list)).long()
+            y_batch = torch.from_numpy(np.stack(y_list)).long().reshape(-1)
+            yield x_batch, y_batch
+
+    def vocab(self) -> Dict[str, object]:
+        return {"stoi": {}, "itos": [], "vocab_size": self.vocab_size}
+
+    def num_tokens_per_epoch(self) -> int:
+        return self.steps_per_epoch * self.batch_size * self.seq_len
+
+
+def get_mixed_data_loader(
+    config_path: str,
+    batch_size: int,
+    n_seq: int,
+    total_tokens: int,
+    seed: int,
+    vocab_size: int,
+) -> Tuple[MixedBinaryDataset, Dict[str, object], int]:
+    """
+    Build a mixed dataset loader from .bin/.idx datasets defined in YAML.
+    """
+    mixed = MixedBinaryDataset(
+        config_path=config_path,
+        batch_size=batch_size,
+        seq_len=n_seq,
+        total_tokens=total_tokens,
+        seed=seed,
+        vocab_size=vocab_size,
+    )
+    return mixed, mixed.vocab(), mixed.steps_per_epoch

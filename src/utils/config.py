@@ -95,6 +95,17 @@ def parse_args():
     
     # Data and logging
     parser.add_argument('--dataset', type=str, default='wikitext-2', help='Dataset name')
+    parser.add_argument(
+        '--dataset-mix-config',
+        type=str,
+        default='configs/dataset_mixing.yaml',
+        help='YAML config for mixed binary datasets (prepared via prepare_datasets.py)',
+    )
+    parser.add_argument(
+        '--use-mixed-datasets',
+        action='store_true',
+        help='Use mixed datasets defined in dataset-mix-config instead of a single dataset',
+    )
     parser.add_argument('--data-limit', type=int, default=500000, help='Max tokens to use')
     parser.add_argument('--log-interval', type=int, default=50, help='Logging interval (steps)')
     parser.add_argument('--save-dir', type=str, default='checkpoints', help='Checkpoint save directory')
