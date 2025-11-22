@@ -128,9 +128,14 @@ class BKCoreFunction(torch.autograd.Function):
             try:
                 from src.kernels.bk_scan import bk_scan_triton
                 G_ii = bk_scan_triton(he_diag, h0_super, h0_sub, z)
+
+                # Double-check numerical stability (Task 3)
+                if not torch.isfinite(G_ii).all():
+                    raise ValueError("Triton kernel produced non-finite values (NaN/Inf)")
+
             except Exception as e:
                 warnings.warn(
-                    f"Triton kernel failed: {e}. Falling back to PyTorch implementation.",
+                    f"Triton kernel failed or unstable: {e}. Falling back to PyTorch implementation.",
                     UserWarning
                 )
                 G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)

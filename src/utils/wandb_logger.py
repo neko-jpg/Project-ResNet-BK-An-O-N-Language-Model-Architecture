@@ -63,6 +63,57 @@ class WandBLogger:
             self.wandb.log(metrics, step=step)
         except Exception as e:
             warnings.warn(f"Failed to log to wandb: {e}")
+
+    def log_phase4_diagnostics(self, diagnostics: Dict, step: Optional[int] = None):
+        """
+        Log Phase 4 specific metrics (Ghost in the Shell).
+        Flattens the nested diagnostics dictionary for WandB.
+        """
+        if not self.enabled or self.wandb is None:
+            return
+
+        metrics = {}
+
+        # 1. Emotion (Task 1 & 8)
+        if 'emotion' in diagnostics:
+            e = diagnostics['emotion']
+            # Handle if values are tensors
+            res = e.get('resonance_score', 0)
+            dis = e.get('dissonance_score', 0)
+            if isinstance(res, torch.Tensor): res = res.float().mean().item()
+            if isinstance(dis, torch.Tensor): dis = dis.float().mean().item()
+
+            metrics['emotion/resonance'] = res
+            metrics['emotion/dissonance'] = dis
+
+            # Map state string to integer for plotting
+            state_map = {'RESONANCE': 1, 'NEUTRAL': 0, 'DISSONANCE': -1}
+            state = e.get('state', 'NEUTRAL')
+            metrics['emotion/polarity'] = state_map.get(state, 0)
+
+        # 2. Quantum (Task 5 & 11)
+        if 'quantum' in diagnostics:
+            q = diagnostics['quantum']
+            ent = q.get('entropy_reduction', 0)
+            if isinstance(ent, torch.Tensor): ent = ent.float().mean().item()
+            metrics['quantum/entropy_reduction'] = ent
+
+            if 'suggested_temperature' in diagnostics:
+                metrics['quantum/temperature'] = diagnostics['suggested_temperature']
+
+        # 3. Physics / Unitarity (Task 5)
+        # Assuming aggregated unitarity violation is passed in top-level or gathered
+        if 'unitarity_violation' in diagnostics:
+            metrics['physics/unitarity_violation'] = diagnostics['unitarity_violation']
+
+        # 4. Meta Commentary
+        if 'meta_commentary' in diagnostics:
+            # Log as text
+            # WandB handles text logging differently? Or just Table.
+            # We skip logging text every step to avoid spam, or log as alert?
+            pass
+
+        self.log(metrics, step=step)
     
     def log_model(self, model, name: str = "model"):
         """Log model architecture to W&B."""

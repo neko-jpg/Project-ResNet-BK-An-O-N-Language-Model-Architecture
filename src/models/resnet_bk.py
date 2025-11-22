@@ -167,7 +167,21 @@ class MoEResNetBKLayer(nn.Module):
         output = ffn_out + self.bk_scale * spec_out
         # stash routing entropy for logging
         self.last_routing_entropy = routing_entropy
+
+        # Task 5: Check Unitarity Violation (Information Loss)
+        # Physics: S = I + K. Unitarity implies S†S = I.
+        # In non-Hermitian system, this is violated.
+        # We approximate violation by norm change ratio: | ||y||/||x|| - 1 |
+        with torch.no_grad():
+            norm_in = x.norm(p=2, dim=-1).mean()
+            norm_out = output.norm(p=2, dim=-1).mean()
+            self.last_unitarity_violation = (norm_out / (norm_in + 1e-9) - 1.0).abs()
+
         return output
+
+    def check_unitarity_violation(self):
+        """Return the last recorded unitarity violation metric."""
+        return getattr(self, 'last_unitarity_violation', torch.tensor(0.0))
 
 
 class ResNetBKBlock(nn.Module):
