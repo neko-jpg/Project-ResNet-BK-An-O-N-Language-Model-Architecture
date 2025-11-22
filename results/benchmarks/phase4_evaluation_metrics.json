@@ -1,17 +1,4 @@
 {
-  "task8_memory_efficiency": {
-    "vram_constraint_verification": {
-      "status": "passed",
-      "mock_mode": true,
-      "simulated_vram_limit_gb": 7.5,
-      "dynamic_adjustment_triggered": true,
-      "low_memory_mode_active": true
-    },
-    "memory_optimization": {
-      "bulk_dynamic_adjustment": "implemented",
-      "sparse_knot_lazy_loading": "implemented",
-      "knot_cache_capacity": 100
-    },
-    "notes": "Verified on CPU environment using MemoryMonitor mock mode."
-  }
+  "throughput_tokens_per_sec": 132.14573572217066,
+  "perplexity_wikitext2": 82023.1171875
 }

@@ -118,7 +118,8 @@ class BirmanSchwingerCore(nn.Module):
     def compute_resolvent_kernel(
         self,
         z: complex,
-        use_high_precision: bool = False
+        use_high_precision: bool = False,
+        length: Optional[int] = None
     ) -> torch.Tensor:
         """
         Compute the resolvent kernel R_0(z) of the free Hamiltonian.
@@ -136,6 +137,7 @@ class BirmanSchwingerCore(nn.Module):
         Args:
             z: complex shift
             use_high_precision: use complex128 instead of complex64
+            length: optional sequence length (if None, uses self.n_seq)
         
         Returns:
             R_0: (N, N) resolvent kernel matrix
@@ -143,9 +145,15 @@ class BirmanSchwingerCore(nn.Module):
         dtype = torch.complex128 if use_high_precision else torch.complex64
         device = self.positions.device
         
+        # Determine effective positions
+        if length is not None and length <= self.n_seq:
+            eff_positions = self.positions[:length]
+        else:
+            eff_positions = self.positions
+
         # Compute position differences: u - v
-        u = self.positions.unsqueeze(1)  # (N, 1)
-        v = self.positions.unsqueeze(0)  # (1, N)
+        u = eff_positions.unsqueeze(1)  # (N, 1)
+        v = eff_positions.unsqueeze(0)  # (1, N)
         diff = u - v  # (N, N)
         
         # Sign function: sgn(u-v)
@@ -199,7 +207,7 @@ class BirmanSchwingerCore(nn.Module):
             K: (B, N, N) Birman-Schwinger operator
         """
         dtype = torch.complex128 if use_high_precision else torch.complex64
-        batch_size = V.shape[0]
+        batch_size, seq_len = V.shape
         
         # Compute |V|^{1/2}
         V_abs = V.abs()
@@ -207,11 +215,11 @@ class BirmanSchwingerCore(nn.Module):
         V_sqrt_complex = V_sqrt.to(dtype)
         
         # Compute resolvent kernel R_0(z)
-        R_0 = self.compute_resolvent_kernel(z, use_high_precision)  # (N, N)
+        R_0 = self.compute_resolvent_kernel(z, use_high_precision, length=seq_len)  # (N, N)
         
         # K_ε(z) = |V|^{1/2} R_0(z) |V|^{1/2}
         # Expand for batch: (B, N, N)
-        K = torch.zeros(batch_size, self.n_seq, self.n_seq, dtype=dtype, device=V.device)
+        K = torch.zeros(batch_size, seq_len, seq_len, dtype=dtype, device=V.device)
         
         for b in range(batch_size):
             V_sqrt_diag = torch.diag(V_sqrt_complex[b])  # (N, N)

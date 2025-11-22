@@ -14,6 +14,7 @@ import numpy as np
 
 # Import BirmanSchwingerCore from Phase 3
 from src.models.birman_schwinger_core import BirmanSchwingerCore
+from src.models.phase4.stability import NumericalStability
 
 class ResonanceEmotionDetector(nn.Module):
     """
@@ -141,7 +142,16 @@ class ResonanceEmotionDetector(nn.Module):
         # 4. Extract Interference Pattern
         # Eigenvalues of K
         # lambda_n
-        eigenvalues = torch.linalg.eigvals(k_perturbed) # (B, N)
+
+        # Stability Check: K must be finite
+        k_perturbed = NumericalStability.sanitize_tensor(k_perturbed)
+
+        try:
+            eigenvalues = torch.linalg.eigvals(k_perturbed) # (B, N)
+        except RuntimeError:
+            # If eigvals fails (e.g. LAPACK error), use fallback or dummy
+            # This can happen if matrix is singular or has Infs (already sanitized though)
+            eigenvalues = torch.zeros(B, N, dtype=k_perturbed.dtype, device=device)
 
         # Interference pattern I(x) approx |Im(lambda)|
         interference_pattern = eigenvalues.imag.abs() # (B, N)

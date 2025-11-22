@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Optional, Tuple, Dict, Any, List
 import warnings
+from src.models.phase4.stability import NumericalStability
 
 class ScatteringOperator(nn.Module):
     """
@@ -38,7 +39,10 @@ class ScatteringOperator(nn.Module):
         # energy_complex: (B, N, 1)
 
         denom = H_diag.unsqueeze(0).unsqueeze(0) - energy_complex # (B, N, V)
-        R_z = 1.0 / denom
+        # Use safe complex division: 1.0 / denom
+        # We treat numerator as real 1.0 (complex 1+0j)
+        numerator = torch.ones_like(denom, dtype=denom.dtype)
+        R_z = NumericalStability.safe_complex_division(numerator, denom)
 
         return R_z
 
