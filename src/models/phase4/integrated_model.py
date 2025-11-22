@@ -120,7 +120,7 @@ class Phase4IntegratedModel(nn.Module):
                 "Promote fairness and justice",
                 "Protect privacy and security"
             ]
-            self.cvf = CoreValueFunction(principles)
+            self.cvf = CoreValueFunction(principles, d_model=self.d_model)
             self.ethical_filter = EthicalFilter(self.cvf)
         else:
             self.ethical_filter = None
@@ -207,7 +207,7 @@ class Phase4IntegratedModel(nn.Module):
         captured_states = {}
         def hook_fn(module, input, output):
             # input is tuple (x_final_real,)
-            captured_states['last_hidden'] = input[0]
+            captured_states['last_hidden'] = input[0].clone()
 
         handle = self.phase3_model.dialectic.register_forward_hook(hook_fn)
 

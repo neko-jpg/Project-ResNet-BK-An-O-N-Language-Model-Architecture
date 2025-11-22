@@ -4,6 +4,7 @@ import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from src.models.phase4.adscft_core.geodesic_search import fast_marching_method_cpu
 from src.models.phase4.memory_monitor import MemoryMonitor
+from src.models.phase4.stability import NumericalStability
 
 class BulkSpaceGenerator(nn.Module):
     """
@@ -87,11 +88,17 @@ class BulkSpaceGenerator(nn.Module):
         # We take the mean of the geodesic path as the "holographic dual" feature
         bulk_features = geodesics.mean(dim=2) # (B, N, D)
 
+        # Energy Conservation Check (Task 9.2)
+        energy_in = NumericalStability.compute_bulk_energy(boundary_tokens)
+        energy_out = NumericalStability.compute_bulk_energy(bulk_features)
+        energy_stats = NumericalStability.check_energy_conservation(energy_in, energy_out, threshold=0.50) # Relaxed threshold for projection
+
         diagnostics = {
             'bulk_coords_sample': bulk_coords[:, :1, :, :].detach().cpu(),
             'geodesic_sample': geodesics[:, :1, :, :].detach().cpu(),
             'active_bulk_dim': active_bulk_dim,
-            'low_memory_mode': low_memory_flag
+            'low_memory_mode': low_memory_flag,
+            'energy_stats': energy_stats
         }
 
         return bulk_features, diagnostics

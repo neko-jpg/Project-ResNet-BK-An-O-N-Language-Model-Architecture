@@ -17,45 +17,41 @@ def fast_marching_method_cpu(
     B, N, bulk_dim, D = bulk_coords.shape
     device = bulk_coords.device
 
-    # Arrival Time map (Cost to reach each point from z=0)
-    arrival_time = torch.full((B, N, bulk_dim), float('inf'), device=device)
-    arrival_time[:, :, 0] = 0.0
+    # We build lists to avoid in-place modification issues with autograd
+    arrival_times = []
+    geodesic_slices = []
 
-    # Geodesic path points
-    geodesics = bulk_coords.clone()
-
-    # DP forward pass through z dimension
-    # Note: This assumes causal/directed flow in z, which is a simplification of true FMM
-    # but sufficient for "layer-wise" bulk generation.
+    # Initial condition (z=0)
+    # arrival_time[0] = 0
+    arrival_times.append(torch.zeros(B, N, device=device))
+    geodesic_slices.append(bulk_coords[:, :, 0])
 
     for z in range(1, bulk_dim):
-        # Previous layer coords (from original bulk or updated geodesics?)
-        # Design says bulk_coords for coords, but arrival time updates.
-        # Wait, if we update geodesics, we should use the updated ones?
-        # Design snippet uses `bulk_coords` for `prev` and `curr` but updates `geodesics`.
-        # Let's follow design.
-
-        prev_coords = bulk_coords[:, :, z-1] # (B, N, D)
-        curr_coords = bulk_coords[:, :, z]   # (B, N, D)
+        # Previous layer
+        prev_time = arrival_times[z-1]
+        prev_coords = bulk_coords[:, :, z-1]
+        curr_coords = bulk_coords[:, :, z]
 
         # AdS Metric Factor: g_zz = (L/z)^2
-        # We use z index as proxy for depth z.
-        # Avoid z=0 singularity by adding epsilon or offset
         z_val = float(z)
         metric_factor = (ads_radius / (z_val + 1e-6)) ** 2
 
-        # Euclidean distance in embedding space
+        # Euclidean distance
         dist = torch.norm(curr_coords - prev_coords, dim=-1) # (B, N)
 
         # Update cost
-        # Cost = Cost_prev + Metric * Dist
-        cost = arrival_time[:, :, z-1] + metric_factor * dist
-        arrival_time[:, :, z] = cost
+        cost = prev_time + metric_factor * dist
+        arrival_times.append(cost)
 
-        # Update geodesic path (interpolate)
+        # Update geodesic path
         # ratio acts as a weighting factor
-        ratio = arrival_time[:, :, z-1] / (arrival_time[:, :, z] + 1e-6)
+        ratio = prev_time / (cost + 1e-6)
+        ratio = ratio.unsqueeze(-1) # (B, N, 1)
 
-        geodesics[:, :, z] = prev_coords + (curr_coords - prev_coords) * ratio.unsqueeze(-1)
+        geodesic_slice = prev_coords + (curr_coords - prev_coords) * ratio
+        geodesic_slices.append(geodesic_slice)
+
+    # Stack results
+    geodesics = torch.stack(geodesic_slices, dim=2) # (B, N, bulk_dim, D)
 
     return geodesics
