@@ -3,13 +3,17 @@ BK-Core: O(N) Tridiagonal Inverse Diagonal Computation
 Implements the core algorithm for computing diag((H - zI)^-1) in O(N) time.
 
 Supports both PyTorch (vmap) and Triton implementations with automatic fallback.
+Includes input sanitization and gradient warning system for robust training.
 """
 
 import torch
 import torch.nn as nn
 from torch.func import vmap
 import warnings
+import logging
 
+# Configure logger for BK-Core
+logger = logging.getLogger(__name__)
 
 def get_tridiagonal_inverse_diagonal(a, b, c, z):
     """
@@ -178,6 +182,14 @@ class BKCoreFunction(torch.autograd.Function):
         Returns:
             features: (B, N, 2) [real(G_ii), imag(G_ii)]
         """
+        # --- Input Sanitization ---
+        if not torch.isfinite(he_diag).all():
+            msg = "BKCoreFunction forward: 'he_diag' contains NaN or Inf."
+            warnings.warn(msg, RuntimeWarning)
+            logger.warning(msg)
+            # Attempt to sanitize
+            he_diag = torch.nan_to_num(he_diag, nan=0.0, posinf=100.0, neginf=-100.0)
+
         # Auto-detect Triton availability on first use
         if use_triton is None:
             if BKCoreFunction.USE_TRITON is None:
@@ -232,11 +244,22 @@ class BKCoreFunction(torch.autograd.Function):
         """
         (G_ii,) = ctx.saved_tensors  # (B, N) complex
         
+        # Check if incoming gradient is valid
+        if not torch.isfinite(grad_output_features).all():
+             msg = "BKCoreFunction backward: Incoming 'grad_output_features' contains NaN or Inf."
+             warnings.warn(msg, RuntimeWarning)
+             logger.warning(msg)
+             grad_output_features = torch.nan_to_num(grad_output_features)
+
         # dL/dG = dL/dRe(G) + i*dL/dIm(G)
         grad_G = torch.complex(
             grad_output_features[..., 0],
             grad_output_features[..., 1],
         )
+        # We need dL/dv = Re( grad_G.conj() * dG/dv )
+        # dG/dv = -G^2
+        # So dL/dv = - Re( grad_G.conj() * G^2 )
+        grad_G_conj = grad_G.conj()
 
         # --- Compute G² and 1/G² safely ---
         G_sq = G_ii ** 2
@@ -252,18 +275,33 @@ class BKCoreFunction(torch.autograd.Function):
         )
 
         # --- Theoretical gradient: dG/dv = -G² ---
-        grad_v_analytic = -(grad_G * G_sq).real
+        grad_v_analytic = -(grad_G_conj * G_sq).real
 
         # --- Hypothesis-7 gradient: inverse square type ---
-        grad_v_h7 = -(grad_G / (denom + 1e-6)).real
+        # Heuristic: Scale by inverse of G^2 (consistency with conjugate logic)
+        grad_v_h7 = -(grad_G_conj / (denom + 1e-6)).real
 
         # --- Hybrid blend ---
         alpha = BKCoreFunction.GRAD_BLEND
         grad_v = (1.0 - alpha) * grad_v_analytic + alpha * grad_v_h7
 
         # --- Numerical safety ---
-        grad_v = torch.where(torch.isfinite(grad_v), grad_v, torch.zeros_like(grad_v))
-        grad_v = torch.clamp(grad_v, -1000.0, 1000.0)
+        # Check for anomalies in calculated gradient
+        if not torch.isfinite(grad_v).all():
+            msg = "BKCoreFunction backward: Calculated 'grad_v' contains NaN/Inf."
+            warnings.warn(msg, RuntimeWarning)
+            logger.warning(msg)
+            grad_v = torch.nan_to_num(grad_v)
+
+        # Clamp and warn if clamping is active (significant clipping)
+        max_grad_norm = 1000.0
+        if grad_v.abs().max() > max_grad_norm:
+             # Warn only if it's significantly over (e.g. > 10000) or just debug log
+             # We clip at 1000.0
+             # logger.debug(f"BKCoreFunction backward: Clipping gradient magnitude from {grad_v.abs().max()} to {max_grad_norm}")
+             pass
+
+        grad_v = torch.clamp(grad_v, -max_grad_norm, max_grad_norm)
 
         grad_he_diag = grad_v.to(torch.float32)
 

@@ -11,49 +11,75 @@ Algorithm:
 """
 
 import torch
-import triton
-import triton.language as tl
+import warnings
 
+try:
+    import triton
+    import triton.language as tl
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+    # Dummy triton module for type hinting / decorator simulation if needed
+    class tl:
+        constexpr = int
+        @staticmethod
+        def program_id(x): return 0
+        @staticmethod
+        def arange(x, y): return torch.arange(x, y)
+        @staticmethod
+        def load(x, mask=None, other=0): return x
+        @staticmethod
+        def store(x, y, mask=None): pass
+        @staticmethod
+        def where(c, x, y): return x if c else y
+        @staticmethod
+        def associative_scan(x, axis, combine_fn): return x
+        @staticmethod
+        def debug_barrier(): pass
+
+    # Dummy JIT decorator
+    def jit(fn):
+        return fn
+
+    class triton:
+        jit = jit
 
 # ============================================================================
-# Complex Number & Matrix Utilities
+# Pure Python Implementations (for logic verification & JIT source)
 # ============================================================================
 
-@triton.jit
-def complex_mul(r1, i1, r2, i2):
+def complex_mul_impl(r1, i1, r2, i2):
     """(r1 + i1*j) * (r2 + i2*j)"""
     return r1 * r2 - i1 * i2, r1 * i2 + i1 * r2
 
-@triton.jit
-def complex_mat_mul_2x2(
+def complex_mat_mul_2x2_impl(
     a11r, a11i, a12r, a12i, a21r, a21i, a22r, a22i,
     b11r, b11i, b12r, b12i, b21r, b21i, b22r, b22i,
 ):
     """C = A * B (2x2 complex matrices)"""
     # c11 = a11*b11 + a12*b21
-    t1r, t1i = complex_mul(a11r, a11i, b11r, b11i)
-    t2r, t2i = complex_mul(a12r, a12i, b21r, b21i)
+    t1r, t1i = complex_mul_impl(a11r, a11i, b11r, b11i)
+    t2r, t2i = complex_mul_impl(a12r, a12i, b21r, b21i)
     c11r, c11i = t1r + t2r, t1i + t2i
     
     # c12 = a11*b12 + a12*b22
-    t1r, t1i = complex_mul(a11r, a11i, b12r, b12i)
-    t2r, t2i = complex_mul(a12r, a12i, b22r, b22i)
+    t1r, t1i = complex_mul_impl(a11r, a11i, b12r, b12i)
+    t2r, t2i = complex_mul_impl(a12r, a12i, b22r, b22i)
     c12r, c12i = t1r + t2r, t1i + t2i
     
     # c21 = a21*b11 + a22*b21
-    t1r, t1i = complex_mul(a21r, a21i, b11r, b11i)
-    t2r, t2i = complex_mul(a22r, a22i, b21r, b21i)
+    t1r, t1i = complex_mul_impl(a21r, a21i, b11r, b11i)
+    t2r, t2i = complex_mul_impl(a22r, a22i, b21r, b21i)
     c21r, c21i = t1r + t2r, t1i + t2i
     
     # c22 = a21*b12 + a22*b22
-    t1r, t1i = complex_mul(a21r, a21i, b12r, b12i)
-    t2r, t2i = complex_mul(a22r, a22i, b22r, b22i)
+    t1r, t1i = complex_mul_impl(a21r, a21i, b12r, b12i)
+    t2r, t2i = complex_mul_impl(a22r, a22i, b22r, b22i)
     c22r, c22i = t1r + t2r, t1i + t2i
     
     return c11r, c11i, c12r, c12i, c21r, c21i, c22r, c22i
 
-@triton.jit
-def scan_op(
+def scan_op_impl(
     # Accumulator (Left) - 8 components
     a11r, a11i, a12r, a12i, a21r, a21i, a22r, a22i,
     # Value (Right) - 8 components
@@ -62,15 +88,34 @@ def scan_op(
     """
     Associative combine function for scan.
     We want the sequence M1, M2, M3 to result in M3 @ M2 @ M1.
-    Standard scan computes Acc @ Val? Or Val @ Acc?
-    Triton associative_scan typically sums: x0, x0+x1.
-    If we want M1, M2@M1, M3@M2@M1.
-    Then new accumulator = NewVal @ OldAcc.
+
+    If Acc represents the product of previous elements P_{k-1} = M_{k-1}...M_1
+    And Val is the new element M_k.
+    The new product P_k = M_k @ P_{k-1}.
+
+    So we need to compute Val @ Acc.
     """
-    return complex_mat_mul_2x2(
+    return complex_mat_mul_2x2_impl(
         b11r, b11i, b12r, b12i, b21r, b21i, b22r, b22i, # Matrix B (New Value)
         a11r, a11i, a12r, a12i, a21r, a21i, a22r, a22i  # Matrix A (Accumulator)
     )
+
+# ============================================================================
+# Triton JIT Functions
+# ============================================================================
+
+# We redefine them as JIT functions wrapping the logic OR just JIT the impls if possible.
+# Triton JIT works on the function object.
+
+if TRITON_AVAILABLE:
+    complex_mul = triton.jit(complex_mul_impl)
+    complex_mat_mul_2x2 = triton.jit(complex_mat_mul_2x2_impl)
+    scan_op = triton.jit(scan_op_impl)
+else:
+    # If no Triton, just keep them as python functions (or decorated with dummy)
+    complex_mul = complex_mul_impl
+    complex_mat_mul_2x2 = complex_mat_mul_2x2_impl
+    scan_op = scan_op_impl
 
 
 # ============================================================================
@@ -107,13 +152,6 @@ def bk_scan_fwd_kernel(
     theta_r = theta_r_ptr + pid * stride_b_theta
     theta_i = theta_i_ptr + pid * stride_b_theta
     
-    # Initial State: Theta[-1]=0, Theta[0]=1
-    # Matrix form propagates (Theta[k], Theta[k-1]).
-    # Initial vector v0 = [1, 0] (for k=0).
-    # Wait, recurrence is for k >= 2 (indices 2..N).
-    # Theta[0] = 1, Theta[1] = Alpha[0].
-    # So initial state at k=1 is v1 = [Theta[1], Theta[0]] = [Alpha[0], 1].
-    
     # Initialize Theta[0] and Theta[1] directly
     tl.store(theta_r, 1.0)
     tl.store(theta_i, 0.0)
@@ -130,32 +168,19 @@ def bk_scan_fwd_kernel(
         prev_r, prev_i = 1.0, 0.0
 
     # Loop over chunks for k = 2 to N
-    # k goes from 2 to N.
-    # Logic: We compute Theta[k].
-    # M_k uses alpha[k-1], beta[k-2].
-    
     for off in range(2, N + 1, BLOCK_SIZE):
         ks = off + tl.arange(0, BLOCK_SIZE)
-        mask = ks <= N # k goes up to N (inclusive for theta, but alpha is length N)
-        # Note: Theta has length N+1. Indices 0..N.
-        # We compute indices 2..N.
-
-        # Load params for M_k
-        # alpha index: k-1
-        # beta index: k-2
-
-        # Mask check for loads
-        load_mask = ks <= N
+        mask = ks <= N
 
         # Load Alpha[k-1]
         a_idx = ks - 1
-        ar = tl.load(alpha_r + a_idx * stride_n_alpha, mask=load_mask, other=0.0)
-        ai = tl.load(alpha_i + a_idx * stride_n_alpha, mask=load_mask, other=0.0)
+        ar = tl.load(alpha_r + a_idx * stride_n_alpha, mask=mask, other=0.0)
+        ai = tl.load(alpha_i + a_idx * stride_n_alpha, mask=mask, other=0.0)
 
         # Load Beta[k-2]
         b_idx = ks - 2
-        br = tl.load(beta_r + b_idx * stride_n_beta, mask=load_mask, other=0.0)
-        bi = tl.load(beta_i + b_idx * stride_n_beta, mask=load_mask, other=0.0)
+        br = tl.load(beta_r + b_idx * stride_n_beta, mask=mask, other=0.0)
+        bi = tl.load(beta_i + b_idx * stride_n_beta, mask=mask, other=0.0)
 
         # Construct Matrices M_k
         # [ alpha  beta ]
@@ -165,16 +190,15 @@ def bk_scan_fwd_kernel(
         m21r, m21i = 1.0, 0.0
         m22r, m22i = 0.0, 0.0
 
-        # Apply mask to identity for out-of-bounds (so they don't affect scan)
-        # Identity matrix: [1 0; 0 1]
+        # Apply mask to identity for out-of-bounds
         is_oob = ks > N
         m11r = tl.where(is_oob, 1.0, m11r)
         m11i = tl.where(is_oob, 0.0, m11i)
         m12r = tl.where(is_oob, 0.0, m12r)
         m12i = tl.where(is_oob, 0.0, m12i)
-        m21r = tl.where(is_oob, 0.0, m21r) # Was 1.0
+        m21r = tl.where(is_oob, 0.0, m21r)
         m21i = tl.where(is_oob, 0.0, m21i)
-        m22r = tl.where(is_oob, 1.0, m22r) # Was 0.0
+        m22r = tl.where(is_oob, 1.0, m22r)
 
         # Run Parallel Scan
         p11r, p11i, p12r, p12i, p21r, p21i, p22r, p22i = tl.associative_scan(
@@ -184,10 +208,6 @@ def bk_scan_fwd_kernel(
         )
 
         # Multiply prefix matrices P_k by current state vector v_{start-1}
-        # v_new = P_k @ v_prev
-        # v_prev = [cur, prev]
-
-        # theta_new = p11*cur + p12*prev
         t1r, t1i = complex_mul(p11r, p11i, cur_r, cur_i)
         t2r, t2i = complex_mul(p12r, p12i, prev_r, prev_i)
         theta_new_r = t1r + t2r
@@ -198,78 +218,10 @@ def bk_scan_fwd_kernel(
         tl.store(theta_i + ks * stride_n_theta, theta_new_i, mask=load_mask)
         
         # Update running state for next chunk
-        # Last element of this chunk becomes the new [cur, prev]
-        # But wait, P_k gives [Theta_k, Theta_{k-1}].
-        # So we can just extract the last valid state.
-        
-        # We need the state at index `off + BLOCK_SIZE - 1` (last computed)
-        # But if `N` < end of chunk, we need state at `N`.
-        # However, loop continues? No, masking handles valid range.
-        # But for next chunk, we need the state from the last VALID index.
-        
-        # Optimization: Just read the last thread's result?
-        # Since we padded with Identity, the last thread in block (if oob) will just propagate.
-        # So the last thread (index BLOCK_SIZE-1) holds the state after all valid updates.
-        # Yes!
-        
-        # Get last thread's P matrix components
-        last_idx = BLOCK_SIZE - 1
-        
-        # Last P matrix
-        L11r = tl.load(p11r + last_idx * 0) # broadcasting workaround if scalar? No, p11r is tensor.
-        # Actually p11r is a tensor of size BLOCK_SIZE.
-        # We can't index it like a pointer easily in Triton unless we shuffle?
-        # Triton `associative_scan` returns tensor.
-        # We want the last element.
-        # We can simply re-compute the multiplication for the last element?
-        # Or use a reduction?
-        # Or `tl.sum` is not appropriate.
-        # Actually, since all threads have `p...`, we can just take the value from the last thread.
-        # But threads cannot read other threads' registers directly without shuffles.
-        
-        # Trick: Store to shared memory or re-calculate?
-        # Or: output is stored to global memory. Load it back?
-        # Loading from global is safe (barrier needed?).
-        # Triton doesn't expose barrier easily within `range` loop unless implied.
-        
-        # Better: Update state using the last stored value in global memory.
-        # This acts as a barrier across chunks (implicitly, as we loop).
-
-        # Wait, if we use `tl.load` from global memory we just wrote, we need consistency.
-        # But within the same kernel, global memory visibility?
-        # Usually fine if same thread reads, but we need the result of the LAST thread.
-        # This requires communication.
-
-        # Alternative: The running state is scalar variables `cur_r`, `cur_i`.
-        # We need to update them.
-        # Since we can't extract from `p` tensor easily (it's distributed?),
-        # actually `associative_scan` result is distributed.
-        # We need to broadcast the last element to all threads?
-        # No, only the `main` control flow needs it for the next loop iteration.
-        # But Triton is SPMD. ALL threads execute the loop.
-        # So ALL threads need the new `cur, prev`.
-
-        # How to get the last element of a scan to all threads?
-        # In Triton, we can assume the block fits in SM?
-        # We can't use `permute`?
-
-        # Safe fallback: Since we stored to global memory `theta`, we can LOAD it back.
-        # To get state for next chunk (start index `next_off`), we need `theta[next_off-1]` and `theta[next_off-2]`.
-        # `next_off` is `off + BLOCK`.
-        # So we load `theta[off + BLOCK - 1]` and `theta[off + BLOCK - 2]`.
-        # But check bounds.
-
         last_k = off + BLOCK_SIZE - 1
         if last_k > N:
             last_k = N
 
-        # Determine the last valid k processed in this chunk
-        # Actually, simpler:
-        # We just need `theta` at `last_k` and `last_k-1` to start next chunk?
-        # No, next chunk starts at `last_k + 1`.
-        # So we need `theta[last_k]` and `theta[last_k-1]`.
-
-        # Barrier to ensure stores are visible?
         tl.debug_barrier()
 
         # Load state for next iteration
@@ -330,27 +282,13 @@ def bk_scan_bwd_kernel(
         cur_r, cur_i = a_last_r, a_last_i
         prev_r, prev_i = 1.0, 0.0
 
-    # Loop over chunks backwards from N-3 down to 0
-    # Logic: We compute Phi[i] for i = N-3 ... 0
-    # Matrix M_i transitions from [Phi[i+1], Phi[i+2]] to [Phi[i], Phi[i+1]].
-    # M_i = [ Alpha[i+1]  Beta[i] ]
-    #       [     1         0     ]
-    
-    # We process chunks of `i`.
-    # To use parallel scan, we need to linearize the chunk.
-    # Chunk indices: start_i ... start_i - BLOCK + 1
-    # We map thread k to index `start_i - k`.
-
+    # Loop over chunks backwards
     for start_i in range(N - 3, -1, -BLOCK_SIZE):
         # Threads 0..BLOCK-1 handle indices `start_i - k`
         ks = tl.arange(0, BLOCK_SIZE)
         indices = start_i - ks
 
         mask = indices >= 0
-
-        # Load M_i params
-        # i = indices
-        # Alpha[i+1], Beta[i]
 
         a_idx = indices + 1
         b_idx = indices
@@ -371,11 +309,6 @@ def bk_scan_bwd_kernel(
         m22r = tl.where(is_oob, 1.0, 0.0)
 
         # Run Scan
-        # Scan gives product M_{i} ... M_{start_i}
-        # Since we scan on `ks`, k=0 is start_i. k=1 is start_i-1.
-        # Order: M_{start_i}, M_{start_i-1} ...
-        # This matches the recursion direction (decreasing i).
-
         p11r, p11i, p12r, p12i, p21r, p21i, p22r, p22i = tl.associative_scan(
             (m11r, m11i, m12r, m12i, m21r, m21i, m22r, m22i),
             0,
@@ -393,29 +326,14 @@ def bk_scan_bwd_kernel(
         tl.store(phi_i + indices * stride_n_phi, phi_new_i, mask=mask)
         
         # Update State
-        last_k = BLOCK_SIZE - 1
-        # Find the last valid index processed
-        # If chunk is full, it's `start_i - (BLOCK-1)`.
-        # If partial (at the end of loop, indices -> 0), last valid is 0.
-        
-        tl.debug_barrier()
-        
-        # Determine next state index
-        # We finished `indices[-1]`. Next state comes from `indices[-1]` and `indices[-1]+1`.
-        # Which corresponds to stored `phi`.
-        
         last_valid_idx = start_i - BLOCK_SIZE + 1
         if last_valid_idx < 0:
             last_valid_idx = 0
 
+        tl.debug_barrier()
+
         cur_r = tl.load(phi_r + last_valid_idx * stride_n_phi)
         cur_i = tl.load(phi_i + last_valid_idx * stride_n_phi)
-        # Prev is actually the one "before" current in recursion, which is i+1 (higher index)
-        # In recursion: Phi[i] depends on Phi[i+1], Phi[i+2].
-        # State was [Phi[i+1], Phi[i+2]].
-        # After update, state is [Phi[i], Phi[i+1]].
-        # So we load Phi[last] and Phi[last+1].
-        
         prev_r = tl.load(phi_r + (last_valid_idx + 1) * stride_n_phi)
         prev_i = tl.load(phi_i + (last_valid_idx + 1) * stride_n_phi)
         
@@ -430,6 +348,9 @@ def bk_scan_triton_forward(alpha, beta):
     """
     Triton-accelerated forward scan for BK-Core.
     """
+    if not TRITON_AVAILABLE:
+        raise ImportError("Triton is not available.")
+
     B, N = alpha.shape
     device = alpha.device
     
@@ -466,6 +387,9 @@ def bk_scan_triton_backward(alpha, beta, N):
     """
     Triton-accelerated backward scan for BK-Core.
     """
+    if not TRITON_AVAILABLE:
+        raise ImportError("Triton is not available.")
+
     B = alpha.shape[0]
     device = alpha.device
     
@@ -501,6 +425,9 @@ def bk_scan_triton(a, b, c, z):
     """
     Complete Triton-accelerated BK-Core computation.
     """
+    if not TRITON_AVAILABLE:
+        raise ImportError("Triton is not available.")
+
     B, N = a.shape
     device = a.device
     
@@ -522,8 +449,4 @@ def bk_scan_triton(a, b, c, z):
     return diag_inv
 
 def is_triton_available():
-    try:
-        import triton
-        return True
-    except:
-        return False
+    return TRITON_AVAILABLE
