@@ -87,8 +87,9 @@ class HamiltonianNeuralODE(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        t_span: Tuple[float, float] = (0, 1)
-    ) -> torch.Tensor:
+        t_span: Tuple[float, float] = (0, 1),
+        return_energy: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, float]]:
         """
         Forward pass with automatic fallback
         
@@ -97,18 +98,21 @@ class HamiltonianNeuralODE(nn.Module):
                 - 前半D次元: 位置 q
                 - 後半D次元: 運動量 p
             t_span: 時間範囲 (t0, t1)
+            return_energy: エネルギー変動を返すかどうか (LOGOS Layer 2)
         
         Returns:
             x_final: 最終状態 (B, N, 2D) = [q_T, p_T]
+            energy_drift: (Optional) |H(T) - H(0)| の平均値
         
         物理的直観:
             初期状態からハミルトン方程式に従って時間発展させる。
             数値不安定性が検出された場合、自動的にフォールバックする。
+            LOGOS: エネルギー保存則 dH/dt ≈ 0 を監視する。
         """
         # モードに応じて適切な方法を選択
         if self.mode == 'symplectic_adjoint':
             try:
-                return self._forward_symplectic_adjoint(x, t_span)
+                result = self._forward_symplectic_adjoint(x, t_span)
             except ReconstructionError as e:
                 warnings.warn(
                     f"Symplectic Adjoint failed (recon_error={e.error:.2e} at step {e.step}). "
@@ -122,16 +126,35 @@ class HamiltonianNeuralODE(nn.Module):
                     'threshold': e.threshold,
                     'step': e.step
                 })
-                return self._forward_with_checkpointing(x, t_span)
+                result = self._forward_with_checkpointing(x, t_span)
         
         elif self.mode == 'checkpointing':
-            return self._forward_with_checkpointing(x, t_span)
+            result = self._forward_with_checkpointing(x, t_span)
         
         elif self.mode == 'full_backprop':
-            return self._forward_full_backprop(x, t_span)
+            result = self._forward_full_backprop(x, t_span)
         
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
+
+        if return_energy:
+            # LOGOS Layer 2: Energy-Based Consistency Check
+            # Calculate initial and final energy
+            with torch.no_grad():
+                # Note: H calculation might be expensive, so we do it only if requested.
+                # Assuming Hamiltonian is separable H = T(p) + V(q)
+                q0, p0 = x.split(self.d_model, dim=-1)
+                qT, pT = result.split(self.d_model, dim=-1)
+
+                # Use h_func to calculate H
+                # We need to reconstruct full state for h_func
+                h0 = self.h_func(0.0, x).mean().item() # Average energy across batch/seq
+                hT = self.h_func(t_span[1], result).mean().item()
+
+                energy_drift = abs(hT - h0)
+                return result, energy_drift
+
+        return result
     
     def _forward_symplectic_adjoint(
         self,

@@ -151,7 +151,8 @@ class ComplexEmbedding(nn.Module):
     def forward(
         self, 
         input_ids: torch.Tensor,
-        positions: Optional[torch.Tensor] = None
+        positions: Optional[torch.Tensor] = None,
+        initial_phase: Optional[torch.Tensor] = None
     ) -> ComplexTensor:
         """
         Forward pass
@@ -160,6 +161,9 @@ class ComplexEmbedding(nn.Module):
             input_ids (torch.Tensor): トークンID (B, N)
             positions (torch.Tensor, optional): 位置インデックス (B, N)
                 Noneの場合、自動的に [0, 1, 2, ..., N-1] を使用
+            initial_phase (torch.Tensor, optional): 初期位相シフト (B, N)
+                "Sentiment Phase Shifting" に使用。
+                各トークンの複素数ベクトルを指定された角度だけ回転させます。
         
         Returns:
             ComplexTensor: 複素数埋め込み (B, N, D)
@@ -231,6 +235,29 @@ class ComplexEmbedding(nn.Module):
         # 位置情報は実部にのみ加算（物理的直観: 位置は実空間の情報）
         imag_part = token_emb_imag
         
+        # ========================================
+        # 3.5. Sentiment Phase Shifting (LOGOS Layer 1)
+        # ========================================
+
+        if initial_phase is not None:
+            # 位相回転を適用
+            # z' = z * e^(i * theta)
+            #    = (x + iy) * (cos(theta) + i*sin(theta))
+            #    = (x*cos - y*sin) + i(x*sin + y*cos)
+
+            # initial_phase: (B, N) -> (B, N, 1)
+            theta = initial_phase.unsqueeze(-1)
+            cos_theta = torch.cos(theta).to(real_part.dtype)
+            sin_theta = torch.sin(theta).to(real_part.dtype)
+
+            # 元の実部と虚部
+            x = real_part
+            y = imag_part
+
+            # 回転後の実部と虚部
+            real_part = x * cos_theta - y * sin_theta
+            imag_part = x * sin_theta + y * cos_theta
+
         # ========================================
         # 4. Dropout
         # ========================================

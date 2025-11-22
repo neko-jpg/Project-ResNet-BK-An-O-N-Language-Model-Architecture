@@ -37,6 +37,8 @@ from src.models.phase4.adscft_core.bulk_generator import BulkSpaceGenerator
 from src.models.phase4.quantum_observer.von_neumann_projection import QuantumObserver
 from src.models.phase4.memory_monitor import MemoryMonitor
 from src.models.phase4.topological_memory.sparse_tensor_rep import SparseKnotRepresentation
+from src.models.phase4.topological_memory.factuality_knots import FactualityKnots
+from src.models.phase4.logos_tokenizer import ComplexTokenizer
 from src.models.phase4.ethical_safeguards.core_value_function import CoreValueFunction, EthicalFilter
 from src.models.phase4.meta_commentary import MetaCommentary
 from src.models.phase4.boundary_core.doc_fetcher import MockDocumentFetcher
@@ -84,6 +86,9 @@ class Phase4IntegratedModel(nn.Module):
     def _init_phase4_components(self):
         """Initialize active Phase 4 components."""
 
+        # 0. LOGOS - Complex Tokenizer
+        self.logos_tokenizer = ComplexTokenizer(base_tokenizer=None)
+
         # 1. Resonance Emotion Detector (Updated Task 1)
         if self.enable_emotion:
             n_seq = getattr(self.config, 'max_seq_len', 2048)
@@ -95,8 +100,10 @@ class Phase4IntegratedModel(nn.Module):
         # 2. Topological Memory & Ethics (Task 2 & 6)
         if self.enable_topological:
             self.topological_memory = SparseKnotRepresentation(d_model=self.d_model)
+            self.factuality_knots = FactualityKnots() # Load default demo facts
         else:
             self.topological_memory = None
+            self.factuality_knots = None
 
         if self.enable_ethics:
             principles = [
@@ -147,12 +154,25 @@ class Phase4IntegratedModel(nn.Module):
         self,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        return_diagnostics: bool = True # Default True for Phase 4 visibility
+        return_diagnostics: bool = True, # Default True for Phase 4 visibility
+        initial_phase: Optional[torch.Tensor] = None, # LOGOS Layer 1 Input
+        generated_text: Optional[str] = None # For LOGOS Factuality Check
     ) -> Dict[str, Any]:
         """
         Forward pass with full Ghost integration.
         """
+        # --- LOGOS Layer 3: Factuality Check ---
+        if self.enable_topological and self.factuality_knots and generated_text:
+            violation = self.factuality_knots.verify_knot(generated_text)
+            if violation:
+                return {
+                    'logits': None, # Blocked
+                    'loss': torch.tensor(float('inf')), # Infinite Energy
+                    'diagnostics': {'factuality_violation': violation}
+                }
+
         # 1. Phase 3 Base Execution
+
         # Hook to capture hidden states
         captured_states = {}
         def hook_fn(module, input, output):
@@ -160,7 +180,13 @@ class Phase4IntegratedModel(nn.Module):
 
         handle = self.phase3_model.dialectic.register_forward_hook(hook_fn)
         try:
-            phase3_output = self.phase3_model(input_ids, labels, return_diagnostics)
+            # Pass initial_phase to Phase 3 Model
+            phase3_output = self.phase3_model(
+                input_ids,
+                labels,
+                return_diagnostics,
+                initial_phase=initial_phase
+            )
         finally:
             handle.remove()
 
