@@ -1,0 +1,8 @@
+{
+  "dataset": "factuality_source",
+  "hf_name": "wikimedia/wikipedia",
+  "paths": {
+    "train_bin": "data_test_v3/factuality_source/train.bin"
+  },
+  "doc_count": 50
+}
