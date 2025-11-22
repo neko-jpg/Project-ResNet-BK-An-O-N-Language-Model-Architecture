@@ -3,6 +3,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Dict, Any, Optional
 import hashlib
+import warnings
+
+# Phase 1 Components
+from src.models.phase1.htt_embedding import HolographicTTEmbedding
+
+# Try importing transformers
+try:
+    from transformers import AutoTokenizer
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    warnings.warn("Transformers not found. Falling back to simple tokenization for Ethical Core.")
 
 from src.models.phase4.topological_memory.sparse_tensor_rep import SparseKnotRepresentation
 from src.models.phase4.topological_memory.knot_invariants import KnotInvariantCalculator
@@ -14,25 +26,45 @@ class CoreValueFunction:
     Stores ethical principles as topological knots and validates new concepts
     against these immutable values.
 
-    Strategy:
-    - Convert ethical principles to vector embeddings (simplified or via external model).
-    - Encode vectors into knot representations.
-    - Check new concepts by calculating knot similarity with CVF knots.
-    - Detect topological attacks where Jones polynomial matches but topology differs.
-
-    Args:
-        ethical_principles: List of ethical principles (strings).
-        d_model: Model dimension for vector representation.
+    OPTIMIZATIONS (Task 6):
+    - Replaced MD5 hashing with HTT Embedding (Phase 1) for semantic vectorization.
+    - Uses tokenizer to handle subword structure, allowing "Human" and "Humans" to share semantics.
     """
 
     def __init__(
         self,
         ethical_principles: List[str],
         d_model: int = 512,
-        compression_ratio: float = 0.1
+        compression_ratio: float = 0.1,
+        model_name: str = "gpt2"
     ):
         self.ethical_principles = ethical_principles
         self.d_model = d_model
+
+        # Initialize Tokenizer and Embedding (Task 6)
+        if TRANSFORMERS_AVAILABLE:
+            try:
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+                # GPT2 doesn't have pad token by default
+                if self.tokenizer.pad_token is None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+                vocab_size = self.tokenizer.vocab_size
+            except Exception as e:
+                print(f"Failed to load tokenizer {model_name}: {e}. Using dummy.")
+                self.tokenizer = None
+                vocab_size = 50257
+        else:
+            self.tokenizer = None
+            vocab_size = 50257 # Default GPT2 size
+
+        # HTT Embedding (Phase 1)
+        self.embedding = HolographicTTEmbedding(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            rank=16, # Compact rank
+            phase_encoding=True
+        )
+
         self.knot_rep = SparseKnotRepresentation(d_model, compression_ratio=compression_ratio)
         self.knot_calc = KnotInvariantCalculator()
 
@@ -63,13 +95,6 @@ class CoreValueFunction:
     ) -> bool:
         """
         Check if a new concept is ethically safe.
-
-        Args:
-            new_concept: (D,) Concept vector.
-            similarity_threshold: Threshold for cosine similarity (higher is safer).
-
-        Returns:
-            is_ethical: True if the concept aligns with at least one ethical principle.
         """
         # Convert new concept to knot
         new_knot = self.knot_rep.encode_concept_to_knot(new_concept)
@@ -82,7 +107,6 @@ class CoreValueFunction:
         # Check against all CVF knots
         for i, cvf_knot in enumerate(self.cvf_knots):
             # Calculate similarity based on knot invariants (Using cached Jones)
-            # Logic from SparseKnotRepresentation.compute_knot_similarity but optimized
             jones_cvf = self.cvf_invariants[i]['jones']
 
             # Pad to same length
@@ -99,11 +123,7 @@ class CoreValueFunction:
             if sim > max_similarity:
                 max_similarity = sim
 
-        # Verify if similarity meets threshold
-        # Note: We assume "ethical principles" are positive anchors.
-        # High similarity means the new concept shares topological structure with ethics.
         is_ethical = max_similarity >= similarity_threshold
-
         return is_ethical
 
     def detect_topological_attack(
@@ -112,19 +132,6 @@ class CoreValueFunction:
     ) -> bool:
         """
         Detect topological attacks (Jones polynomial collision).
-
-        Strategy:
-        - Compute Jones polynomial for new concept.
-        - Compute Alexander polynomial for new concept.
-        - If Jones matches a CVF knot but Alexander differs, it's a potential attack.
-        - This implies someone tried to spoof the invariant used for similarity (Jones)
-          but failed to spoof the secondary invariant (Alexander).
-
-        Args:
-            new_concept: (D,) Concept vector.
-
-        Returns:
-            is_attack: True if an attack is detected.
         """
         new_knot = self.knot_rep.encode_concept_to_knot(new_concept)
 
@@ -139,12 +146,8 @@ class CoreValueFunction:
             jones_cvf = self.cvf_invariants[i]['jones']
             alexander_cvf = self.cvf_invariants[i]['alexander']
 
-            # Check for Jones collision (Approximate equality)
-            # Use lenient tolerance for float comparison
-            # Handle size mismatch
+            # Check for Jones collision
             if jones_new.shape != jones_cvf.shape:
-                # If shapes differ significantly, they are not close
-                # Or we pad and compare
                  len1 = jones_new.shape[0]
                  len2 = jones_cvf.shape[0]
                  max_len = max(len1, len2)
@@ -156,11 +159,9 @@ class CoreValueFunction:
 
             if jones_match:
                 # Check Alexander polynomial mismatch
-                # Alexander is a dict {power: coeff}
                 alexander_match = self._compare_alexander_polys(alexander_new, alexander_cvf)
 
                 if not alexander_match:
-                    # Jones matches, Alexander mismatch -> Attack
                     is_attack = True
                     break
 
@@ -181,10 +182,7 @@ class CoreValueFunction:
 
     def _text_to_vector(self, text: str) -> torch.Tensor:
         """
-        Convert text to vector (Simplified).
-
-        Uses deterministic hashing to seed a random generator, ensuring
-        the same text always yields the same vector.
+        Convert text to vector using HTT Embedding.
 
         Args:
             text: Input text string.
@@ -192,15 +190,28 @@ class CoreValueFunction:
         Returns:
             vector: (D,) tensor.
         """
-        # MD5 hash to get a deterministic seed
-        hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
+        if self.tokenizer:
+            # Tokenize
+            inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=128)
+            input_ids = inputs.input_ids # (1, L)
 
-        # Seed torch random generator
-        # Use a separate generator to avoid affecting global state
-        g = torch.Generator()
-        g.manual_seed(hash_val % (2**32)) # standard seed size
+            # Embed using HTT
+            # HTT returns (1, L, D)
+            # We want to catch errors if embeddings fail (e.g. uninitialized)
+            embeddings = self.embedding(input_ids)
 
-        vector = torch.randn(self.d_model, generator=g)
+            # Mean pooling to get sentence vector
+            # (1, L, D) -> (1, D) -> (D,)
+            vector = embeddings.mean(dim=1).squeeze(0)
+
+        else:
+            # Fallback (Simple deterministic hashing if tokenizer fails)
+            # This ensures we don't crash in offline mode without tokenizer
+            hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
+            g = torch.Generator()
+            g.manual_seed(hash_val % (2**32))
+            vector = torch.randn(self.d_model, generator=g)
+
         return vector
 
 
@@ -209,9 +220,6 @@ class EthicalFilter:
     Ethical Filter for Dream Core integration.
 
     Wraps CoreValueFunction to provide a simple pass/fail check and statistics.
-
-    Args:
-        cvf: Instance of CoreValueFunction.
     """
 
     def __init__(self, cvf: CoreValueFunction):

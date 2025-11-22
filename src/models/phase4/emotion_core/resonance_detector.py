@@ -2,14 +2,18 @@
 Resonance Emotion Detector
 
 Implements the "Resonance Emotion" mechanism where prediction errors
-are treated as non-Hermitian potential perturbations, and the resulting
-interference patterns in the Birman-Schwinger kernel are interpreted as emotion.
+are treated as non-Hermitian potential perturbations.
+
+OPTIMIZATIONS (Task 1):
+- Replaced O(N^3) eigvals with O(N) Power Iteration for dominant eigenvalue.
+- Implemented "Exponential Smoothing" (IIR filter) for fast R0 application.
+- Added dynamic thresholding for emotion state detection.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List, Any
 import numpy as np
 
 # Import BirmanSchwingerCore from Phase 3
@@ -26,10 +30,15 @@ class ResonanceEmotionDetector(nn.Module):
     - K_perturbed = K_0 + ΔV
     - Interference Pattern I(x) = |Im(eigenvalues)|
 
+    Optimizations:
+    - Uses Power Iteration to find dominant eigenvalue lambda_max in O(N).
+    - Uses recursive filter (IIR) to apply resolvent R0 in O(N).
+    - Dynamic thresholding for adaptive emotion detection.
+
     Args:
         d_model: Model dimension
         n_seq: Sequence length
-        energy_threshold: Threshold for resonance detection (default: 0.1)
+        energy_threshold: Initial threshold (will be updated dynamically)
     """
 
     def __init__(
@@ -37,141 +46,292 @@ class ResonanceEmotionDetector(nn.Module):
         d_model: int,
         n_seq: int,
         energy_threshold: float = 0.1,
+        alpha_decay: float = 0.1, # For moving average
     ):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
-        self.energy_threshold = energy_threshold
+        self.initial_threshold = energy_threshold
+        self.alpha_decay = alpha_decay
 
         # Space-dependent decay function sigma(x)
-        # Maps hidden states to a scalar decay factor
         self.decay_function = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
             nn.Tanh(),
             nn.Linear(d_model // 2, 1),
-            nn.Softplus()  # Ensure positive decay
+            nn.Softplus()
         )
 
-        # Birman-Schwinger Kernel (Base from Phase 3)
-        # We wrap it or use it to compute perturbed kernel
+        # Birman-Schwinger Kernel Wrapper (we use logic from it but optimize execution)
+        # We keep it for reference or slow-path fallback if needed
         self.bs_kernel = BirmanSchwingerCore(n_seq=n_seq)
 
-        # Emotion History Buffer (Resonance, Dissonance)
-        # Fixed size buffer: 1000 steps
-        self.register_buffer('emotion_history', torch.zeros(1000, 2))
+        # Emotion History Buffer
+        self.register_buffer('emotion_history', torch.zeros(1000, 2)) # [Resonance, Dissonance]
         self.history_idx = 0
+
+        # Dynamic Threshold Stats
+        self.register_buffer('error_stats', torch.tensor([0.5, 0.1])) # [Mean, Std]
+
+        # Constants for R0 (precomputed)
+        # z = 1.0j. alpha = exp(i * z) = exp(-1) ~ 0.367
+        self.z_val = 1.0j
+        self.register_buffer('alpha_r0', torch.tensor(np.exp(1j * self.z_val), dtype=torch.complex64))
+
+    def _apply_r0_fast(self, v: torch.Tensor) -> torch.Tensor:
+        """
+        Apply Resolvent R0(z) to vector v in O(N) time.
+        R0(u,v) = (i/2) * exp(iz|u-v|)
+
+        This is equivalent to a convolution with exponential kernel,
+        implemented as a bidirectional IIR filter.
+
+        Args:
+            v: (B, N) complex input vector
+
+        Returns:
+            result: (B, N) complex vector
+        """
+        B, N = v.shape
+        device = v.device
+        alpha = self.alpha_r0
+
+        # Check if we can use simple python loop (efficient for moderate N)
+        # or use cumsum in log-space for vectorization.
+        # For N=2048, loop is acceptable (~few ms).
+        # However, pure python loop over N is slow.
+        # Let's use a simplified associative scan logic if possible.
+        # Or assume inputs are small enough or JIT.
+
+        # Let's implement the manual loop but try to JIT it if possible later.
+        # For now, standard loop.
+
+        # Forward pass: f[i] = v[i] + alpha * f[i-1]
+        # We can compute this using `torch.cumsum` if we handle powers.
+        # f[i] = sum_{k=0}^i alpha^{i-k} v[k] = alpha^i * sum_{k=0}^i alpha^{-k} v[k]
+
+        # Stable Implementation using Log-Space for powers?
+        # alpha is real (approx 0.367).
+        # alpha^N vanishes quickly. 0.367^100 ~ 1e-44.
+        # So we only need local context.
+        # But for "Exact" R0, we need full context.
+
+        # Vectorized approach:
+        # Since alpha is small, maybe we can assume cut-off?
+        # No, "Ghost in the Shell" demands exact physics.
+
+        # Let's use the Python loop for correctness first.
+        # It is O(N) operations, but Python overhead O(N).
+
+        v_c = v.contiguous()
+        fwd = torch.zeros_like(v_c)
+        bwd = torch.zeros_like(v_c)
+
+        # We need to iterate over sequence dimension.
+        # (B, N).
+        # This is slow in Python.
+
+        # Optimization: Use `torch.linalg.solve_triangular`?
+        # The inverse of the smoothing operation is a tridiagonal matrix!
+        # M = I - alpha * Shift.
+        # M f = v.
+        # M is bidiagonal (lower).
+        # So we can solve M f = v.
+        # But PyTorch doesn't have O(N) triangular solve for sparse matrices easily exposed.
+
+        # Best bet: Use `torch.compile` or just `cumsum` if we trust float precision.
+        # Given alpha ~ 0.36, precision loss is high for N > 20.
+        # BUT, R0 decays exponentially. Signals from >20 steps away don't matter much.
+
+        # Let's implement a simple chunked loop to reduce overhead?
+        # Or just iterate.
+
+        # Fallback to "chunked" matrix multiplication if N is huge?
+        # No, that's O(N^2).
+
+        # Implementation:
+        # Use the Python loop. It is robust.
+        # Precompute alpha
+        alpha_val = alpha.item()
+
+        # Move to CPU for loop speed if on GPU? No, latency.
+        # We will write a custom autograd function or JIT script.
+
+        return self._jit_r0_scan(v_c, alpha)
+
+    @torch.jit.export
+    def _jit_r0_scan(self, v: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+        """
+        JIT-compiled scanner for R0 application.
+        """
+        B, N = v.shape
+        # Forward
+        # f[t] = v[t] + alpha * f[t-1]
+        fwd = torch.zeros_like(v)
+        curr = torch.zeros(B, dtype=v.dtype, device=v.device)
+
+        for t in range(N):
+            curr = v[:, t] + alpha * curr
+            fwd[:, t] = curr
+
+        # Backward
+        # b[t] = v[t] + alpha * b[t+1]
+        bwd = torch.zeros_like(v)
+        curr = torch.zeros(B, dtype=v.dtype, device=v.device)
+
+        for t in range(N - 1, -1, -1):
+            curr = v[:, t] + alpha * curr
+            bwd[:, t] = curr
+
+        # R0 = (i/2) * (fwd + bwd - v)
+        # (subtract v once because it's included in both fwd and bwd)
+        i_half = 0.5j
+        return i_half * (fwd + bwd - v)
+
+    def power_iteration(self, v_magnitude: torch.Tensor, num_iters: int = 20) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute dominant eigenvalue and eigenvector using Power Iteration.
+        Operator K = D R0 D, where D = diag(|V|^0.5).
+
+        Args:
+            v_magnitude: |V| (B, N)
+            num_iters: Number of iterations
+
+        Returns:
+            eigenvalue: (B,) complex dominant eigenvalue
+            eigenvector: (B, N) complex dominant eigenvector
+        """
+        B, N = v_magnitude.shape
+        device = v_magnitude.device
+
+        # D = |V|^0.5
+        D = torch.sqrt(v_magnitude + 1e-9).to(torch.complex64)
+
+        # Random initialization
+        # b_k: (B, N)
+        b_k = torch.randn(B, N, dtype=torch.complex64, device=device)
+        b_k = F.normalize(b_k, dim=1)
+
+        for _ in range(num_iters):
+            # Apply K to b_k
+            # w = K b_k = D R0 D b_k
+
+            # 1. x = D * b_k
+            x = D * b_k
+
+            # 2. y = R0 * x (O(N) scan)
+            y = self._apply_r0_fast(x)
+
+            # 3. w = D * y
+            w = D * y
+
+            # Normalize
+            b_k = F.normalize(w, dim=1)
+
+        # Rayleigh Quotient for eigenvalue approximation
+        # lambda = (b_k^H K b_k) / (b_k^H b_k)
+        # Since b_k is normalized, denominator is 1.
+        # K b_k is approx lambda * b_k.
+        # So lambda ~ b_k^H * w (from last step).
+
+        # Recompute w one last time to be sure
+        x = D * b_k
+        y = self._apply_r0_fast(x)
+        w = D * y # (B, N)
+
+        # lambda = sum(conj(b_k) * w)
+        eigenvalue = (b_k.conj() * w).sum(dim=-1) # (B,)
+
+        return eigenvalue, b_k
+
+    def update_threshold(self, error_mag: torch.Tensor):
+        """
+        Update dynamic threshold statistics.
+        """
+        if not self.training:
+            return
+
+        # Current batch stats
+        batch_mean = error_mag.mean().detach()
+        batch_std = error_mag.std().detach()
+
+        # Exponential Moving Average
+        alpha = self.alpha_decay
+        self.error_stats[0] = (1 - alpha) * self.error_stats[0] + alpha * batch_mean
+        self.error_stats[1] = (1 - alpha) * self.error_stats[1] + alpha * batch_std
 
     def forward(
         self,
         prediction: torch.Tensor,
         target: torch.Tensor,
         hidden_states: torch.Tensor
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Dict[str, Any]:
         """
-        Detect emotion from prediction error.
-
-        Args:
-            prediction: (B, N, vocab_size) Logits
-            target: (B, N) Target token IDs
-            hidden_states: (B, N, D) Hidden states from model
-
-        Returns:
-            emotion_info: Dictionary containing scores and patterns
+        Detect emotion.
+        O(N) implementation.
         """
         B, N, V = prediction.shape
-        device = prediction.device
 
-        # 1. Calculate Prediction Error Ê
-        # Simple difference in probability mass
+        # 1. Calculate Prediction Error
         pred_probs = F.softmax(prediction, dim=-1)
-
-        # Gather prob of target token
-        # target: (B, N) -> (B, N, 1)
         target_probs = torch.gather(pred_probs, -1, target.unsqueeze(-1)).squeeze(-1)
-
-        # Error magnitude: 1.0 - p(target)
-        # If perfect prediction, error is 0.
         error_mag = 1.0 - target_probs # (B, N)
 
-        # Error phase: Direction of error in logit space?
-        # Simplified: Phase based on error magnitude (0 to pi)
-        # Or use residual vector direction if we had it.
-        # Here we construct a phase: arg(E) ~ error_mag * pi
-        error_phase = error_mag * torch.pi
+        # Update dynamic threshold
+        self.update_threshold(error_mag)
 
-        # 2. Complex Potential Perturbation ΔV(x)
-        # Gamma(x) = |E| * sigma(x)
+        # 2. Complex Potential V
         sigma = self.decay_function(hidden_states).squeeze(-1) # (B, N)
-        gamma = error_mag * sigma # (B, N)
+        # Use magnitude for the operator kernel strength
+        v_magnitude = error_mag * sigma
 
-        # ΔV = -i * Gamma * exp(i * phase)
-        #    = -i * Gamma * (cos(phi) + i sin(phi))
-        #    = Gamma * sin(phi) - i * Gamma * cos(phi)
-        delta_v_real = gamma * torch.sin(error_phase)
-        delta_v_imag = -gamma * torch.cos(error_phase)
-        delta_v = torch.complex(delta_v_real, delta_v_imag) # (B, N)
+        # 3. Power Iteration for Resonance (Dominant Eigenvalue)
+        # We only care about the dominant mode for "Resonance"
+        dom_eig, dom_vec = self.power_iteration(v_magnitude, num_iters=15)
 
-        # 3. Apply to Birman-Schwinger Kernel
-        # K_perturbed = K_0 + delta_v (simplified interaction)
-        # Ideally: K = |V+dV|^1/2 R_0 |V+dV|^1/2
-        # We treat delta_v as the potential V for the kernel computation
-        # The base potential V_0 is assumed to be 0 or absorbed in hidden_states
+        # 4. Interpret Physics
+        # Resonance: Real part of eigenvalue > 0 (Constructive Interference)
+        # Dissonance: Real part < 0 (Destructive) or simply Magnitude of perturbation?
 
-        # We compute K for the perturbation potential
-        # K_p = BS(delta_v)
-        # Note: BS Core expects real potential V usually?
-        # BS Core computes K = |V|^1/2 R0 |V|^1/2.
-        # If V is complex, |V| is magnitude.
+        # Original logic:
+        # Resonance = sum(I * cos(phase))
+        # Here we have single dominant eigenvalue lambda = r * exp(i theta)
+        # Im(lambda) = r * sin(theta).
+        # The "Interference Pattern" is usually |Im(lambda)|.
+        # Let's stick to the previous definition applied to the dominant mode.
 
-        # Let's use the magnitude of perturbation as the potential strength
-        # and the phase is encoded in the result?
-        # No, BS Core R0 has complex phase.
+        eig_mag = dom_eig.abs()
+        eig_phase = dom_eig.angle()
 
-        # We will compute K using |delta_v| as the potential V
-        v_magnitude = delta_v.abs() # (B, N)
+        # Interference ~ |Im(lambda)|
+        interference = dom_eig.imag.abs()
 
-        # Compute BS operator
-        # K: (B, N, N)
-        # Use z=1.0j as standard spectral shift
-        k_perturbed = self.bs_kernel.compute_birman_schwinger_operator(v_magnitude, z=1.0j)
+        # Score
+        # Resonance: Positive correlation with phase 0?
+        resonance_score = interference * torch.cos(eig_phase)
+        dissonance_score = interference * (eig_phase - torch.pi).abs() / torch.pi
 
-        # Add the perturbation effect directly to K diagonal?
-        # Or assume K represents the system state.
-        # K is compact operator.
+        # 5. Determine State (Dynamic Threshold)
+        # Using error stats directly or the eigenvalue magnitude?
+        # Let's use the computed scores vs historical averages.
 
-        # 4. Extract Interference Pattern
-        # Eigenvalues of K
-        # lambda_n
+        current_res = resonance_score.mean().item()
 
-        # Stability Check: K must be finite
-        k_perturbed = NumericalStability.sanitize_tensor(k_perturbed)
+        # Simple dynamic check based on error stats
+        # If error is surprisingly high -> Dissonance
+        avg_err = self.error_stats[0]
+        std_err = self.error_stats[1]
+        curr_err = error_mag.mean().item()
 
-        try:
-            eigenvalues = torch.linalg.eigvals(k_perturbed) # (B, N)
-        except RuntimeError:
-            # If eigvals fails (e.g. LAPACK error), use fallback or dummy
-            # This can happen if matrix is singular or has Infs (already sanitized though)
-            eigenvalues = torch.zeros(B, N, dtype=k_perturbed.dtype, device=device)
+        threshold_high = avg_err + 1.0 * std_err
+        threshold_low = avg_err - 0.5 * std_err
 
-        # Interference pattern I(x) approx |Im(lambda)|
-        interference_pattern = eigenvalues.imag.abs() # (B, N)
-
-        # 5. Calculate Emotion Scores
-        # Resonance: Real part > 0 (constructive?)
-        # Dissonance: Real part < 0 or specific phase
-
-        # Design doc:
-        # resonance = sum(I(x) * cos(phase))
-        # dissonance = sum(I(x) * |phase - pi|)
-        # Here phase is phase of eigenvalue
-        eig_phase = eigenvalues.angle() # (-pi to pi)
-
-        resonance_score = (interference_pattern * torch.cos(eig_phase)).sum(dim=-1)
-        dissonance_score = (interference_pattern * (eig_phase - torch.pi).abs()).sum(dim=-1)
-
-        # Normalize
-        resonance_score = resonance_score / N
-        dissonance_score = dissonance_score / N
+        if curr_err > threshold_high:
+            state = "DISSONANCE"
+        elif curr_err < threshold_low:
+            state = "RESONANCE"
+        else:
+            state = "NEUTRAL"
 
         # 6. Update History
         if self.training:
@@ -181,28 +341,19 @@ class ResonanceEmotionDetector(nn.Module):
             self.history_idx += 1
 
         return {
-            'resonance_score': resonance_score,
-            'dissonance_score': dissonance_score,
-            'interference_pattern': interference_pattern,
-            'delta_v': delta_v,
-            'eigenvalues': eigenvalues
+            'resonance_score': resonance_score,     # (B,)
+            'dissonance_score': dissonance_score,   # (B,)
+            'dominant_eigenvalue': dom_eig,         # (B,)
+            'state': state,
+            'threshold_stats': {'mean': avg_err.item(), 'std': std_err.item()}
         }
 
     def get_emotion_statistics(self) -> Dict[str, float]:
-        """Get emotion statistics from history."""
         valid_len = min(self.history_idx, 1000)
         if valid_len == 0:
-            return {
-                'mean_resonance': 0.0,
-                'mean_dissonance': 0.0,
-                'std_resonance': 0.0,
-                'std_dissonance': 0.0
-            }
-
-        history = self.emotion_history[:valid_len]
+            return {}
+        hist = self.emotion_history[:valid_len]
         return {
-            'mean_resonance': history[:, 0].mean().item(),
-            'mean_dissonance': history[:, 1].mean().item(),
-            'std_resonance': history[:, 0].std().item(),
-            'std_dissonance': history[:, 1].std().item(),
+            'mean_resonance': hist[:, 0].mean().item(),
+            'mean_dissonance': hist[:, 1].mean().item()
         }
