@@ -239,33 +239,33 @@
   - _Requirements: 14.4, 19.1, 成功基準_
   - **次のタスクへの進行条件**: すべての数値目標を達成（Note: Test thresholds relaxed for prototype speed）
 
-- [ ] 7. Phase 4統合モデル
-- [ ] 7.1 Phase4IntegratedModelクラスの実装
+- [x] 7. Phase 4統合モデル
+- [x] 7.1 Phase4IntegratedModelクラスの実装
   - Phase 3モデルの継承
   - 各コンポーネントのON/OFF機能（5つ）
   - Active Pipelineの統合
   - **数値目標**: 初期化時間 < 10秒、メモリオーバーヘッド < 500MB
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 7.2 診断情報の返却機能
+- [x] 7.2 診断情報の返却機能
   - 感情スコア、夢の内容、Bulk空間、収縮過程、結び目の返却
   - **数値目標**: 診断情報生成時間 < 100ms
   - _Requirements: 6.4_
 
-- [ ] 7.3 アイドルモード（Passive Pipeline）
+- [x] 7.3 アイドルモード（Passive Pipeline）
   - アイドル状態の検出（入力なし5秒）
   - Dream Coreの起動
   - 新概念の統合
   - **数値目標**: アイドル検出レイテンシ < 100ms
   - _Requirements: 2.7, 12.1, 12.2_
 
-- [ ] 7.4 Phase 3との後方互換性確認
+- [x] 7.4 Phase 3との後方互換性確認
   - Phase 3モデルの読み込み
   - Phase 4機能のOFF時の動作確認
   - **数値目標**: Phase 3モード時の性能劣化 = 0%
   - _Requirements: 6.5_
 
-- [ ] 7.5 統合モデルの単体テスト（必須）
+- [x] 7.5 統合モデルの単体テスト（必須）
   - 全コンポーネントのエラーなし動作
   - 勾配の正常伝播
   - **数値目標（必達）**:
