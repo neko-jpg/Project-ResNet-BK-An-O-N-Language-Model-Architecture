@@ -30,49 +30,9 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 # Upgrade pip
 RUN python -m pip install --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA 11.8 support (pinned versions for reproducibility)
-RUN pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
-
-# Install core dependencies (pinned versions)
-RUN pip install \
-    numpy==1.24.3 \
-    scipy==1.11.3 \
-    matplotlib==3.8.0 \
-    seaborn==0.13.0 \
-    pandas==2.1.1 \
-    scikit-learn==1.3.1 \
-    tqdm==4.66.1 \
-    pyyaml==6.0.1 \
-    tensorboard==2.15.1 \
-    wandb==0.16.0
-
-# Install Hugging Face ecosystem (pinned versions)
-RUN pip install \
-    transformers==4.35.0 \
-    datasets==2.14.6 \
-    tokenizers==0.15.0 \
-    accelerate==0.24.1 \
-    safetensors==0.4.0
-
-# Install additional ML libraries
-RUN pip install \
-    einops==0.7.0 \
-    triton==2.1.0 \
-    ninja==1.11.1.1
-
-# Install Jupyter for interactive development
-RUN pip install \
-    jupyter==1.0.0 \
-    jupyterlab==4.0.7 \
-    ipywidgets==8.1.1
-
-# Install testing and development tools
-RUN pip install \
-    pytest==7.4.3 \
-    pytest-cov==4.1.0 \
-    black==23.10.1 \
-    flake8==6.1.0 \
-    mypy==1.6.1
+# Install pinned dependencies (GPU build) using shared requirements
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Create working directory
 WORKDIR /workspace
