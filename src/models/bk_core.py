@@ -38,30 +38,97 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
     if n == 0:
         return torch.zeros(0, dtype=torch.complex64, device=device)
 
-    # --- Theta recursion (forward sweep) ---
-    theta = []
-    theta.append(torch.ones((), dtype=torch.complex128, device=device))  # θ_0
-    theta.append(a_shifted[0])                                          # θ_1
+    # --- Theta recursion (forward sweep) with scaling ---
+    # We use log-scale to prevent overflow: theta_i = t_i * exp(l_i)
+    # where |t_i| is close to 1.
+
+    t_theta = [] # normalized values
+    l_theta = [] # log scales
+
+    # θ_0 = 1
+    t_theta.append(torch.ones((), dtype=torch.complex128, device=device))
+    l_theta.append(torch.zeros((), dtype=torch.float64, device=device))
+
+    # θ_1 = a[0]
+    val = a_shifted[0]
+    scale = val.abs() + 1e-20
+    t_theta.append(val / scale)
+    l_theta.append(scale.log())
 
     for i in range(1, n):
-        theta.append(a_shifted[i] * theta[i] - c_c[i-1] * b_c[i-1] * theta[i-1])
+        # θ_{i+1} = a_i * θ_i - c_{i-1} * b_{i-1} * θ_{i-1}
+        # θ_{i+1} = e^{l_i} ( a_i * t_i - k * t_{i-1} * e^{l_{i-1} - l_i} )
 
-    theta_stack = torch.stack(theta)
-    det_T = theta_stack[-1]
+        prev_t = t_theta[-1]
+        prev_l = l_theta[-1]
+        prev2_t = t_theta[-2]
+        prev2_l = l_theta[-2]
 
-    # --- Phi recursion (backward sweep) ---
-    phi = [torch.zeros((), dtype=torch.complex128, device=device) for _ in range(n)]
-    phi[n-1] = torch.ones((), dtype=torch.complex128, device=device)
+        k = c_c[i-1] * b_c[i-1]
+
+        log_diff = prev2_l - prev_l
+        term2_scale = torch.exp(log_diff)
+
+        val = a_shifted[i] * prev_t - k * prev2_t * term2_scale
+
+        scale = val.abs() + 1e-20
+        t_theta.append(val / scale)
+        l_theta.append(prev_l + scale.log())
+
+    t_theta_stack = torch.stack(t_theta)
+    l_theta_stack = torch.stack(l_theta)
+
+    # Determinant is the last theta
+    t_det = t_theta_stack[-1]
+    l_det = l_theta_stack[-1]
+
+    # --- Phi recursion (backward sweep) with scaling ---
+    t_phi = [torch.zeros((), dtype=torch.complex128, device=device) for _ in range(n)]
+    l_phi = [torch.zeros((), dtype=torch.float64, device=device) for _ in range(n)]
+
+    # phi_{n-1} = 1
+    t_phi[n-1] = torch.ones((), dtype=torch.complex128, device=device)
+    l_phi[n-1] = torch.zeros((), dtype=torch.float64, device=device)
 
     if n > 1:
-        phi[n-2] = a_shifted[-1]
-        for i in range(n - 3, -1, -1):
-            phi[i] = a_shifted[i+1] * phi[i+1] - c_c[i] * b_c[i] * phi[i+2]
+        # phi_{n-2} = a_{n-1}
+        val = a_shifted[-1]
+        scale = val.abs() + 1e-20
+        t_phi[n-2] = val / scale
+        l_phi[n-2] = scale.log()
 
-    phi_stack = torch.stack(phi)
+        for i in range(n - 3, -1, -1):
+            prev_t = t_phi[i+1]
+            prev_l = l_phi[i+1]
+            prev2_t = t_phi[i+2]
+            prev2_l = l_phi[i+2]
+
+            k = c_c[i] * b_c[i]
+
+            log_diff = prev2_l - prev_l
+            term2_scale = torch.exp(log_diff)
+
+            val = a_shifted[i+1] * prev_t - k * prev2_t * term2_scale
+
+            scale = val.abs() + 1e-20
+            t_phi[i] = val / scale
+            l_phi[i] = prev_l + scale.log()
+
+    t_phi_stack = torch.stack(t_phi)
+    l_phi_stack = torch.stack(l_phi)
+
+    # --- Combine results ---
+    t_num = t_theta_stack[:-1] * t_phi_stack
+    l_num = l_theta_stack[:-1] + l_phi_stack
+
+    log_mag_total = l_num - l_det
+
+    # Clamp log magnitude to avoid overflow in exp
+    # (e.g., > 50.0 leads to > 1e21 which is huge but finite)
+    log_mag_total = torch.clamp(log_mag_total, max=50.0)
 
     eps = torch.tensor(1e-18, dtype=torch.complex128, device=device)
-    diag_inv = theta_stack[:-1] * phi_stack / (det_T + eps)
+    diag_inv = (t_num / (t_det + eps)) * torch.exp(log_mag_total.to(torch.complex128))
 
     # --- Numerical stability: remove NaN/Inf + clip magnitude ---
     diag_inv = torch.where(torch.isfinite(diag_inv), diag_inv, torch.zeros_like(diag_inv))

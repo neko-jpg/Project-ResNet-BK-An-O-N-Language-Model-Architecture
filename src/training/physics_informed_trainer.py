@@ -88,7 +88,7 @@ class PhysicsInformedTrainer:
         Args:
             x_batch: (B, N) input token indices
             y_batch: (B*N,) target token indices (flattened)
-            x_prev_batch: (B, N) previous batch tokens (for energy conservation)
+            x_prev_batch: (B, N) previous batch tokens (Deprecated/Unused for conservation)
         
         Returns:
             metrics: dict with loss components and energy metrics
@@ -105,15 +105,21 @@ class PhysicsInformedTrainer:
         # Language modeling loss
         loss_lm = self.criterion(logits.view(-1, logits.size(-1)), y_batch)
         
-        # Energy conservation loss (if physics enabled and previous batch available)
+        # Energy conservation loss (if physics enabled)
+        # We check conservation between adjacent tokens (intra-batch)
+        # x_prev_state = x_batch[:, :-1], x_curr_state = x_batch[:, 1:]
         loss_energy = torch.tensor(0.0, device=x_batch.device)
         energy_metrics = {}
         
-        if self.physics_enabled and x_prev_batch is not None and x_prev_batch.shape[0] == x_batch.shape[0]:
-            # Get embeddings for current and previous batches
-            # Only compute if batch sizes match
-            x_embed = self.model.token_embedding(x_batch)  # (B, N, D)
-            x_prev_embed = self.model.token_embedding(x_prev_batch)  # (B, N, D)
+        if self.physics_enabled and x_batch.shape[1] > 1:
+            # Get embeddings for all tokens
+            x_embed_full = self.model.token_embedding(x_batch)  # (B, N, D)
+
+            # Slice for intra-sequence transition
+            # "Previous" state is t=0..N-2
+            # "Current" state is t=1..N-1
+            x_prev_embed = x_embed_full[:, :-1, :] # (B, N-1, D)
+            x_curr_embed = x_embed_full[:, 1:, :]  # (B, N-1, D)
             
             # Compute energy conservation loss for each physics-informed layer
             total_energy_loss = 0.0
@@ -121,28 +127,95 @@ class PhysicsInformedTrainer:
             
             for block in self.model.blocks:
                 if hasattr(block, 'bk_layer') and hasattr(block.bk_layer, 'compute_energy'):
-                    # Compute energies
+                    # Compute energies per token (sum_over_seq=False)
+                    # E_current depends on x_curr and momentum (x_curr - x_prev)
+                    # E_prev depends on x_prev (assume 0 momentum for reference or just V?)
+                    # Energy Conservation: H(x_t) approx H(x_{t-1})
+                    # So we compute E_t (at curr) and E_{t-1} (at prev).
+
+                    # Energy at step t (Current):
+                    # State: x_curr_embed
+                    # Momentum: x_curr_embed - x_prev_embed (Backward difference)
                     E_current, T_current, V_current = block.bk_layer.compute_energy(
-                        x_embed, x_prev_embed
+                        x_curr_embed, x_prev_embed, sum_over_seq=False
                     )
-                    E_prev, _, _ = block.bk_layer.compute_energy(x_prev_embed, None)
                     
-                    # Energy conservation loss
-                    layer_energy_loss = block.bk_layer.energy_conservation_loss(
-                        E_current, E_prev
-                    )
+                    # Energy at step t-1 (Previous):
+                    # State: x_prev_embed
+                    # Momentum: We need x_{t-2}. If not available, assume 0 or steady state?
+                    # To enforce E_t ~ E_{t-1}, we need E_{t-1}.
+                    # For simplicity and stability, we can compare Total Energy (E = T + V)
+                    # of current step vs Total Energy of previous step.
+                    # But T_{t-1} requires x_{t-2}.
+                    # Let's assume continuity implies E_t ~ E_{t-1}.
+                    # Calculate V_{t-1} correctly. T_{t-1} is unknown without lookback.
+                    # Option: Minimize dE/dt.
+                    # Let's relax T_{t-1} to be similar to T_t or just compare V?
+                    # Better: Use the momentum we just calculated (x_curr - x_prev) as the flow.
+                    # H = T(p) + V(x).
+                    # Conservation: H(x_t, p_t) = H(x_{t-1}, p_{t-1}).
+                    # We have p_t ~ x_t - x_{t-1}.
+                    # We don't have p_{t-1}.
+                    # However, if we assume locally constant momentum (free particle approx), T_t ~ T_{t-1}.
+                    # Then conservation reduces to V(x_t) ~ V(x_{t-1}).
+                    # If we want to include T, we need x_{t-2}.
+                    # Given the constraints, let's compare E_current (Full Hamiltonian)
+                    # against V_prev (Potential only) implies T -> 0? No.
+                    # Let's calculate E_prev using the SAME momentum magnitude?
+                    # Or just assume "Energy Drift" is minimized.
+                    # Let's calculate E_prev assuming zero kinetic energy (Reference)? No, that forces T=0.
+
+                    # User suggestion: "Energy transition between x[:, :-1] and x[:, 1:]"
+                    # This implies simply comparing the energy function evaluated at these points.
+                    # If compute_energy requires a 'prev' for T, we can pass None (T=0) for both?
+                    # Or pass the corresponding shift?
+                    # If we treat the sequence as a trajectory, we should have consistency.
+
+                    # Implementation choice:
+                    # Compare E(x_t, x_t - x_{t-1}) vs E(x_{t-1}, x_{t-1} - x_{t-2})
+                    # This requires x_{t-2}.
+                    # Using x[:, 1:-1] and x[:, 2:] and x[:, :-2] reduces sequence length by 2.
+                    # This is robust.
+
+                    if x_batch.shape[1] > 2:
+                        x_t2 = x_embed_full[:, :-2, :] # t-2
+                        x_t1 = x_embed_full[:, 1:-1, :] # t-1
+                        x_t0 = x_embed_full[:, 2:, :] # t
+
+                        # E at t (using t, t-1)
+                        E_t, T_t, V_t = block.bk_layer.compute_energy(
+                            x_t0, x_t1, sum_over_seq=False
+                        )
+                        # E at t-1 (using t-1, t-2)
+                        E_t1, _, _ = block.bk_layer.compute_energy(
+                            x_t1, x_t2, sum_over_seq=False
+                        )
+
+                        # Conservation loss
+                        layer_energy_loss = block.bk_layer.energy_conservation_loss(E_t, E_t1)
+                    else:
+                        # Fallback for short sequences: Compare Potential Only or Assume T=0
+                        # E_t (T=0) vs E_t1 (T=0)
+                        E_t, T_t, V_t = block.bk_layer.compute_energy(
+                            x_curr_embed, None, sum_over_seq=False
+                        )
+                        E_t1, _, _ = block.bk_layer.compute_energy(
+                            x_prev_embed, None, sum_over_seq=False
+                        )
+                        layer_energy_loss = block.bk_layer.energy_conservation_loss(E_t, E_t1)
+
                     
                     # Weighted by Lagrange multiplier
                     total_energy_loss += block.bk_layer.lambda_energy * layer_energy_loss
                     layer_count += 1
                     
                     # Track metrics
-                    energy_metrics[f'E_current_layer{layer_count}'] = E_current.mean().item()
-                    energy_metrics[f'E_prev_layer{layer_count}'] = E_prev.mean().item()
-                    energy_metrics[f'T_current_layer{layer_count}'] = T_current.mean().item()
-                    energy_metrics[f'V_current_layer{layer_count}'] = V_current.mean().item()
+                    energy_metrics[f'E_current_layer{layer_count}'] = E_t.mean().item()
+                    energy_metrics[f'E_prev_layer{layer_count}'] = E_t1.mean().item()
+                    energy_metrics[f'T_current_layer{layer_count}'] = T_t.mean().item()
+                    energy_metrics[f'V_current_layer{layer_count}'] = V_t.mean().item()
                     energy_metrics[f'energy_drift_layer{layer_count}'] = (
-                        (E_current - E_prev).abs().mean().item()
+                        (E_t - E_t1).abs().mean().item()
                     )
             
             if layer_count > 0:

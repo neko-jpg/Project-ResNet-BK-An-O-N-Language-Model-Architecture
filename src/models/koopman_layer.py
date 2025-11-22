@@ -23,7 +23,16 @@ class KoopmanResNetBKLayer(nn.Module):
         Koopman mode: x -> φ (lift) -> K (linear) -> ψ (inverse lift) -> x_next
     """
     
-    def __init__(self, d_model, n_seq, koopman_dim=256, num_experts=4, top_k=1, dropout_p=0.1):
+    def __init__(
+        self,
+        d_model,
+        n_seq,
+        koopman_dim=256,
+        num_experts=4,
+        top_k=1,
+        dropout_p=0.1,
+        update_interval=10
+    ):
         """
         Initialize Koopman ResNet-BK layer.
         
@@ -34,11 +43,14 @@ class KoopmanResNetBKLayer(nn.Module):
             num_experts: number of MoE experts
             top_k: number of experts to route to
             dropout_p: dropout probability
+            update_interval: number of steps between Koopman operator updates (SVD)
         """
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
         self.koopman_dim = koopman_dim
+        self.update_interval = update_interval
+        self.update_counter = 0
         
         # Standard ResNet-BK components
         from .resnet_bk import MoEResNetBKLayer
@@ -168,7 +180,14 @@ class KoopmanResNetBKLayer(nn.Module):
                 # Mark buffer as filled once we've wrapped around
                 if next_idx == 0:
                     self.buffer_filled.copy_(torch.tensor(True, dtype=torch.bool))
+
+                # Increment update counter
+                self.update_counter += 1
                 
+                # Only perform expensive SVD update at specified interval
+                if self.update_counter % self.update_interval != 0:
+                    return
+
                 # Only update K if we have enough data
                 if not self.buffer_filled:
                     return
