@@ -210,13 +210,15 @@ class Phase3IntegratedModel(nn.Module):
         self,
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
-        return_diagnostics: bool = False
+        return_diagnostics: bool = False,
+        initial_phase: Optional[torch.Tensor] = None # LOGOS: Sentiment Phase Shifting
     ) -> Dict[str, Any]:
         """
         Args:
             input_ids: (B, N)
             labels: (B, N) Optional
             return_diagnostics: bool
+            initial_phase: (B, N) Optional phase shift for ComplexEmbedding
 
         Returns:
             output_dict: {
@@ -225,8 +227,8 @@ class Phase3IntegratedModel(nn.Module):
                 'diagnostics': dict
             }
         """
-        # 1. Embedding
-        x = self.embedding(input_ids) # ComplexTensor(B, N, D)
+        # 1. Embedding (with Phase Shift)
+        x = self.embedding(input_ids, initial_phase=initial_phase) # ComplexTensor(B, N, D)
 
         # 2. MERA Routing (Real part mainly used for routing logic usually,
         # but we can project absolute value)
@@ -248,10 +250,24 @@ class Phase3IntegratedModel(nn.Module):
 
         # 3. Phase 3 Layers
         layer_diagnostics = []
+        hamiltonian_drifts = []
+
         for layer in self.layers:
-            x, diag = layer(x, return_diagnostics=return_diagnostics)
+            # We need to capture Hamiltonian drift if possible.
+            # Currently Phase3Block doesn't expose drift in forward return, only diagnostics.
+            # And it doesn't support `return_energy` flag yet in its forward call.
+            # For this demo, we'll rely on the diagnostics dict which we just enabled below.
+
+            x, diag = layer(x, return_diagnostics=True) # Always get diagnostics for LOGOS check
+
             if diag:
                 layer_diagnostics.append(diag)
+                if 'energy_in' in diag and 'energy_out' in diag:
+                    drift = abs(diag['energy_out'] - diag['energy_in'])
+                    hamiltonian_drifts.append(drift)
+
+        # LOGOS Layer 2: Check Hamiltonian Drift
+        max_drift = max(hamiltonian_drifts) if hamiltonian_drifts else 0.0
 
         # 4. Output (Dialectic Loop)
         # Dialectic Loop expects Real Tensor input (Synthesis of complex state)
@@ -287,6 +303,7 @@ class Phase3IntegratedModel(nn.Module):
             'diagnostics': {
                 'mera_hierarchy': len(mera_hierarchy),
                 'layer_diagnostics': layer_diagnostics,
-                'dialectic_diagnostics': dialectic_diag
+                'dialectic_diagnostics': dialectic_diag,
+                'hamiltonian_drift': max_drift # LOGOS: For MetaCommentary
             } if return_diagnostics else None
         }

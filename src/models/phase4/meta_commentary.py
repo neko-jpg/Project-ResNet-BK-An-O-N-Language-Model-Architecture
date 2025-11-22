@@ -38,6 +38,10 @@ class MetaCommentary:
                 "The Passive Pipeline is active. Reconsolidating {n} memory fragments via inverse diffusion.",
                 "Dreaming... exploring the latent space of topological knots.",
             ],
+            'consistency_violation': [
+                "[Self-Correction] High energy drift detected in the Hamiltonian (dH/dt = {drift:.4f}). Logical consistency is compromised.",
+                "[Self-Correction] Contradiction detected. The conservation of semantic energy has been violated.",
+            ],
             'default': "The system is operating within nominal parameters."
         }
 
@@ -46,6 +50,15 @@ class MetaCommentary:
         Generate a meta-commentary based on the provided diagnostics.
         """
         comments = []
+
+        # 0. Check Logical Consistency (LOGOS Layer 2)
+        if 'hamiltonian_drift' in diagnostics:
+            drift = diagnostics['hamiltonian_drift']
+            # Threshold for violation (arbitrary for now, say 0.1)
+            if drift > 0.1:
+                comments.append(self.templates['consistency_violation'][0].format(drift=drift))
+                # If critical violation, we might only return this.
+                return " ".join(comments)
 
         # 1. Check Emotion
         if 'emotion' in diagnostics:
