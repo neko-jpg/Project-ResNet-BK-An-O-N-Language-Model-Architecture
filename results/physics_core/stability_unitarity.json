@@ -1,0 +1,80 @@
+{
+  "device": "cuda",
+  "gamma_analysis": {
+    "0.0001": {
+      "time_horizon": 12.0,
+      "vanish_threshold": 0.0001,
+      "blowup_threshold": 1000.0,
+      "vanished_frac": 0.399658203125,
+      "divergent_frac": 0.0,
+      "healthy_frac": 0.600341796875,
+      "gamma_mean": 0.7375012636184692,
+      "gamma_std": 0.30859214067459106,
+      "gamma_min": 0.1311059594154358,
+      "gamma_max": 2.422067403793335
+    },
+    "0.0005": {
+      "time_horizon": 12.0,
+      "vanish_threshold": 0.0001,
+      "blowup_threshold": 1000.0,
+      "vanished_frac": 0.40087890625,
+      "divergent_frac": 0.0,
+      "healthy_frac": 0.59912109375,
+      "gamma_mean": 0.7379013299942017,
+      "gamma_std": 0.30859214067459106,
+      "gamma_min": 0.13150595128536224,
+      "gamma_max": 2.4224674701690674
+    },
+    "0.001": {
+      "time_horizon": 12.0,
+      "vanish_threshold": 0.0001,
+      "blowup_threshold": 1000.0,
+      "vanished_frac": 0.40185546875,
+      "divergent_frac": 0.0,
+      "healthy_frac": 0.59814453125,
+      "gamma_mean": 0.7384012937545776,
+      "gamma_std": 0.30859217047691345,
+      "gamma_min": 0.1320059597492218,
+      "gamma_max": 2.4229674339294434
+    },
+    "0.005": {
+      "time_horizon": 12.0,
+      "vanish_threshold": 0.0001,
+      "blowup_threshold": 1000.0,
+      "vanished_frac": 0.406494140625,
+      "divergent_frac": 0.0,
+      "healthy_frac": 0.593505859375,
+      "gamma_mean": 0.7424012422561646,
+      "gamma_std": 0.30859214067459106,
+      "gamma_min": 0.1360059529542923,
+      "gamma_max": 2.4269676208496094
+    },
+    "0.01": {
+      "time_horizon": 12.0,
+      "vanish_threshold": 0.0001,
+      "blowup_threshold": 1000.0,
+      "vanished_frac": 0.41552734375,
+      "divergent_frac": 0.0,
+      "healthy_frac": 0.58447265625,
+      "gamma_mean": 0.7474013566970825,
+      "gamma_std": 0.30859214067459106,
+      "gamma_min": 0.1410059630870819,
+      "gamma_max": 2.4319674968719482
+    }
+  },
+  "unitarity_analysis": {
+    "recommended_threshold": 0.0001,
+    "noise_sweep": {
+      "1e-06": 4.05148330173688e-06,
+      "3e-06": 1.185071869258536e-05,
+      "1e-05": 3.933396510547027e-05,
+      "3e-05": 0.00011495794024085626,
+      "0.0001": 0.0003853054658975452,
+      "0.0003": 0.0011607309570536017,
+      "0.001": 0.004199516493827105,
+      "0.003": 0.012059475295245647,
+      "0.01": 0.0393201969563961
+    },
+    "unitary_example_error": 2.647578298820008e-07
+  }
+}
