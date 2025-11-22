@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from src.models.phase4.adscft_core.geodesic_search import fast_marching_method_cpu
+from src.models.phase4.memory_monitor import MemoryMonitor
 
 class BulkSpaceGenerator(nn.Module):
     """
@@ -23,12 +24,15 @@ class BulkSpaceGenerator(nn.Module):
         self,
         d_model: int,
         bulk_dim: Optional[int] = None,
-        ads_radius: float = 1.0
+        ads_radius: float = 1.0,
+        monitor: Optional[MemoryMonitor] = None
     ):
         super().__init__()
         self.d_model = d_model
         self.bulk_dim = bulk_dim or int(np.log2(d_model)) if d_model > 1 else 2
         self.ads_radius = ads_radius
+        self.monitor = monitor or MemoryMonitor()
+        self.dynamic_adjustment = True
 
         # Boundary to Bulk Projection
         # We project to (bulk_dim, d_model) space
@@ -55,22 +59,39 @@ class BulkSpaceGenerator(nn.Module):
         """
         B, N, D = boundary_tokens.shape
 
-        # 1. Generate Bulk Coordinates (Initial Guess / Potential Field)
+        # 1. Dynamic Dimension Adjustment (Task 8.2)
+        active_bulk_dim = self.bulk_dim
+        low_memory_flag = False
+
+        if self.dynamic_adjustment:
+            free_mem = self.monitor.get_free_memory()
+            # Threshold: 2GB (approx)
+            if free_mem < 2 * 1024**3:
+                active_bulk_dim = max(2, self.bulk_dim // 2)
+                low_memory_flag = True
+
+        # 2. Generate Bulk Coordinates (Initial Guess / Potential Field)
         # (B, N, D) -> (B, N, bulk_dim * D) -> (B, N, bulk_dim, D)
         bulk_coords = self.boundary_to_bulk(boundary_tokens)
         bulk_coords = bulk_coords.view(B, N, self.bulk_dim, D)
 
-        # 2. Geodesic Search (Fast Marching Method)
+        # Slice if dimension is reduced
+        if active_bulk_dim < self.bulk_dim:
+            bulk_coords = bulk_coords[:, :, :active_bulk_dim, :]
+
+        # 3. Geodesic Search (Fast Marching Method)
         # Finds optimal path through the bulk dimensions
         geodesics = fast_marching_method_cpu(bulk_coords, self.ads_radius)
 
-        # 3. Project back to Boundary (Integrate or Mean)
+        # 4. Project back to Boundary (Integrate or Mean)
         # We take the mean of the geodesic path as the "holographic dual" feature
         bulk_features = geodesics.mean(dim=2) # (B, N, D)
 
         diagnostics = {
             'bulk_coords_sample': bulk_coords[:, :1, :, :].detach().cpu(),
-            'geodesic_sample': geodesics[:, :1, :, :].detach().cpu()
+            'geodesic_sample': geodesics[:, :1, :, :].detach().cpu(),
+            'active_bulk_dim': active_bulk_dim,
+            'low_memory_mode': low_memory_flag
         }
 
         return bulk_features, diagnostics

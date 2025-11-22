@@ -33,6 +33,7 @@ from src.models.phase4.dream_core.inverse_diffusion import DreamCore
 from src.models.phase4.dream_core.pipeline_manager import PassivePipelineManager
 from src.models.phase4.adscft_core.bulk_generator import BulkSpaceGenerator
 from src.models.phase4.quantum_observer.von_neumann_projection import QuantumObserver
+from src.models.phase4.memory_monitor import MemoryMonitor
 from src.models.phase4.topological_memory.sparse_tensor_rep import SparseKnotRepresentation
 from src.models.phase4.ethical_safeguards.core_value_function import CoreValueFunction, EthicalFilter
 
@@ -77,6 +78,9 @@ class Phase4IntegratedModel(nn.Module):
         self.enable_quantum = enable_quantum
         self.enable_topological = enable_topological
         self.enable_ethics = enable_ethics
+
+        # Shared Memory Monitor (Task 8.3)
+        self.memory_monitor = MemoryMonitor()
 
         # Strict Phase 3 Mode Check
         self.is_phase3_only = not any([
@@ -140,7 +144,10 @@ class Phase4IntegratedModel(nn.Module):
 
         # 4. Holographic Dual (Bulk Space)
         if self.enable_holographic:
-            self.bulk_generator = BulkSpaceGenerator(self.d_model)
+            self.bulk_generator = BulkSpaceGenerator(
+                self.d_model,
+                monitor=self.memory_monitor
+            )
 
         # 5. Quantum Observer
         if self.enable_quantum:

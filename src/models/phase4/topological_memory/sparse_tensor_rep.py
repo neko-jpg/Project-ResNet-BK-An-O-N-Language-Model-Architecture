@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, Any, List, Tuple, Optional
+from collections import OrderedDict
 import os
 import warnings
 
@@ -50,17 +51,22 @@ class SparseKnotRepresentation:
         d_model: int,
         max_knots: int = 1000,
         compression_ratio: float = 0.1,
-        storage_path: str = 'data/phase4_knot_memory.zarr'
+        storage_path: str = 'data/phase4_knot_memory.zarr',
+        cache_capacity: int = 100
     ):
         self.d_model = d_model
         self.max_knots = max_knots
         self.compression_ratio = compression_ratio
         self.storage_path = storage_path
+        self.cache_capacity = cache_capacity
 
         # In-memory sparse index
         self.knot_indices = []
-        self.knot_values = []
+        self.knot_values = {} # Changed to dict for ID-based fallback
         self.metadata_store = {}
+
+        # LRU Cache for tensors (Task 8.2)
+        self.cache = OrderedDict()
 
         # Initialize Zarr store
         if HAS_ZARR:
@@ -178,37 +184,77 @@ class SparseKnotRepresentation:
     ):
         """
         Add a knot to memory.
+        Uses Zarr for persistence and avoids permanent RAM storage (Lazy Loading).
 
         Args:
             knot_coords: (N, 3)
             metadata: dict
         """
         knot_id = len(self.knot_indices)
-
-        # Store in memory (simplified sparse logic)
-        # Ideally we use torch.sparse
         self.knot_indices.append(knot_id)
         self.metadata_store[knot_id] = metadata
 
         # Persist
         if HAS_ZARR and self.zarr_store is not None:
-            # Trigger async write
-            # In a real async context, we would await or spawn a task.
-            # Here we wrap in a safe execution block.
+            # Trigger async write or sync write
             if HAS_ASYNCIO:
                 try:
-                    # Check if there is a running loop
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         loop.create_task(self._async_write_to_zarr(knot_id, knot_coords, metadata))
                     else:
-                        # No running loop, run synchronously (fallback)
-                         self._sync_write_to_zarr(knot_id, knot_coords, metadata)
+                        self._sync_write_to_zarr(knot_id, knot_coords, metadata)
                 except RuntimeError:
-                     # No event loop
                      self._sync_write_to_zarr(knot_id, knot_coords, metadata)
             else:
                 self._sync_write_to_zarr(knot_id, knot_coords, metadata)
+        else:
+            # Fallback: Store in memory if Zarr not available
+            # This is NOT memory efficient but required if no Zarr
+            self.knot_values[knot_id] = knot_coords.detach().cpu()
+
+    def get_knot(self, knot_id: int) -> Optional[torch.Tensor]:
+        """
+        Retrieve a knot tensor with LRU caching.
+
+        Args:
+            knot_id: ID of the knot
+
+        Returns:
+            knot_coords: (N, 3) or None
+        """
+        # 1. Check Cache
+        if knot_id in self.cache:
+            self.cache.move_to_end(knot_id)
+            return self.cache[knot_id]
+
+        # 2. Check Fallback Memory
+        if knot_id in self.knot_values:
+            tensor = self.knot_values[knot_id]
+            self._update_cache(knot_id, tensor)
+            return tensor
+
+        # 3. Load from Zarr
+        if HAS_ZARR and self.zarr_store is not None:
+            key = f'knot_{knot_id}'
+            if key in self.zarr_store:
+                try:
+                    arr = self.zarr_store[key][:] # Load numpy array
+                    tensor = torch.from_numpy(arr)
+                    self._update_cache(knot_id, tensor)
+                    return tensor
+                except Exception as e:
+                    print(f"Error reading knot {knot_id} from Zarr: {e}")
+                    return None
+
+        return None
+
+    def _update_cache(self, knot_id: int, tensor: torch.Tensor):
+        """Update LRU cache with new item."""
+        if len(self.cache) >= self.cache_capacity:
+            self.cache.popitem(last=False) # Remove LRU
+        self.cache[knot_id] = tensor
+        self.cache.move_to_end(knot_id)
 
     async def _async_write_to_zarr(
         self,
