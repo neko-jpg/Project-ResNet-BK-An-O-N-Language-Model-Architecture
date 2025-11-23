@@ -7,6 +7,7 @@ import time
 import gc
 import torch
 import numpy as np
+import warnings
 from rich.console import Console
 from rich.progress import Progress
 
@@ -22,15 +23,21 @@ class MuseCalibrator:
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.vram_total = 0
-        self.memory_coeffs = {'base': 0, 'per_token': 0, 'per_param': 0}
-        self.speed_coeffs = {'base': 0, 'per_token': 0}
+        self.memory_coeffs = {'base': 0, 'per_token': 0, 'per_complex': 0}
+        self.speed_coeffs = {'base': 0, 'per_token': 0, 'per_complex': 0}
 
         if self.device.type == 'cuda':
-            self.vram_total = torch.cuda.get_device_properties(0).total_memory / (1024**2) # MB
+            try:
+                self.vram_total = torch.cuda.get_device_properties(0).total_memory / (1024**2) # MB
+            except:
+                self.vram_total = 0
         else:
             # Mock for CPU (system memory) - simplified
-            import psutil
-            self.vram_total = psutil.virtual_memory().total / (1024**2)
+            try:
+                import psutil
+                self.vram_total = psutil.virtual_memory().total / (1024**2)
+            except:
+                self.vram_total = 0
 
     def _clear_memory(self):
         if self.device.type == 'cuda':
@@ -50,41 +57,59 @@ class MuseCalibrator:
         config.vocab_size = 1000 # Small vocab for calibration
 
         try:
-            model = ConfigurableResNetBK(config).to(self.device)
-            optimizer = torch.optim.AdamW(model.parameters())
+            # Suppress Triton warnings during calibration
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
 
-            # Dummy input
-            x = torch.randint(0, 1000, (batch_size, seq_len)).to(self.device)
-            y = torch.randint(0, 1000, (batch_size * seq_len,)).to(self.device)
+                model = ConfigurableResNetBK(config).to(self.device)
+                optimizer = torch.optim.AdamW(model.parameters())
 
-            # Measure Memory (Peak)
-            if self.device.type == 'cuda':
-                torch.cuda.reset_peak_memory_stats()
+                # Dummy input
+                x = torch.randint(0, 1000, (batch_size, seq_len)).to(self.device)
+                y = torch.randint(0, 1000, (batch_size * seq_len,)).to(self.device)
 
-            # Forward + Backward
-            start_time = time.time()
-            logits = model(x)
-            loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y)
-            loss.backward()
-            optimizer.step()
-            optimizer.zero_grad()
-            end_time = time.time()
+                # Warmup (1 step) to settle allocations/caches
+                logits = model(x)
+                loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y)
+                loss.backward()
+                optimizer.zero_grad()
+                del logits, loss
 
-            if self.device.type == 'cuda':
-                peak_mem = torch.cuda.max_memory_allocated() / (1024**2)
-            else:
-                peak_mem = 0 # CPU accurate measurement is hard in Python, approximation needed
+                # Reset stats after warmup
+                if self.device.type == 'cuda':
+                    torch.cuda.reset_peak_memory_stats()
+                    torch.cuda.synchronize()
 
-            del model, optimizer, x, y, logits, loss
-            self._clear_memory()
+                # Measurement Run (Forward + Backward)
+                start_time = time.time()
+                logits = model(x)
+                loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), y)
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad()
 
-            return peak_mem, end_time - start_time
+                if self.device.type == 'cuda':
+                    torch.cuda.synchronize()
+                end_time = time.time()
 
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
+                if self.device.type == 'cuda':
+                    peak_mem = torch.cuda.max_memory_allocated() / (1024**2)
+                else:
+                    peak_mem = 0 # CPU accurate measurement is hard in Python
+
+                del model, optimizer, x, y, logits, loss
                 self._clear_memory()
-                return float('inf'), float('inf')
-            raise e
+
+                return peak_mem, end_time - start_time
+
+        except Exception as e:
+            # Catch RuntimeErrors (OOM) and ValueErrors (Triton issues)
+            # Log minimal info if needed, but don't crash
+            # if "out of memory" in str(e).lower():
+            #     return float('inf'), float('inf')
+            # For any error (OOM or Kernel failure), treat as invalid point
+            self._clear_memory()
+            return float('inf'), float('inf')
 
     def calibrate(self):
         """Run calibration points to fit the model."""
@@ -93,73 +118,109 @@ class MuseCalibrator:
 
         console.print("[bold blue]Running System Calibration...[/bold blue]")
 
-        points = [] # (N, B, D, L, Mem, Time)
-
-        # Define probe points (conservative to avoid OOM during calibration)
+        # Initial Probes
         probes = [
             (128, 1, 128, 2),
-            (512, 1, 128, 2),
-            (128, 4, 128, 2),
+            (256, 1, 128, 2),
+            (128, 2, 128, 2),
             (128, 1, 256, 2),
             (128, 1, 128, 4),
+            (256, 2, 256, 2), # Heavier point
         ]
 
-        base_config = ResNetBKConfig(d_model=128, n_layers=2, vocab_size=1000, n_seq=128)
+        # Heavy Probes for Deep Scan
+        heavy_probes = [
+            (512, 2, 256, 4),
+            (512, 4, 256, 4),
+            (1024, 2, 256, 4),
+            (512, 2, 512, 4),
+            (512, 2, 256, 8),
+        ]
 
-        with Progress() as progress:
-            task = progress.add_task("[cyan]Measuring...", total=len(probes))
+        def run_probes(probe_list, label="Measuring..."):
+            measured_points = []
+            base_config = ResNetBKConfig(d_model=128, n_layers=2, vocab_size=1000, n_seq=128)
+            with Progress() as progress:
+                task = progress.add_task(f"[cyan]{label}", total=len(probe_list))
+                for seq_len, batch, d_model, layers in probe_list:
+                    base_config.d_model = d_model
+                    base_config.n_layers = layers
+                    base_config.n_seq = seq_len
+                    mem, duration = self.measure_run(base_config, batch, seq_len)
+                    if mem != float('inf') and mem > 0:
+                        complexity = batch * seq_len * d_model * layers
+                        measured_points.append((complexity, mem, duration))
+                    progress.update(task, advance=1)
+            return measured_points
 
-            for seq_len, batch, d_model, layers in probes:
-                base_config.d_model = d_model
-                base_config.n_layers = layers
-                base_config.n_seq = seq_len
+        points = run_probes(probes)
 
-                mem, duration = self.measure_run(base_config, batch, seq_len)
-                if mem != float('inf'):
-                    # Approximate: Mem = Base + k * (B*N*D*L)
-                    # This is a simplification of the O(N) MUSE formula
-                    complexity = batch * seq_len * d_model * layers
-                    points.append((complexity, mem, duration))
+        # Helper to compute coefficients
+        def compute_regression(pts):
+            if len(pts) < 2: return -1, -1, -1, -1
+            X = np.array([p[0] for p in pts])
+            Y_mem = np.array([p[1] for p in pts])
+            Y_time = np.array([p[2] for p in pts])
+            A = np.vstack([X, np.ones(len(X))]).T
+            try:
+                a, b_mem = np.linalg.lstsq(A, Y_mem, rcond=None)[0]
+                b, b_time = np.linalg.lstsq(A, Y_time, rcond=None)[0]
+                return a, b_mem, b, b_time
+            except:
+                return -1, -1, -1, -1
 
-                progress.update(task, advance=1)
+        alpha, base_mem, beta, base_time = compute_regression(points)
 
-        if not points:
-            console.print("[red]Calibration failed (all probes OOM).[/red]")
-            return False
+        # Check for invalid results (negative slope/intercept)
+        if alpha <= 0 or base_mem < 0:
+            console.print("[yellow]Initial calibration noisy (Negative Slope/Base). Switching to Deep Scan...[/yellow]")
+            # Retry with Heavy Probes
+            points = run_probes(heavy_probes, label="Deep Scan...")
+            alpha, base_mem, beta, base_time = compute_regression(points)
 
-        # Simple Linear Regression for Memory
-        # Mem = Base + Alpha * Complexity
-        X = np.array([p[0] for p in points])
-        Y_mem = np.array([p[1] for p in points])
+        # Final Decision
+        use_fallback = False
+        if alpha <= 0 or base_mem < 0:
+             console.print(f"[red]Deep Scan Failed or Noisy (Alpha={alpha:.2e}). Fallback to theoretical model.[/red]")
+             use_fallback = True
+        else:
+             self.memory_coeffs['per_complex'] = alpha
+             self.memory_coeffs['base'] = base_mem
+             self.speed_coeffs['per_complex'] = beta
+             self.speed_coeffs['base'] = max(0, base_time)
+             console.print(f"Calibration Result: Alpha={alpha:.2e}, Beta={beta:.2e}")
 
-        # A = [X, 1]
-        A = np.vstack([X, np.ones(len(X))]).T
-        alpha, base_mem = np.linalg.lstsq(A, Y_mem, rcond=None)[0]
+        if use_fallback:
+            # Theoretical Fallback (Last Resort)
+            self.memory_coeffs['per_complex'] = 2.0e-5 # slightly conservative
+            self.memory_coeffs['base'] = 500 # 500MB fixed overhead
+            self.speed_coeffs['per_complex'] = 1.0e-8
+            self.speed_coeffs['base'] = 0.0
 
-        self.memory_coeffs['per_complex'] = alpha
-        self.memory_coeffs['base'] = max(0, base_mem)
-
-        # Throughput
-        Y_time = np.array([p[2] for p in points])
-        beta, base_time = np.linalg.lstsq(A, Y_time, rcond=None)[0]
-        self.speed_coeffs['per_complex'] = beta
-        self.speed_coeffs['base'] = max(0, base_time)
-
-        console.print(f"Calibration Result: Alpha={alpha:.2e}, Beta={beta:.2e}")
         return True
 
     def predict(self, batch, seq_len, d_model, layers):
         complexity = batch * seq_len * d_model * layers
 
-        mem_mb = self.memory_coeffs['base'] + self.memory_coeffs['per_complex'] * complexity
-        # Add safety margin (optimizer states etc might scale differently)
-        mem_mb *= 1.2
+        # Model Weights (Static Memory) - explicit calculation
+        param_count = 12 * layers * (d_model**2) + (50000 * d_model)
+        static_mem_mb = (param_count * 4) / (1024**2)
+
+        # Dynamic Memory (Activations)
+        dynamic_mem_mb = self.memory_coeffs['per_complex'] * complexity
+
+        # Total
+        mem_mb = self.memory_coeffs['base'] + static_mem_mb + dynamic_mem_mb
+
+        # Add safety margin
+        mem_mb *= 1.1
 
         time_sec = self.speed_coeffs['base'] + self.speed_coeffs['per_complex'] * complexity
 
         return mem_mb, time_sec
 
     def check_safety(self, mem_mb):
+        if self.vram_total == 0: return True # Cannot check
         return mem_mb < (self.vram_total * 0.9)
 
 if __name__ == "__main__":
