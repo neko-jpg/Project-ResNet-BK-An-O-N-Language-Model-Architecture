@@ -305,7 +305,11 @@ def main():
         else:
              # Fallback to prediction
              with contextlib.redirect_stderr(io.StringIO()):
-                pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+                res = cal.estimate_exact(batch_size, seq_len, d_model, n_layers)
+                if res[0] is None:
+                    pred_mem, pred_time = cal.predict(batch_size, seq_len, d_model, n_layers)
+                else:
+                    pred_mem, pred_time = res
 
         total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
         table.add_row("Est. VRAM", f"{pred_mem:.0f} MB / {total_vram_disp:.0f} MB")
@@ -330,7 +334,11 @@ def main():
         if cal and cal.memory_coeffs['base'] > 0:
             total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
             with contextlib.redirect_stderr(io.StringIO()):
-                pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+                res = cal.estimate_exact(batch_size, seq_len, d_model, n_layers)
+                if res[0] is None:
+                    pred_mem, pred_time = cal.predict(batch_size, seq_len, d_model, n_layers)
+                else:
+                    pred_mem, pred_time = res
 
             if pred_mem > total_vram_disp * 0.9:
                 console.print(t(f"[red]Warning: Est. VRAM {pred_mem:.0f} MB exceeds 90% of device ({total_vram_disp:.0f} MB).[/red]",
