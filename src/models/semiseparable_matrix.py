@@ -69,8 +69,9 @@ class SemiseparableMatrix(nn.Module):
         
         # Low-rank factors: U (N × r), V (N × r)
         # Storage: O(N log N)
-        self.register_buffer('U', torch.zeros(n_seq, self.rank, dtype=dtype, device=device))
-        self.register_buffer('V', torch.zeros(n_seq, self.rank, dtype=dtype, device=device))
+        # Changed to nn.Parameter to allow learning (Option A)
+        self.U = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
+        self.V = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
         
         # Checkpointing state
         self._checkpointing_enabled = False
@@ -141,8 +142,10 @@ class SemiseparableMatrix(nn.Module):
         if N > 1:
             self.super_diag.copy_(super_diag)
             self.sub_diag.copy_(sub_diag)
-        self.U.copy_(U)
-        self.V.copy_(V)
+        # Use .data to update parameters without breaking the graph if used during init
+        with torch.no_grad():
+            self.U.copy_(U)
+            self.V.copy_(V)
         
         return T, U, V
     

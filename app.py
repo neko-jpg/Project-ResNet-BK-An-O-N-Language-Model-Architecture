@@ -105,6 +105,14 @@ def load_checkpoint_model(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location='cpu')
         if 'config' in ckpt:
             config_data = ckpt['config']
+            # If config is a dict, convert to ResNetBKConfig
+            if isinstance(config_data, dict):
+                from src.models.configurable_resnet_bk import ResNetBKConfig
+                # Filter out unknown keys to prevent TypeError
+                valid_keys = ResNetBKConfig.__annotations__.keys()
+                filtered_config = {k: v for k, v in config_data.items() if k in valid_keys}
+                config_data = ResNetBKConfig(**filtered_config)
+
             phase3 = ConfigurableResNetBK(config_data)
             phase3.model.load_state_dict(ckpt['model_state_dict'])
             phase3.eval()

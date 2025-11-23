@@ -214,8 +214,8 @@ def bk_scan_fwd_kernel(
         theta_new_i = t1i + t2i
 
         # Store result
-        tl.store(theta_r + ks * stride_n_theta, theta_new_r, mask=load_mask)
-        tl.store(theta_i + ks * stride_n_theta, theta_new_i, mask=load_mask)
+        tl.store(theta_r + ks * stride_n_theta, theta_new_r, mask=mask)
+        tl.store(theta_i + ks * stride_n_theta, theta_new_i, mask=mask)
         
         # Update running state for next chunk
         last_k = off + BLOCK_SIZE - 1
