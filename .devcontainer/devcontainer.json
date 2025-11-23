@@ -1,0 +1,17 @@
+{
+	"name": "MUSE Dev Container",
+	"dockerComposeFile": "../docker-compose.yml",
+	"service": "mamba-killer",
+	"workspaceFolder": "/workspace",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-toolsai.jupyter",
+				"ms-python.black-formatter",
+				"tamasfe.even-better-toml",
+				"njpwerner.autodocstring"
+			]
+		}
+	}
+}
