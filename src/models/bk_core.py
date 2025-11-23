@@ -36,7 +36,12 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
     a_c = a.to(torch.complex128)
     b_c = b.to(torch.complex128)
     c_c = c.to(torch.complex128)
-    z_c = z.to(torch.complex128)
+
+    if isinstance(z, (int, float, complex)):
+        z_c = torch.tensor(z, dtype=torch.complex128, device=device)
+    else:
+        z_c = z.to(torch.complex128)
+
     a_shifted = a_c - z_c
 
     if n == 0:
