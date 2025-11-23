@@ -304,22 +304,48 @@ class MixedBinaryDataset:
 
         self.datasets: List[BinaryIndexedDataset] = []
         self.weights: List[float] = []
+        self.dataset_names: List[str] = []
+
         for name, info in ds_cfg.items():
             path = info.get("path")
             weight = float(info.get("weight", 0.0))
-            if not path or weight <= 0.0:
+            if not path:
                 continue
+            # Keep even if weight is 0 initially, to allow dynamic enabling
             self.datasets.append(BinaryIndexedDataset(path))
             self.weights.append(weight)
+            self.dataset_names.append(name)
 
         if not self.datasets:
-            raise ValueError(f"All datasets missing or zero-weight in {self.config_path}")
+            raise ValueError(f"All datasets missing in {self.config_path}")
 
-        weight_sum = sum(self.weights)
-        self.weights = [w / weight_sum for w in self.weights]
+        # Normalize initial weights
+        self._normalize_weights()
 
         tokens_per_step = batch_size * seq_len
         self.steps_per_epoch = max(1, total_tokens // tokens_per_step)
+
+    def _normalize_weights(self):
+        """Normalize weights to sum to 1.0."""
+        weight_sum = sum(self.weights)
+        if weight_sum <= 0:
+            # Uniform fallback
+            self.weights = [1.0 / len(self.weights)] * len(self.weights)
+        else:
+            self.weights = [w / weight_sum for w in self.weights]
+
+    def update_weights_by_name(self, name_weight_map: Dict[str, float]):
+        """Update dataset mixing weights dynamically."""
+        changed = False
+        for i, name in enumerate(self.dataset_names):
+            if name in name_weight_map:
+                self.weights[i] = max(0.0, float(name_weight_map[name]))
+                changed = True
+
+        if changed:
+            self._normalize_weights()
+            # Log update (optional, print for now)
+            print(f"[Curriculum] Updated weights: {dict(zip(self.dataset_names, [f'{w:.2f}' for w in self.weights]))}")
 
     def iter_epoch(self, epoch: int) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
         """Yield batches for one epoch."""
@@ -329,6 +355,7 @@ class MixedBinaryDataset:
             x_list: List[np.ndarray] = []
             y_list: List[np.ndarray] = []
             while len(x_list) < self.batch_size:
+                # Use current weights (support dynamic update)
                 ds_idx = rng.choices(choices, weights=self.weights, k=1)[0]
                 sample = self.datasets[ds_idx].sample_sequence(self.seq_len, rng)
                 if sample is None:
