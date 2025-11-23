@@ -1,0 +1,8 @@
+# Goal: Japanese Fluency
+# High weight on Japanese datasets, lower on English/Code
+dataset_mix:
+  japanese_wiki: 0.5
+  japanese_cc100: 0.3
+  english_c4: 0.2
+description: "Intensive Japanese language training. Focuses on grammar, vocabulary, and cultural context."
+recommended_epochs: 3

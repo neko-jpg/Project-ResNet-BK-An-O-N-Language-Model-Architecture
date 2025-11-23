@@ -18,6 +18,7 @@ import math
 from pathlib import Path
 
 from src.models.configurable_resnet_bk import ConfigurableResNetBK
+import subprocess
 from src.utils import (
     parse_args,
     get_config_from_args,
@@ -28,6 +29,7 @@ from src.utils import (
     WandBLogger,
 )
 from src.training.curriculum import CurriculumScheduler
+from src.eval.skill_bench import SkillEvaluator
 
 
 def train():
@@ -139,6 +141,9 @@ def train():
         log_dir=str(save_dir / "logs"),
         experiment_name=f"resnet_bk_{args.config_preset}"
     )
+
+    # Skill Evaluator (Future IQ)
+    skill_evaluator = SkillEvaluator(device=device)
     
     # Optional W&B logging
     wandb_logger = WandBLogger(
@@ -222,6 +227,20 @@ def train():
                     grad_norm=grad_norm.item(),
                     routing_entropy=float(routing_entropy) if routing_entropy is not None else 0.0,
                 )
+
+                # Run Skill Evaluation (Every 100 steps to avoid slowdown)
+                skill_scores = {}
+                if global_step % 100 == 0:
+                    skill_scores = skill_evaluator.evaluate(model)
+
+                    # Log to CSV
+                    skills_log_path = save_dir / "logs" / "skills.csv"
+                    params_exist = skills_log_path.exists()
+                    with open(skills_log_path, "a") as f:
+                        if not params_exist:
+                            f.write("step," + ",".join(skill_scores.keys()) + "\n")
+                        f.write(f"{global_step}," + ",".join([f"{v:.2f}" for v in skill_scores.values()]) + "\n")
+
                 logger.log(metrics)
                 
                 # Get stability diagnostics if using Birman-Schwinger
@@ -236,6 +255,11 @@ def train():
                     'learning_rate': metrics.learning_rate,
                     'grad_norm': grad_norm.item(),
                 }
+
+                # Log Skills
+                if skill_scores:
+                    for skill, score in skill_scores.items():
+                        wandb_log_dict[f'skills/{skill}'] = score
                 
                 # Add stability diagnostics to W&B logging
                 if stability_diagnostics:
@@ -314,6 +338,12 @@ def train():
     
     wandb_logger.finish()
     print("\n✓ Training complete!")
+
+    # Notifier
+    try:
+        subprocess.run(["python3", "scripts/muse_utils.py", "notify", "--message", f"Training Complete: {args.config_preset}"])
+    except:
+        pass
 
 
 if __name__ == "__main__":

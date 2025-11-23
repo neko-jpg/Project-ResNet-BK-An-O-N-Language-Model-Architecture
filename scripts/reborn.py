@@ -18,9 +18,10 @@ except ImportError:
     print("Error importing model definitions.")
     sys.exit(1)
 
-def reborn(checkpoint_path, output_path):
+def reborn(checkpoint_path, output_path, retention_rate=1.0):
     print(f"🔁 Starting Reborn Ritual...")
     print(f"   Source (Elder): {checkpoint_path}")
+    print(f"   Soul Retention: {retention_rate*100:.0f}%")
 
     try:
         ckpt = torch.load(checkpoint_path, map_location='cpu')
@@ -44,8 +45,6 @@ def reborn(checkpoint_path, output_path):
     embeddings = None
     embed_key = None
 
-    # Heuristic search for embedding weight
-    # Common names: token_embeddings.weight, embeddings.word_embeddings.weight
     for k in old_state.keys():
         if ('token_embedding' in k or 'embed_tokens' in k) and 'weight' in k:
             embed_key = k
@@ -58,12 +57,20 @@ def reborn(checkpoint_path, output_path):
 
     print(f"   ✨ Extracted Soul: {embed_key} {embeddings.shape}")
 
-    # 2. Create New Body (Random Init)
+    # 2. Apply Entropy (Retention Rate)
+    # If retention < 1.0, we add noise or re-init a portion
+    if retention_rate < 1.0:
+        print("   🌫️  Applying Amnesia/Entropy...")
+        # Add noise: New = Old * rate + Noise * (1-rate)
+        noise = torch.randn_like(embeddings) * 0.02 # Small variance
+        embeddings = embeddings * retention_rate + noise * (1 - retention_rate)
+
+    # 3. Create New Body (Random Init)
     print("   🧬 Constructing new vessel...")
     new_model_wrapper = ConfigurableResNetBK(config)
     new_state = new_model_wrapper.model.state_dict()
 
-    # 3. Transmigrate Soul
+    # 4. Transmigrate Soul
     if embed_key in new_state:
         new_state[embed_key] = embeddings
         print("   ✨ Soul Transmigration Complete.")
@@ -71,7 +78,7 @@ def reborn(checkpoint_path, output_path):
         print(f"⚠️ Architecture mismatch? New model has keys: {list(new_state.keys())[:5]}...")
         return
 
-    # 4. Save
+    # 5. Save
     new_ckpt = {
         'model_state_dict': new_state,
         'config': config_data,
@@ -92,10 +99,11 @@ def main():
     parser = argparse.ArgumentParser(description="MUSE Reborn Ritual")
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to elder model')
     parser.add_argument('--output', type=str, default='checkpoints/reborn_muse.pt', help='Output path for new model')
+    parser.add_argument('--retention_rate', type=float, default=1.0, help='Fraction of embedding weights to keep (0.0 - 1.0)')
 
     args = parser.parse_args()
 
-    reborn(args.checkpoint, args.output)
+    reborn(args.checkpoint, args.output, args.retention_rate)
 
 if __name__ == "__main__":
     main()
