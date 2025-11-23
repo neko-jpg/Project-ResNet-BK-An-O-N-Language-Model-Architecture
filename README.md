@@ -9,24 +9,33 @@
 
 ---
 
-## 🎯 Quick Start
+## 🎯 Quick Start (3 Minutes)
+
+The easiest way to get started. Supports **English & Japanese**.
 
 ```bash
-# Clone and setup
+# 1. Clone
 git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
 cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
 
-# Option 1: Docker (Recommended)
-docker-compose up -d
-docker exec -it mamba-killer-dev bash
+# 2. Setup (Interactive)
+# Installs dependencies, creates venv, and prepares data.
+make setup
 
-# Option 2: Local installation
-pip install -r requirements.txt
-pip install -e .
-
-# Run tests
-pytest tests/ -v
+# 3. Enjoy!
+make demo
 ```
+
+If you use VS Code, simply open the folder and click **"Reopen in Container"**.
+
+### 🛠 Developer Tools
+
+We provide a suite of tools to enhance your experience:
+
+- **`make doctor`**: Diagnose system issues (GPU, RAM, Config).
+- **`make import`**: Import your own datasets (txt/json/csv) from `data/import/`.
+- **`make recipe`**: Interactively configure dataset mixing ratios.
+- **`make train-user`**: Start training with your custom recipe.
 
 See [QUICK_START.md](QUICK_START.md) for detailed instructions.
 
@@ -167,25 +176,20 @@ docker exec -it mamba-killer-dev bash
 pytest tests/ -v
 ```
 
-### Option 2: Local Installation
+### Option 2: Local Installation (Automated)
 
 ```bash
 # Clone repository
 git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
 cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# Run automated setup
+make setup
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install in development mode
-pip install -e .
-
-# Run tests
-pytest tests/ -v
+# This script will:
+# 1. Create a virtual environment (venv_ubuntu)
+# 2. Install all dependencies
+# 3. Setup datasets (optional)
 ```
 
 ---
