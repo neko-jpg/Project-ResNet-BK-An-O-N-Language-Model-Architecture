@@ -35,7 +35,9 @@ if [ "$LANG_CHOICE" -eq 2 ]; then
     MSG_STEP2="[Step 2] 仮想環境 (venv_ubuntu) のセットアップ..."
     MSG_VENV_CREATING="仮想環境を作成中..."
     MSG_VENV_DONE="✔ 作成完了"
-    MSG_VENV_EXIST="✔ 既存の仮想環境を使用します。"
+    MSG_VENV_EXIST="✔ 既存の仮想環境を使用します（更新のみ）。"
+    MSG_VENV_RECREATE="既存の仮想環境が見つかりました。\n作り直しますか？ (y/N) [N=更新のみ]: "
+    MSG_VENV_RECREATING="仮想環境を削除して再作成中..."
     MSG_PIP_UPGRADE="pipをアップグレード中..."
     MSG_STEP3="[Step 3] 依存ライブラリのインストール..."
     MSG_WAIT="これには時間がかかる場合があります (Coffee time ☕)"
@@ -50,6 +52,8 @@ if [ "$LANG_CHOICE" -eq 2 ]; then
     MSG_COMPLETE="セットアップ完了！ (MUSE Setup Complete)"
     MSG_NEXT_DEMO="以下のコマンドでデモを起動してみましょう："
     MSG_NEXT_DEV="開発を始めるには："
+    MSG_GIT_WARN="[警告] gitの状態がクリーンではありません。Windows側で変更がある場合は git pull を推奨します。"
+    MSG_MNT_WARN="[警告] /mnt/c (Windows領域) で実行しています。パフォーマンスが低下する可能性があります。"
 else
     # English
     MSG_HEADER="MUSE (ResNet-BK) Setup Script"
@@ -62,7 +66,9 @@ else
     MSG_STEP2="[Step 2] Virtual Environment Setup (venv_ubuntu)..."
     MSG_VENV_CREATING="Creating virtual environment..."
     MSG_VENV_DONE="✔ Created"
-    MSG_VENV_EXIST="✔ Using existing virtual environment."
+    MSG_VENV_EXIST="✔ Using existing virtual environment (Update only)."
+    MSG_VENV_RECREATE="Existing virtual environment found.\nRecreate it? (y/N) [N=Update only]: "
+    MSG_VENV_RECREATING="Recreating virtual environment..."
     MSG_PIP_UPGRADE="Upgrading pip..."
     MSG_STEP3="[Step 3] Installing Dependencies..."
     MSG_WAIT="This may take a while (Coffee time ☕)"
@@ -77,11 +83,24 @@ else
     MSG_COMPLETE="Setup Complete!"
     MSG_NEXT_DEMO="Run the demo with:"
     MSG_NEXT_DEV="To start developing:"
+    MSG_GIT_WARN="[Warning] git status is not clean. Ensure you pulled latest changes."
+    MSG_MNT_WARN="[Warning] Running in /mnt/c (Windows mount). Performance may be slow."
 fi
 
 echo -e "${BLUE}=======================================${NC}"
 echo -e "${BLUE}   $MSG_HEADER   ${NC}"
 echo -e "${BLUE}=======================================${NC}"
+
+# --- 0. Pre-Checks ---
+if [[ "$PWD" == *"/mnt/c"* ]] || [[ "$PWD" == *"/mnt/d"* ]]; then
+    echo -e "${YELLOW}$MSG_MNT_WARN${NC}"
+fi
+
+if command -v git &> /dev/null; then
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}$MSG_GIT_WARN${NC}"
+    fi
+fi
 
 # --- 1. System Check ---
 echo -e "\n${YELLOW}$MSG_STEP1${NC}"
@@ -125,12 +144,20 @@ fi
 VENV_NAME="venv_ubuntu"
 echo -e "\n${YELLOW}$MSG_STEP2${NC}"
 
-if [ ! -d "$VENV_NAME" ]; then
+if [ -d "$VENV_NAME" ]; then
+    read -p "$MSG_VENV_RECREATE" VENV_CHOICE
+    if [[ "$VENV_CHOICE" =~ ^[Yy]$ ]]; then
+        echo -e "$MSG_VENV_RECREATING"
+        rm -rf "$VENV_NAME"
+        python3 -m venv "$VENV_NAME"
+        echo -e "${GREEN}$MSG_VENV_DONE${NC}"
+    else
+        echo -e "${GREEN}$MSG_VENV_EXIST${NC}"
+    fi
+else
     echo -e "$MSG_VENV_CREATING"
     python3 -m venv "$VENV_NAME"
     echo -e "${GREEN}$MSG_VENV_DONE: $VENV_NAME${NC}"
-else
-    echo -e "${GREEN}$MSG_VENV_EXIST${NC}"
 fi
 
 # Activate
