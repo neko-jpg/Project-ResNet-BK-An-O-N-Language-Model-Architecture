@@ -45,6 +45,59 @@ class MuseCalibrator:
             torch.cuda.reset_peak_memory_stats()
         gc.collect()
 
+    def estimate_exact(self, batch_size, seq_len, d_model, n_layers, vocab_size=30000):
+        """
+        Run a single forward/backward to measure peak memory and step time.
+        This is slower but more accurate than linear regression.
+        """
+        if ConfigurableResNetBK is None or self.device.type != 'cuda':
+            return None, None
+
+        cfg = ResNetBKConfig(
+            d_model=d_model,
+            n_layers=n_layers,
+            n_seq=seq_len,
+            vocab_size=vocab_size,
+        )
+
+        try:
+            self._clear_memory()
+            model = ConfigurableResNetBK(cfg).to(self.device)
+            opt = torch.optim.AdamW(model.parameters())
+
+            x = torch.randint(0, vocab_size, (batch_size, seq_len), device=self.device)
+            y = torch.randint(0, vocab_size, (batch_size * seq_len,), device=self.device)
+
+            # warmup
+            out = model(x)
+            loss = torch.nn.functional.cross_entropy(out.view(-1, out.size(-1)), y)
+            loss.backward()
+            opt.zero_grad()
+
+            if self.device.type == 'cuda':
+                torch.cuda.reset_peak_memory_stats()
+                torch.cuda.synchronize()
+
+            start = time.time()
+            out = model(x)
+            loss = torch.nn.functional.cross_entropy(out.view(-1, out.size(-1)), y)
+            loss.backward()
+            opt.step()
+            opt.zero_grad()
+            if self.device.type == 'cuda':
+                torch.cuda.synchronize()
+            end = time.time()
+
+            peak_mem = torch.cuda.max_memory_allocated() / (1024**2)
+            step_time = end - start
+
+            del model, opt, x, y, out, loss
+            self._clear_memory()
+            return peak_mem, step_time
+        except Exception:
+            self._clear_memory()
+            return None, None
+
     def measure_run(self, config, batch_size, seq_len):
         if ConfigurableResNetBK is None:
             return 0, 0

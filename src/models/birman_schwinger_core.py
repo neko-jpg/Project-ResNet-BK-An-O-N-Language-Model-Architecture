@@ -115,6 +115,8 @@ class BirmanSchwingerCore(nn.Module):
         self.condition_number_history = []
         self.precision_upgrades = 0
         self.memory_usage_history = []
+        self.last_semiseparable_active: bool = False
+        self.last_semiseparable_reason: str = "unknown"
         
         self.logger = logging.getLogger(__name__)
 
@@ -476,14 +478,42 @@ class BirmanSchwingerCore(nn.Module):
         # Off-diagonals: +1 (from Laplacian)
         h0_super = torch.ones(batch_size, n_seq - 1, device=device)
         h0_sub = torch.ones(batch_size, n_seq - 1, device=device)
+
+        # Condition number check (first batch exemplar) for precision upgrade
+        condition_number = None
+        try:
+            H_dense = torch.zeros(n_seq, n_seq, device=device, dtype=torch.float64)
+            H_dense.diagonal().copy_(he_diag[0].to(torch.float64))
+            if n_seq > 1:
+                H_dense.diagonal(1).fill_(1.0)
+                H_dense.diagonal(-1).fill_(1.0)
+            condition_number = self.compute_condition_number(H_dense)
+        except Exception:
+            condition_number = float('inf')
+
+        if condition_number is not None:
+            self.condition_number_history.append(condition_number)
+
+        use_high_precision = False
+        if condition_number is not None and condition_number > self.precision_upgrade_threshold:
+            use_high_precision = True
+            self.precision_upgrades += 1
+
+        dtype_in = torch.float64 if use_high_precision else torch.float32
+        he_diag = he_diag.to(dtype_in)
+        h0_super = h0_super.to(dtype_in)
+        h0_sub = h0_sub.to(dtype_in)
         
         # Step 1: Compute tridiagonal part using O(N) recursion
         # G_ii^{tridiag} = diag((T - zI)^{-1})
         # Convert z to tensor for compatibility with bk_core
-        z_tensor = torch.tensor(z, dtype=torch.complex128, device=device)
+        z_dtype = torch.complex128 if use_high_precision else torch.complex64
+        z_tensor = torch.tensor(z, dtype=z_dtype, device=device)
         G_ii_tridiag = vmapped_get_diag(he_diag, h0_super, h0_sub, z_tensor)
         
         if not self.use_semiseparable or self.semiseparable is None:
+            self.last_semiseparable_active = False
+            self.last_semiseparable_reason = "disabled"
             return G_ii_tridiag
         
         # Step 2: Apply low-rank correction using Woodbury identity
@@ -493,6 +523,12 @@ class BirmanSchwingerCore(nn.Module):
         U = self.semiseparable.U  # (N, r)
         V = self.semiseparable.V  # (N, r)
         r = self.semiseparable.rank
+
+        # Guard: if low-rank factors are zero, skip semiseparable path
+        if r == 0 or (torch.allclose(U, torch.zeros_like(U)) and torch.allclose(V, torch.zeros_like(V))):
+            self.last_semiseparable_active = False
+            self.last_semiseparable_reason = "zero_low_rank"
+            return G_ii_tridiag
         
         # Convert U, V to complex for compatibility
         U_complex = U.to(G_ii_tridiag.dtype)
@@ -537,6 +573,8 @@ class BirmanSchwingerCore(nn.Module):
             # Apply Woodbury correction
             G_ii_corrected[b] = G_tridiag_diag - correction_diag
         
+        self.last_semiseparable_active = True
+        self.last_semiseparable_reason = "applied"
         return G_ii_corrected
     
     def estimate_memory_usage(
@@ -801,6 +839,8 @@ class BirmanSchwingerCore(nn.Module):
             'mourre_verified': self.verify_mourre_estimate(),
             'all_finite': all(stability_check.values()),
             'use_semiseparable': self.use_semiseparable,
+            'semiseparable_active': self.last_semiseparable_active,
+            'semiseparable_reason': self.last_semiseparable_reason,
             'memory_bytes': memory_usage['total_bytes'],
             'memory_savings': memory_usage['memory_savings'],
             'rank': memory_usage['rank'],

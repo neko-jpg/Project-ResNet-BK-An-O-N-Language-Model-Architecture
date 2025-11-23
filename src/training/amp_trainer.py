@@ -17,6 +17,7 @@ import time
 import dataclasses
 import json
 import os
+import copy
 from src.utils.resource_guard import ResourceGuard
 
 
@@ -346,7 +347,7 @@ def benchmark_amp_training(
 
         # If it has a config object
         if hasattr(original_model, 'config'):
-            config = original_model.config
+            config = copy.deepcopy(original_model.config)
             # ConfigurableResNetBK (dataclass config)
             if is_dataclass(config):
                 return type(original_model)(config)
@@ -359,10 +360,8 @@ def benchmark_amp_training(
                      return type(original_model)(config)
                  except TypeError:
                      # Fallback: Deepcopy (slower but safer)
-                     import copy
-                     return copy.deepcopy(original_model)
+                      return copy.deepcopy(original_model)
         else:
-             import copy
              return copy.deepcopy(original_model)
 
     # Benchmark FP32 training

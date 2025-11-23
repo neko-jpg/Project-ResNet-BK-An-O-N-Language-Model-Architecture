@@ -263,6 +263,10 @@ class BinaryIndexedDataset:
         for _ in range(8):  # retry a few times for short docs
             doc_id = rng.randrange(self.num_docs)
             offset, length = self.index[doc_id]
+            # Cast to Python int for downstream random ranges
+            offset = int(offset)
+            length = int(length)
+            seq_len = int(seq_len)
             if length <= seq_len:
                 continue
             start = rng.randrange(0, length - seq_len)
@@ -364,8 +368,8 @@ class MixedBinaryDataset:
                 x_list.append(x)
                 y_list.append(y)
 
-            x_batch = torch.from_numpy(np.stack(x_list)).long()
-            y_batch = torch.from_numpy(np.stack(y_list)).long().reshape(-1)
+            x_batch = torch.from_numpy(np.stack(x_list).astype(np.int64, copy=False)).long()
+            y_batch = torch.from_numpy(np.stack(y_list).astype(np.int64, copy=False)).long().reshape(-1)
             yield x_batch, y_batch
 
     def vocab(self) -> Dict[str, object]:
@@ -373,6 +377,19 @@ class MixedBinaryDataset:
 
     def num_tokens_per_epoch(self) -> int:
         return self.steps_per_epoch * self.batch_size * self.seq_len
+
+    def max_token_id(self) -> int:
+        """Return the maximum token id across all mixed datasets (uint32 memmaps)."""
+        max_id = 0
+        for name, ds in zip(self.dataset_names, self.datasets):
+            try:
+                if ds.tokens.size == 0:
+                    continue
+                ds_max = int(np.max(ds.tokens))
+                max_id = max(max_id, ds_max)
+            except Exception as e:
+                print(f"[Dataset] Warning: failed to scan tokens for {name}: {e}")
+        return max_id
 
 
 def get_mixed_data_loader(
@@ -394,4 +411,9 @@ def get_mixed_data_loader(
         seed=seed,
         vocab_size=vocab_size,
     )
+    # Guard: ensure embedding size covers all token ids from prepared binaries
+    max_token_id = mixed.max_token_id()
+    if max_token_id + 1 > mixed.vocab_size:
+        mixed.vocab_size = max_token_id + 1
+        print(f"[Dataset] Expanded vocab_size to {mixed.vocab_size} to fit token ids (max id={max_token_id}).")
     return mixed, mixed.vocab(), mixed.steps_per_epoch

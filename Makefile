@@ -3,9 +3,28 @@
 # Default shell
 SHELL := /bin/bash
 VENV := venv_ubuntu
-PYTHON := PYTHONPATH=. $(VENV)/bin/python
+export PYTHONPATH := .
+PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
-PYTEST := PYTHONPATH=. $(VENV)/bin/pytest
+PYTEST := $(VENV)/bin/pytest
+
+# Optional CLI overrides for training (set via `make train-user N_SEQ=512 BATCH_SIZE=8 ...`)
+TRAIN_OVERRIDES :=
+ifdef N_SEQ
+TRAIN_OVERRIDES += --n-seq $(N_SEQ)
+endif
+ifdef D_MODEL
+TRAIN_OVERRIDES += --d-model $(D_MODEL)
+endif
+ifdef N_LAYERS
+TRAIN_OVERRIDES += --n-layers $(N_LAYERS)
+endif
+ifdef BATCH_SIZE
+TRAIN_OVERRIDES += --batch-size $(BATCH_SIZE)
+endif
+ifdef EPOCHS
+TRAIN_OVERRIDES += --epochs $(EPOCHS)
+endif
 
 help:
 	@bash -c 'source .muse_config 2>/dev/null || true; \
@@ -108,12 +127,18 @@ recipe:
 train-user:
 	@if [ -f configs/auto_optimized.yaml ]; then \
 		echo "Using auto-optimized config..."; \
-		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/auto_optimized.yaml; \
+		cmd="$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/auto_optimized.yaml $(TRAIN_OVERRIDES)"; \
+		echo "$$cmd"; \
+		$$cmd; \
 	elif [ -f configs/user_train_config.yaml ]; then \
-		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/user_train_config.yaml; \
+		cmd="$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/user_train_config.yaml $(TRAIN_OVERRIDES)"; \
+		echo "$$cmd"; \
+		$$cmd; \
 	else \
 		echo "User config not found. Running with default preset 'small'."; \
-		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config-preset small; \
+		cmd="$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config-preset small $(TRAIN_OVERRIDES)"; \
+		echo "$$cmd"; \
+		$$cmd; \
 	fi
 
 train-resume:

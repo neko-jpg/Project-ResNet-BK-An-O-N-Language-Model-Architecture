@@ -16,6 +16,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import time
 import math
 from pathlib import Path
+import warnings
+from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from src.models.configurable_resnet_bk import ConfigurableResNetBK
 import subprocess
@@ -31,11 +33,29 @@ from src.utils import (
 from src.training.curriculum import CurriculumScheduler
 from src.eval.skill_bench import SkillEvaluator
 
+# Silence noisy warnings early
+warnings.filterwarnings("ignore", message=".*_register_pytree_node is deprecated.*")
+warnings.filterwarnings("ignore", message=".*torch.utils._pytree.*deprecated.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*Triton kernel failed or unstable.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*Current implementation only support single tensor input.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*To copy construct from a tensor.*")
+
 
 def train():
     """Main training function."""
+    # Silence noisy deprecation warnings from pytree/transformers
+    warnings.filterwarnings("ignore", message=".*_register_pytree_node is deprecated.*")
+    warnings.filterwarnings("ignore", message=".*torch.utils._pytree.*deprecated.*")
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*Triton kernel failed or unstable.*")
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*Current implementation only support single tensor input.*")
+    warnings.filterwarnings("ignore", category=UserWarning, message=".*To copy construct from a tensor.*")
     # Parse arguments
     args = parse_args()
+
+    # Build config early so that sequence length and related params propagate to data loaders
+    config = get_config_from_args(args)
+    if hasattr(config, "n_seq"):
+        args.n_seq = config.n_seq
     
     # Set random seed
     torch.manual_seed(args.seed)
@@ -81,9 +101,10 @@ def train():
         print(f"Vocabulary size: {vocab['vocab_size']}")
         print(f"Training tokens: {training_tokens}")
     
-    # Create model configuration
-    config = get_config_from_args(args)
+    # Finalize model configuration now that vocab size is known
     config.vocab_size = vocab['vocab_size']
+    config.n_seq = args.n_seq
+    args.vocab_size = config.vocab_size
     
     # Create model
     print("\nCreating model...")
@@ -165,119 +186,136 @@ def train():
         epoch_start = time.time()
         total_loss = 0.0
         num_batches = 0
-        
+
         if use_mixed:
             batch_iter = mixed_loader.iter_epoch(epoch)
+            steps_in_epoch = mixed_loader.steps_per_epoch
         else:
             batch_iter = range(0, train_data.size(0) - 1, args.n_seq)
-        
-        for step_idx, batch_item in enumerate(batch_iter, start=1):
-            step_start = time.time()
-            
-            if use_mixed:
-                x_batch, y_batch = batch_item
-            else:
-                x_batch, y_batch = get_batch(train_data, batch_item)
-                x_batch = x_batch.t().contiguous()
-                
-                if x_batch.size(1) != args.n_seq:
+            steps_in_epoch = max(1, train_data.size(0) // args.n_seq)
+
+        progress = Progress(
+            "[progress.description]{task.description}",
+            BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            transient=True,
+        )
+
+        with progress:
+            task = progress.add_task(f"Epoch {epoch}/{args.epochs}", total=steps_in_epoch)
+
+            for step_idx, batch_item in enumerate(batch_iter, start=1):
+                step_start = time.time()
+
+                if use_mixed:
+                    x_batch, y_batch = batch_item
+                else:
+                    x_batch, y_batch = get_batch(train_data, batch_item)
+                    x_batch = x_batch.t().contiguous()
+
+                    if x_batch.size(1) != args.n_seq:
+                        progress.update(task, advance=1)
+                        continue
+
+                x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+
+                # Forward pass
+                optimizer.zero_grad()
+                logits = model(x_batch)
+                loss = criterion(logits.view(-1, logits.size(-1)), y_batch)
+
+                # Skip if loss is NaN/Inf
+                if torch.isnan(loss) or torch.isinf(loss):
+                    progress.update(task, advance=1)
                     continue
-            
-            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-            
-            # Forward pass
-            optimizer.zero_grad()
-            logits = model(x_batch)
-            loss = criterion(logits.view(-1, logits.size(-1)), y_batch)
-            
-            # Skip if loss is NaN/Inf
-            if torch.isnan(loss) or torch.isinf(loss):
-                print(f"Warning: NaN/Inf loss at step {global_step}, skipping")
-                continue
-            
-            # Backward pass
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(),
-                args.grad_clip
-            )
-            optimizer.step()
-            scheduler.step()
 
-            # Curriculum Step
-            if curriculum:
-                curriculum.step(loss.item())
-
-            global_step += 1
-            
-            step_time = time.time() - step_start
-            total_loss += loss.item()
-            num_batches += 1
-            
-            # Log metrics
-            if global_step % args.log_interval == 0:
-                routing_entropy = getattr(model.model, "last_routing_entropy", None)
-
-                metrics = TrainingMetrics(
-                    step=global_step,
-                    epoch=epoch,
-                    loss=loss.item(),
-                    learning_rate=scheduler.get_last_lr()[0],
-                    step_time=step_time,
-                    grad_norm=grad_norm.item(),
-                    routing_entropy=float(routing_entropy) if routing_entropy is not None else 0.0,
+                # Backward pass
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    args.grad_clip
                 )
+                optimizer.step()
+                scheduler.step()
 
-                # Run Skill Evaluation (Every 100 steps to avoid slowdown)
-                skill_scores = {}
-                if global_step % 100 == 0:
-                    skill_scores = skill_evaluator.evaluate(model)
+                # Curriculum Step
+                if curriculum:
+                    curriculum.step(loss.item())
 
-                    # Log to CSV
-                    skills_log_path = save_dir / "logs" / "skills.csv"
-                    params_exist = skills_log_path.exists()
-                    with open(skills_log_path, "a") as f:
-                        if not params_exist:
-                            f.write("step," + ",".join(skill_scores.keys()) + "\n")
-                        f.write(f"{global_step}," + ",".join([f"{v:.2f}" for v in skill_scores.values()]) + "\n")
+                global_step += 1
 
-                logger.log(metrics)
-                
-                # Get stability diagnostics if using Birman-Schwinger
-                stability_diagnostics = {}
-                if hasattr(model.model, 'get_stability_diagnostics'):
-                    stability_diagnostics = model.model.get_stability_diagnostics()
-                
-                # Log to W&B
-                wandb_log_dict = {
-                    'loss': loss.item(),
-                    'perplexity': metrics.perplexity,
-                    'learning_rate': metrics.learning_rate,
-                    'grad_norm': grad_norm.item(),
-                }
+                step_time = time.time() - step_start
+                total_loss += loss.item()
+                num_batches += 1
 
-                # Log Skills
-                if skill_scores:
-                    for skill, score in skill_scores.items():
-                        wandb_log_dict[f'skills/{skill}'] = score
-                
-                # Add stability diagnostics to W&B logging
-                if stability_diagnostics:
-                    wandb_log_dict.update({
-                        'stability/mean_schatten_s1': stability_diagnostics.get('mean_schatten_s1', 0.0),
-                        'stability/mean_schatten_s2': stability_diagnostics.get('mean_schatten_s2', 0.0),
-                        'stability/max_schatten_s1': stability_diagnostics.get('max_schatten_s1', 0.0),
-                        'stability/max_schatten_s2': stability_diagnostics.get('max_schatten_s2', 0.0),
-                        'stability/mean_condition_number': stability_diagnostics.get('mean_condition_number', 0.0),
-                        'stability/max_condition_number': stability_diagnostics.get('max_condition_number', 0.0),
-                        'stability/mourre_verified_rate': stability_diagnostics.get('mourre_verified_rate', 0.0),
-                        'stability/s1_bound_satisfied_rate': stability_diagnostics.get('s1_bound_satisfied_rate', 0.0),
-                        'stability/s2_bound_satisfied_rate': stability_diagnostics.get('s2_bound_satisfied_rate', 0.0),
-                        'stability/all_finite_rate': stability_diagnostics.get('all_finite_rate', 1.0),
-                        'stability/precision_upgrades': stability_diagnostics.get('precision_upgrades', 0),
-                    })
-                
-                wandb_logger.log(wandb_log_dict, step=global_step)
+                # Log metrics
+                if global_step % args.log_interval == 0:
+                    routing_entropy = getattr(model.model, "last_routing_entropy", None)
+
+                    metrics = TrainingMetrics(
+                        step=global_step,
+                        epoch=epoch,
+                        loss=loss.item(),
+                        learning_rate=scheduler.get_last_lr()[0],
+                        step_time=step_time,
+                        grad_norm=grad_norm.item(),
+                        routing_entropy=float(routing_entropy) if routing_entropy is not None else 0.0,
+                    )
+
+                    # Run Skill Evaluation (Every 100 steps to avoid slowdown)
+                    skill_scores = {}
+                    if global_step % 100 == 0:
+                        skill_scores = skill_evaluator.evaluate(model)
+
+                        # Log to CSV
+                        skills_log_path = save_dir / "logs" / "skills.csv"
+                        params_exist = skills_log_path.exists()
+                        with open(skills_log_path, "a") as f:
+                            if not params_exist:
+                                f.write("step," + ",".join(skill_scores.keys()) + "\n")
+                            f.write(f"{global_step}," + ",".join([f"{v:.2f}" for v in skill_scores.values()]) + "\n")
+
+                    logger.log(metrics)
+
+                    # Get stability diagnostics if using Birman-Schwinger
+                    stability_diagnostics = {}
+                    if hasattr(model.model, 'get_stability_diagnostics'):
+                        stability_diagnostics = model.model.get_stability_diagnostics()
+
+                    # Log to W&B
+                    wandb_log_dict = {
+                        'loss': loss.item(),
+                        'perplexity': metrics.perplexity,
+                        'learning_rate': metrics.learning_rate,
+                        'grad_norm': grad_norm.item(),
+                    }
+
+                    # Log Skills
+                    if skill_scores:
+                        for skill, score in skill_scores.items():
+                            wandb_log_dict[f'skills/{skill}'] = score
+
+                    # Add stability diagnostics to W&B logging
+                    if stability_diagnostics:
+                        wandb_log_dict.update({
+                            'stability/mean_schatten_s1': stability_diagnostics.get('mean_schatten_s1', 0.0),
+                            'stability/mean_schatten_s2': stability_diagnostics.get('mean_schatten_s2', 0.0),
+                            'stability/max_schatten_s1': stability_diagnostics.get('max_schatten_s1', 0.0),
+                            'stability/max_schatten_s2': stability_diagnostics.get('max_schatten_s2', 0.0),
+                            'stability/mean_condition_number': stability_diagnostics.get('mean_condition_number', 0.0),
+                            'stability/max_condition_number': stability_diagnostics.get('max_condition_number', 0.0),
+                            'stability/mourre_verified_rate': stability_diagnostics.get('mourre_verified_rate', 0.0),
+                            'stability/s1_bound_satisfied_rate': stability_diagnostics.get('s1_bound_satisfied_rate', 0.0),
+                            'stability/s2_bound_satisfied_rate': stability_diagnostics.get('s2_bound_satisfied_rate', 0.0),
+                            'stability/all_finite_rate': stability_diagnostics.get('all_finite_rate', 1.0),
+                            'stability/precision_upgrades': stability_diagnostics.get('precision_upgrades', 0),
+                        })
+
+                    wandb_logger.log(wandb_log_dict, step=global_step)
+
+                progress.update(task, advance=1)
         
         # Epoch summary
         epoch_time = time.time() - epoch_start

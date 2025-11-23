@@ -1,59 +1,22 @@
-# MUSE Dataset Mixing Configuration
-# Defines the curriculum learning ratios for the "Ab Initio" training phase.
-# UPDATED: "Teppei's High-Density Curriculum" (OSS/Privacy-First Edition)
-
-# Strategy:
-# 1. The Brain (Logic/Reasoning) -> 45%
-#    - Uses "Cosmopedia" (Synthetic Textbooks) to teach the "WHY" and "HOW".
-# 2. The Hands (Engineering/Code) -> 30%
-#    - Uses "Evol-Instruct" to teach complex implementation details.
-# 3. The Soul (Culture/Empathy) -> 15%
-#    - Uses Japanese Wiki and Dialogue to ensure cultural grounding and politeness.
-# 4. The World (Physics/Facts) -> 10%
-#    - ArXiv and Wiki Factuality for grounding in physical reality.
-
 datasets:
-  # --- The Brain: Synthetic Textbooks (45%) ---
+  arxiv:
+    path: ./data/arxiv
+    weight: 0.08333333333333333
   cosmopedia:
-    path: "./data/cosmopedia"
-    weight: 0.45
-    description: "Synthetic Textbooks (HuggingFaceTB). High-density reasoning and explanations."
-    license: "Apache 2.0"
-
-  # --- The Hands: Expert Engineering (30%) ---
+    path: ./data/cosmopedia
+    weight: 0.08333333333333333
   evol_instruct_code:
-    path: "./data/evol_instruct_code"
-    weight: 0.30
-    description: "Evol-Instruct Code. Complex, multi-step coding challenges."
-    license: "Apache 2.0"
-
-  # --- The Soul: Culture & Empathy (15%) ---
-  japanese_knowledge:
-    path: "./data/wiki_ja"
-    weight: 0.05
-    description: "Japanese Wikipedia. Cultural context."
-    license: "CC-BY-SA 3.0"
-
-  japanese_dialogue:
-    path: "./data/japanese_instruct"
-    weight: 0.10
-    description: "Databricks Dolly (JA). Politeness and instruction following."
-    license: "CC-BY-SA 3.0"
-
-  # --- The World: Physics & Factuality (10%) ---
-  physics_arxiv:
-    path: "./data/arxiv"
-    weight: 0.05
-    description: "ArXiv Abstracts. Physical world modeling."
-    license: "CC-BY 4.0 (varies)"
-
-  factuality_knots:
-    path: "./data/factuality_source"
-    weight: 0.05
-    description: "Wikipedia (Full). Source for topological fact knots."
-    license: "CC-BY-SA 3.0"
-
-# Training Hyperparameters related to Data
-block_size: 2048
-shuffle: true
-seed: 42
+    path: ./data/evol_instruct_code
+    weight: 0.3333333333333333
+  factuality_source:
+    path: ./data/factuality_source
+    weight: 0.08333333333333333
+  japanese_instruct:
+    path: ./data/japanese_instruct
+    weight: 0.16666666666666666
+  wiki_ja:
+    path: ./data/wiki_ja
+    weight: 0.16666666666666666
+  wikitext103:
+    path: ./data/wikitext103
+    weight: 0.08333333333333333
