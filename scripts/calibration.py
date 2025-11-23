@@ -12,8 +12,7 @@ from rich.progress import Progress
 
 # Try to import model, handle error if not found (e.g. during initial setup check)
 try:
-    from src.models.configurable_resnet_bk import ConfigurableResNetBK
-    from src.models.phase1.config import Phase1Config
+    from src.models.configurable_resnet_bk import ConfigurableResNetBK, ResNetBKConfig
 except ImportError:
     ConfigurableResNetBK = None
 
@@ -105,7 +104,7 @@ class MuseCalibrator:
             (128, 1, 128, 4),
         ]
 
-        base_config = Phase1Config(d_model=128, n_layers=2, vocab_size=1000)
+        base_config = ResNetBKConfig(d_model=128, n_layers=2, vocab_size=1000, n_seq=128)
 
         with Progress() as progress:
             task = progress.add_task("[cyan]Measuring...", total=len(probes))
@@ -113,6 +112,7 @@ class MuseCalibrator:
             for seq_len, batch, d_model, layers in probes:
                 base_config.d_model = d_model
                 base_config.n_layers = layers
+                base_config.n_seq = seq_len
 
                 mem, duration = self.measure_run(base_config, batch, seq_len)
                 if mem != float('inf'):
