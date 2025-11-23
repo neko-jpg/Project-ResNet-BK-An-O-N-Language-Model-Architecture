@@ -736,7 +736,16 @@ class BirmanSchwingerCore(nn.Module):
             G_ii = torch.zeros(batch_size, n_seq, dtype=torch.complex64, device=device)
             for b in range(batch_size):
                 try:
+                    # Compute condition number before inversion
                     I_plus_K = torch.eye(n_seq, dtype=K.dtype, device=device) + K[b]
+                    cond_num = self.compute_condition_number(I_plus_K)
+                    self.condition_number_history.append(cond_num)
+
+                    if cond_num > self.precision_upgrade_threshold:
+                         self.precision_upgrades += 1
+                         # If we were dynamically upgrading precision we would do it here
+                         # For now we track it.
+
                     inv_I_plus_K = torch.linalg.inv(I_plus_K)
                     G_ii[b] = torch.diag(inv_I_plus_K).to(torch.complex64)
                 except RuntimeError:

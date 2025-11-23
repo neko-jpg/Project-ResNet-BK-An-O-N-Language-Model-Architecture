@@ -283,11 +283,36 @@ def benchmark_amp_training(
     
     results = {}
     
+    # Helper to clone model
+    def clone_model(original_model):
+        from dataclasses import asdict, is_dataclass
+
+        # If it has a config object
+        if hasattr(original_model, 'config'):
+            config = original_model.config
+            # ConfigurableResNetBK (dataclass config)
+            if is_dataclass(config):
+                return type(original_model)(config)
+            # LanguageModel or others with dict/object config
+            elif isinstance(config, dict):
+                 return type(original_model)(**config)
+            else:
+                 # Try passing config object directly
+                 try:
+                     return type(original_model)(config)
+                 except TypeError:
+                     # Fallback: Deepcopy (slower but safer)
+                     import copy
+                     return copy.deepcopy(original_model)
+        else:
+             import copy
+             return copy.deepcopy(original_model)
+
     # Benchmark FP32 training
     print("\n1. FP32 Training (baseline)")
     print("-" * 60)
     
-    model_fp32 = type(model)(**model.config).to(device)
+    model_fp32 = clone_model(model).to(device)
     optimizer_fp32 = torch.optim.AdamW(model_fp32.parameters(), lr=1e-3)
     trainer_fp32 = MixedPrecisionTrainer(
         model_fp32, optimizer_fp32, criterion, enabled=False
@@ -318,7 +343,7 @@ def benchmark_amp_training(
     print("\n2. AMP Training (FP16/FP32 mixed)")
     print("-" * 60)
     
-    model_amp = type(model)(**model.config).to(device)
+    model_amp = clone_model(model).to(device)
     optimizer_amp = torch.optim.AdamW(model_amp.parameters(), lr=1e-3)
     trainer_amp = MixedPrecisionTrainer(
         model_amp, optimizer_amp, criterion, enabled=True

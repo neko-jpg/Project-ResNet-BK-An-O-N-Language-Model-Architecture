@@ -120,7 +120,7 @@ class GradientCachingTrainer:
         similarity = F.cosine_similarity(emb1_flat, emb2_flat, dim=1)
         return similarity.item()
     
-    def find_similar_cached(self, example_embedding: torch.Tensor) -> Optional[List[torch.Tensor]]:
+    def find_similar_cached(self, example_embedding: torch.Tensor) -> Optional[Tuple[List[torch.Tensor], float]]:
         """
         Find cached gradients for similar example.
         
@@ -128,26 +128,27 @@ class GradientCachingTrainer:
             example_embedding: (embedding_dim,) tensor
         
         Returns:
-            cached_grads: List of gradient tensors (or None if no match)
+            Tuple of (cached_grads, cached_loss) or None if no match
         """
         self.total_queries += 1
         
-        for cached_emb, cached_grads in self.gradient_cache:
+        for cached_emb, cached_grads, cached_loss in self.gradient_cache:
             similarity = self.compute_similarity(example_embedding, cached_emb)
             
             if similarity >= self.similarity_threshold:
                 self.cache_hits += 1
-                return cached_grads
+                return cached_grads, cached_loss
         
         self.cache_misses += 1
         return None
     
-    def cache_gradients(self, example_embedding: torch.Tensor):
+    def cache_gradients(self, example_embedding: torch.Tensor, loss_val: float):
         """
-        Cache current gradients with example embedding.
+        Cache current gradients with example embedding and loss.
         
         Args:
             example_embedding: (embedding_dim,) tensor
+            loss_val: scalar loss value
         """
         # Extract gradients from model
         grads = []
@@ -158,7 +159,7 @@ class GradientCachingTrainer:
                 grads.append(None)
         
         # Add to cache
-        self.gradient_cache.append((example_embedding.detach(), grads))
+        self.gradient_cache.append((example_embedding.detach(), grads, loss_val))
     
     def apply_cached_gradients(self, cached_grads: List[torch.Tensor]):
         """
@@ -202,24 +203,49 @@ class GradientCachingTrainer:
         example_emb = self.compute_example_embedding(x_batch)
         
         # Check cache (unless forced to compute)
-        cached_grads = None if force_compute else self.find_similar_cached(example_emb)
+        cache_result = None if force_compute else self.find_similar_cached(example_emb)
         
-        if cached_grads is not None:
-            # Use cached gradients
-            optimizer.zero_grad()
-            self.apply_cached_gradients(cached_grads)
-            optimizer.step()
+        if cache_result is not None:
+            cached_grads, cached_loss_val = cache_result
             
-            # Compute loss for monitoring (no backward)
+            # Verification Step: Compute current loss to ensure safety
+            # We must compute forward pass anyway to check loss deviation
             with torch.no_grad():
                 if hasattr(self.model, 'forward') and 'ponder_cost' in str(self.model.forward.__code__.co_varnames):
                     logits, _ = self.model(x_batch)
                 else:
                     logits = self.model(x_batch)
                 
-                loss = criterion(logits.view(-1, logits.size(-1)), y_batch.view(-1))
+                current_loss = criterion(logits.view(-1, logits.size(-1)), y_batch.view(-1))
+
+            # Safety check: if loss deviation is too high, discard cache
+            # This prevents reusing gradients when the function landscape has changed significantly
+            loss_diff = abs(current_loss.item() - cached_loss_val)
+            rel_diff = loss_diff / (abs(cached_loss_val) + 1e-9)
             
-            return loss.item(), True  # Used cache
+            if rel_diff > 0.1: # 10% tolerance threshold
+                 # Discard cache, fallback to full backward
+                 optimizer.zero_grad()
+                 # Need to re-run forward with grad enabled
+                 if hasattr(self.model, 'forward') and 'ponder_cost' in str(self.model.forward.__code__.co_varnames):
+                    logits, ponder_cost = self.model(x_batch)
+                    loss = criterion(logits.view(-1, logits.size(-1)), y_batch.view(-1))
+                    loss = loss + 0.01 * ponder_cost
+                 else:
+                    logits = self.model(x_batch)
+                    loss = criterion(logits.view(-1, logits.size(-1)), y_batch.view(-1))
+
+                 loss.backward()
+                 self.cache_gradients(example_emb, loss.item())
+                 optimizer.step()
+                 return loss.item(), False # False means we computed fresh gradients
+
+            else:
+                # Cache is valid, apply gradients
+                optimizer.zero_grad()
+                self.apply_cached_gradients(cached_grads)
+                optimizer.step()
+                return current_loss.item(), True  # Used cache
         
         else:
             # Standard training step (compute gradients)
@@ -238,7 +264,7 @@ class GradientCachingTrainer:
             loss.backward()
             
             # Cache gradients
-            self.cache_gradients(example_emb)
+            self.cache_gradients(example_emb, loss.item())
             
             # Optimizer step
             optimizer.step()
