@@ -87,4 +87,9 @@ recipe:
 	$(PYTHON) scripts/configure_recipe.py
 
 train-user:
-	$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config-preset small
+	@if [ -f configs/user_train_config.yaml ]; then \
+		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/user_train_config.yaml; \
+	else \
+		echo "User config not found. Running with default preset 'small'."; \
+		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config-preset small; \
+	fi
