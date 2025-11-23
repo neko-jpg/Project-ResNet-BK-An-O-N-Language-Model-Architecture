@@ -4,6 +4,7 @@ MUSE Calibration Module
 Measures hardware capabilities and model characteristics to predict resource usage.
 """
 import time
+import sys
 import gc
 import torch
 import numpy as np
@@ -24,6 +25,13 @@ console = Console()
 class MuseCalibrator:
     def __init__(self):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.has_triton = False
+        try:
+            import triton
+            self.has_triton = True
+        except ImportError:
+            self.has_triton = False
+
         self.vram_total = 0
         self.memory_coeffs = {'base': 0, 'per_token': 0, 'per_complex': 0}
         self.speed_coeffs = {'base': 0, 'per_token': 0, 'per_complex': 0}
@@ -31,8 +39,9 @@ class MuseCalibrator:
         if self.device.type == 'cuda':
             try:
                 self.vram_total = torch.cuda.get_device_properties(0).total_memory / (1024**2) # MB
-                # Enforce Triton Mode for calibration on GPU
-                set_triton_mode(True)
+                # Enforce Triton Mode for calibration on GPU if available
+                if self.has_triton:
+                    set_triton_mode(True)
             except:
                 self.vram_total = 0
         else:
@@ -290,6 +299,18 @@ class MuseCalibrator:
     def check_safety(self, mem_mb):
         if self.vram_total == 0: return True # Cannot check
         return mem_mb < (self.vram_total * 0.9)
+
+    def check_triton(self, strict=True):
+        """Check if Triton is available. Exit if strict=True and missing."""
+        if not self.has_triton:
+            if strict:
+                console.print("[bold red]FATAL: Triton is missing or failed to load.[/bold red]")
+                console.print("This project requires Triton for O(N) performance on GPU.")
+                console.print("Please install triton or run in a compatible environment (Linux/WSL).")
+                sys.exit(1)
+            else:
+                return False
+        return True
 
 if __name__ == "__main__":
     cal = MuseCalibrator()
