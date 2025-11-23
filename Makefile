@@ -3,9 +3,9 @@
 # Default shell
 SHELL := /bin/bash
 VENV := venv_ubuntu
-PYTHON := $(VENV)/bin/python
+PYTHON := PYTHONPATH=. $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
-PYTEST := $(VENV)/bin/pytest
+PYTEST := PYTHONPATH=. $(VENV)/bin/pytest
 
 help:
 	@bash -c 'source .muse_config 2>/dev/null || true; \
@@ -134,10 +134,10 @@ scale-up:
 	$(PYTHON) scripts/auto_scale.py
 
 chat:
-	$(VENV)/bin/streamlit run app.py
+	PYTHONPATH=. $(VENV)/bin/streamlit run app.py
 
 dashboard:
-	$(VENV)/bin/streamlit run app.py
+	PYTHONPATH=. $(VENV)/bin/streamlit run app.py
 
 clean-safe:
 	$(PYTHON) scripts/muse_utils.py clean-safe
