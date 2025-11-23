@@ -69,17 +69,100 @@ def main():
 
     ratios = {}
     if available_datasets:
-        console.print(t("\n[Dataset Recipe]", "\n[データセット配合]"))
-        remaining = 100
-        for i, ds in enumerate(available_datasets):
-            if i == len(available_datasets) - 1:
-                val = remaining
-                console.print(f"- {ds}: [bold]{val}%[/bold] (Auto-filled)")
-            else:
-                val = IntPrompt.ask(f"- {ds} (Remaining: {remaining}%)", default=0)
-                val = min(val, remaining)
-            ratios[ds] = val / 100.0
-            remaining -= val
+        console.print(t("\n[Dataset Recipe Strategy]", "\n[データセット配合戦略]"))
+        console.print(t("1. Balanced (Auto)", "1. バランス型 (おまかせ)"))
+        console.print(t("2. Japanese Focused (Auto)", "2. 日本語重視 (おまかせ)"))
+        console.print(t("3. Code Heavy (Auto)", "3. コード重視 (おまかせ)"))
+        console.print(t("4. Manual (Custom)", "4. 手動設定 (カスタム)"))
+
+        strategy = IntPrompt.ask("Choice", choices=["1", "2", "3", "4"], default="1")
+
+        if strategy == "4":
+            # Manual Mode
+            remaining = 100
+            for i, ds in enumerate(available_datasets):
+                if i == len(available_datasets) - 1:
+                    val = remaining
+                    console.print(f"- {ds}: [bold]{val}%[/bold] (Auto-filled)")
+                else:
+                    val = IntPrompt.ask(f"- {ds} (Remaining: {remaining}%)", default=0)
+                    val = min(val, remaining)
+                ratios[ds] = val / 100.0
+                remaining -= val
+        else:
+            # Auto Modes
+            ratios = {ds: 0.0 for ds in available_datasets}
+
+            # Simple keyword matching
+            jp_sets = [d for d in available_datasets if 'jp' in d or 'japanese' in d or 'wiki_ja' in d]
+            code_sets = [d for d in available_datasets if 'code' in d or 'python' in d or 'evol' in d]
+            general_sets = [d for d in available_datasets if d not in jp_sets and d not in code_sets]
+
+            # Ensure no division by zero
+            n_jp = len(jp_sets)
+            n_code = len(code_sets)
+            n_gen = len(general_sets)
+
+            if strategy == "1": # Balanced
+                # Distribute evenly across categories, then within categories
+                # Target: 33% JP, 33% Code, 33% General
+                if n_jp > 0:
+                    for d in jp_sets: ratios[d] = 0.33 / n_jp
+                if n_code > 0:
+                    for d in code_sets: ratios[d] = 0.33 / n_code
+                if n_gen > 0:
+                    for d in general_sets: ratios[d] = 0.34 / n_gen
+
+                # Normalize if some categories were empty
+                total = sum(ratios.values())
+                if total > 0:
+                    for k in ratios: ratios[k] /= total
+
+            elif strategy == "2": # Japanese Focused
+                # 70% JP, 30% others
+                target_jp = 0.7 if n_jp > 0 else 0.0
+                target_others = 1.0 - target_jp
+
+                if n_jp > 0:
+                    for d in jp_sets: ratios[d] = target_jp / n_jp
+
+                n_others = n_code + n_gen
+                if n_others > 0:
+                    for d in code_sets + general_sets: ratios[d] = target_others / n_others
+
+            elif strategy == "3": # Code Heavy
+                # 70% Code, 30% others
+                target_code = 0.7 if n_code > 0 else 0.0
+                target_others = 1.0 - target_code
+
+                if n_code > 0:
+                    for d in code_sets: ratios[d] = target_code / n_code
+
+                n_others = n_jp + n_gen
+                if n_others > 0:
+                    for d in jp_sets + general_sets: ratios[d] = target_others / n_others
+
+            # Display Proposed Ratio
+            console.print(t("\n[Proposed Mix]", "\n[提案された配合]"))
+            for ds, r in ratios.items():
+                if r > 0.001:
+                    console.print(f"- {ds}: [bold]{r*100:.1f}%[/bold]")
+
+            if not Confirm.ask(t("Use this mix?", "この配合でよろしいですか？"), default=True):
+                 # Fallback to manual if rejected
+                console.print(t("Switching to manual mode...", "手動モードに切り替えます..."))
+                ratios = {}
+                remaining = 100
+                for i, ds in enumerate(available_datasets):
+                    if i == len(available_datasets) - 1:
+                        val = remaining
+                        console.print(f"- {ds}: [bold]{val}%[/bold] (Auto-filled)")
+                    else:
+                        val = IntPrompt.ask(f"- {ds} (Remaining: {remaining}%)", default=0)
+                        val = min(val, remaining)
+                    ratios[ds] = val / 100.0
+                    remaining -= val
+
     else:
         console.print(t("[yellow]No datasets found. Using default logic.[/yellow]", "[yellow]データセットが見つかりません。[/yellow]"))
 
@@ -108,16 +191,27 @@ def main():
     # Apply calibration limits if available
     if cal and cal.memory_coeffs['base'] > 0:
         mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
-        limit = cal.vram_total * 0.9
+        # Use cal.vram_total or fallback
+        total_vram = cal.vram_total if cal.vram_total > 0 else 8192 # Default 8GB if unknown
+        limit = total_vram * 0.9
 
         if mem > limit:
             console.print(t(f"[red]Proposal {mem:.0f}MB exceeds VRAM {limit:.0f}MB. Downgrading...[/red]", f"[red]提案設定 ({mem:.0f}MB) がVRAM ({limit:.0f}MB) を超えます。設定を下げます...[/red]"))
+
+            # Simple iterative reduction
+            # 1. Reduce Batch Size
             while mem > limit and batch_size > 1:
                 batch_size = max(1, batch_size // 2)
                 mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
 
+            # 2. Reduce Sequence Length
             while mem > limit and seq_len > 512:
                 seq_len = seq_len // 2
+                mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
+
+            # 3. Reduce Layers (Last resort)
+            while mem > limit and n_layers > 2:
+                n_layers -= 2
                 mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
 
     # Show Proposal
@@ -133,7 +227,8 @@ def main():
 
     if cal and cal.memory_coeffs['base'] > 0:
         pred_mem, pred_time = cal.predict(batch_size, seq_len, d_model, n_layers)
-        table.add_row("Est. VRAM", f"{pred_mem:.0f} MB / {cal.vram_total:.0f} MB")
+        total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
+        table.add_row("Est. VRAM", f"{pred_mem:.0f} MB / {total_vram_disp:.0f} MB")
 
     console.print(table)
 

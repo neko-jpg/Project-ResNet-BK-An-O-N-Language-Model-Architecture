@@ -3,6 +3,9 @@ Configuration and Command-Line Argument Parsing
 """
 
 import argparse
+import sys
+import yaml
+from pathlib import Path
 from src.models.configurable_resnet_bk import (
     ResNetBKConfig,
     BASELINE_CONFIG,
@@ -28,6 +31,14 @@ def parse_args():
         default='baseline',
         choices=['baseline', 'step2', 'step4', 'step5', 'step6', 'full', 'custom'],
         help='Configuration preset to use'
+    )
+
+    # Config file
+    parser.add_argument(
+        '--config',
+        type=str,
+        default=None,
+        help='Path to YAML configuration file (overrides defaults, overridden by CLI args)'
     )
     
     # Model architecture
@@ -144,67 +155,93 @@ def get_config_from_args(args):
     else:  # custom
         config = ResNetBKConfig()
     
-    # Override with command-line arguments
-    config.vocab_size = args.vocab_size
-    config.d_model = args.d_model
-    config.n_layers = args.n_layers
-    config.n_seq = args.n_seq
-    config.num_experts = args.num_experts
-    config.top_k = args.top_k
-    config.dropout_p = args.dropout_p
-    config.prime_bump_init = args.prime_bump_init
-    config.prime_bump_scale = args.prime_bump_scale
-    config.use_scattering_router = args.use_scattering_router
-    config.scattering_scale = args.scattering_scale
-    config.scattering_scale_warmup_steps = args.scattering_scale_warmup_steps
+    # ---------------------------------------------------------
+    # Apply Configuration File (if provided)
+    # ---------------------------------------------------------
+    if args.config:
+        try:
+            with open(args.config, 'r') as f:
+                yaml_config = yaml.safe_load(f)
+
+            print(f"Loading configuration from {args.config}")
+
+            # Helper to recursively update config
+            def update_config_from_dict(cfg_obj, cfg_dict):
+                for k, v in cfg_dict.items():
+                    if isinstance(v, dict):
+                        # If nested dict (like 'model': {...}), flatten it for ResNetBKConfig
+                        # ResNetBKConfig is flat, so we try to find matching keys in the dict
+                        update_config_from_dict(cfg_obj, v)
+                    else:
+                        if hasattr(cfg_obj, k):
+                            setattr(cfg_obj, k, v)
+                            # Also update args so it reflects in logs
+                            if hasattr(args, k):
+                                setattr(args, k, v)
+
+            update_config_from_dict(config, yaml_config)
+
+        except Exception as e:
+            print(f"Warning: Failed to load config file {args.config}: {e}")
+
+    # ---------------------------------------------------------
+    # Override with CLI arguments (Explicitly provided)
+    # ---------------------------------------------------------
+    # We check sys.argv to see if the user explicitly provided an argument.
+    # If so, we ensure it overrides whatever came from the config file.
+    # Note: Boolean flags are tricky because store_true/false.
+
+    def is_arg_passed(arg_name):
+        return any(arg == f'--{arg_name}' or arg.startswith(f'--{arg_name}=') for arg in sys.argv)
+
+    # Manual mapping of args to config
+
+    if is_arg_passed('vocab-size'): config.vocab_size = args.vocab_size
+    if is_arg_passed('d-model'): config.d_model = args.d_model
+    if is_arg_passed('n-layers'): config.n_layers = args.n_layers
+    if is_arg_passed('n-seq'): config.n_seq = args.n_seq
+    if is_arg_passed('num-experts'): config.num_experts = args.num_experts
+    if is_arg_passed('top-k'): config.top_k = args.top_k
+    if is_arg_passed('dropout-p'): config.dropout_p = args.dropout_p
+
+    if is_arg_passed('prime-bump-init'): config.prime_bump_init = args.prime_bump_init
+    if is_arg_passed('prime-bump-scale'): config.prime_bump_scale = args.prime_bump_scale
+    if is_arg_passed('use-scattering-router'): config.use_scattering_router = args.use_scattering_router
+    if is_arg_passed('scattering-scale'): config.scattering_scale = args.scattering_scale
+    if is_arg_passed('scattering-scale-warmup-steps'): config.scattering_scale_warmup_steps = args.scattering_scale_warmup_steps
     
     # Step 2
-    if args.use_analytic_gradient:
-        config.use_analytic_gradient = True
-    config.grad_blend = args.grad_blend
-    if args.use_koopman:
-        config.use_koopman = True
-    config.koopman_dim = args.koopman_dim
-    if args.use_physics_informed:
-        config.use_physics_informed = True
+    if is_arg_passed('use-analytic-gradient'): config.use_analytic_gradient = args.use_analytic_gradient
+    if is_arg_passed('grad-blend'): config.grad_blend = args.grad_blend
+    if is_arg_passed('use-koopman'): config.use_koopman = args.use_koopman
+    if is_arg_passed('koopman-dim'): config.koopman_dim = args.koopman_dim
+    if is_arg_passed('use-physics-informed'): config.use_physics_informed = args.use_physics_informed
     
     # Step 4
-    if args.use_quantization:
-        config.use_quantization = True
-    config.quantization_bits = args.quantization_bits
-    if args.use_pruning:
-        config.use_pruning = True
-    config.prune_threshold = args.prune_threshold
-    if args.use_distillation:
-        config.use_distillation = True
+    if is_arg_passed('use-quantization'): config.use_quantization = args.use_quantization
+    if is_arg_passed('quantization-bits'): config.quantization_bits = args.quantization_bits
+    if is_arg_passed('use-pruning'): config.use_pruning = args.use_pruning
+    if is_arg_passed('prune-threshold'): config.prune_threshold = args.prune_threshold
+    if is_arg_passed('use-distillation'): config.use_distillation = args.use_distillation
     
     # Step 5
-    if args.use_mixed_precision:
-        config.use_mixed_precision = True
-    if args.use_custom_kernels:
-        config.use_custom_kernels = True
-    if args.use_gradient_checkpointing:
-        config.use_gradient_checkpointing = True
+    if is_arg_passed('use-mixed-precision'): config.use_mixed_precision = args.use_mixed_precision
+    if is_arg_passed('use-custom-kernels'): config.use_custom_kernels = args.use_custom_kernels
+    if is_arg_passed('use-gradient-checkpointing'): config.use_gradient_checkpointing = args.use_gradient_checkpointing
     
     # Step 6
-    if args.use_adaptive_computation:
-        config.use_adaptive_computation = True
-    if args.use_multi_scale:
-        config.use_multi_scale = True
-    if args.use_learned_sparsity:
-        config.use_learned_sparsity = True
+    if is_arg_passed('use-adaptive-computation'): config.use_adaptive_computation = args.use_adaptive_computation
+    if is_arg_passed('use-multi-scale'): config.use_multi_scale = args.use_multi_scale
+    if is_arg_passed('use-learned-sparsity'): config.use_learned_sparsity = args.use_learned_sparsity
     
     # Step 7
-    if args.use_curriculum_learning:
-        config.use_curriculum_learning = True
-    if args.use_active_learning:
-        config.use_active_learning = True
-    if args.use_gradient_caching:
-        config.use_gradient_caching = True
+    if is_arg_passed('use-curriculum-learning'): config.use_curriculum_learning = args.use_curriculum_learning
+    if is_arg_passed('use-active-learning'): config.use_active_learning = args.use_active_learning
+    if is_arg_passed('use-gradient-caching'): config.use_gradient_caching = args.use_gradient_caching
     
     # Numerical stability
-    config.v_max = args.v_max
-    config.feature_clamp = args.feature_clamp
-    config.grad_clip = args.grad_clip
+    if is_arg_passed('v-max'): config.v_max = args.v_max
+    if is_arg_passed('feature-clamp'): config.feature_clamp = args.feature_clamp
+    if is_arg_passed('grad-clip'): config.grad_clip = args.grad_clip
     
     return config
