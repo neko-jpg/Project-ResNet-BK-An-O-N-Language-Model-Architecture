@@ -1,0 +1,8 @@
+# Goal: Logic & Reasoning
+# High weight on Math, Arxiv, Wiki
+dataset_mix:
+  arxiv_math: 0.4
+  wikipedia_en: 0.3
+  stackexchange_math: 0.3
+description: "Pure logic and reasoning enhancement. Improves chain-of-thought capabilities."
+recommended_epochs: 4

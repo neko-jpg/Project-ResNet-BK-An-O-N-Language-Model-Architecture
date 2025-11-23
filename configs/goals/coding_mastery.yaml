@@ -1,0 +1,8 @@
+# Goal: Coding Mastery
+# High weight on Code, StackOverflow, GitHub
+dataset_mix:
+  github_code: 0.6
+  stackoverflow: 0.3
+  english_c4: 0.1
+description: "Advanced programming curriculum. Optimizes for syntax correctness and algorithmic logic."
+recommended_epochs: 5
