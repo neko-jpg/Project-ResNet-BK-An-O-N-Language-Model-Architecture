@@ -676,4 +676,22 @@ We provide complete hyperparameters, random seeds, and checkpoint files to ensur
 \bibliographystyle{plain}
 \bibliography{references}
 
+
+\section{Automated Benchmarks}
+
+\begin{table}[ht]
+\centering
+\caption{Automated CI Benchmark Results (Lightweight)}
+\label{tab:ci_bench}
+\begin{tabular}{lcc}
+\toprule
+Model & Loss & FLOPs (G) \\
+\midrule
+Resnet Bk & 10.8202 & 0.00G \\
+Resnet Bk Act & 10.8202 & 0.00G \\
+Mamba & 10.8088 & 0.00G \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \end{document}

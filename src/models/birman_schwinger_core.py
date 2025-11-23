@@ -23,6 +23,7 @@ import torch.nn as nn
 from typing import Tuple, Optional, Dict
 import numpy as np
 import math
+import logging
 
 from .semiseparable_matrix import SemiseparableMatrix
 from .bk_core import get_tridiagonal_inverse_diagonal, vmapped_get_diag
@@ -115,6 +116,8 @@ class BirmanSchwingerCore(nn.Module):
         self.precision_upgrades = 0
         self.memory_usage_history = []
         
+        self.logger = logging.getLogger(__name__)
+
     def compute_resolvent_kernel(
         self,
         z: complex,
@@ -730,6 +733,7 @@ class BirmanSchwingerCore(nn.Module):
             
             # Apply spectral clipping if needed
             if not bounds_check['s2_satisfied']:
+                self.logger.warning(f"Schatten norm bound violated (S2={s2_norm:.2f} > {bounds_check['s2_bound']:.2f}). Applying spectral clipping.")
                 K = self.apply_spectral_clipping(K)
             
             # Compute diagonal
@@ -743,12 +747,25 @@ class BirmanSchwingerCore(nn.Module):
 
                     if cond_num > self.precision_upgrade_threshold:
                          self.precision_upgrades += 1
-                         # If we were dynamically upgrading precision we would do it here
-                         # For now we track it.
+                         self.logger.info(f"Condition number {cond_num:.2e} exceeded threshold. Upgrading to complex128.")
 
-                    inv_I_plus_K = torch.linalg.inv(I_plus_K)
-                    G_ii[b] = torch.diag(inv_I_plus_K).to(torch.complex64)
+                         # Upgrade precision and recompute for this batch element
+                         V_b = v[b:b+1]
+                         K_b_high = self.compute_birman_schwinger_operator(V_b, z, use_high_precision=True)
+                         I_plus_K_high = torch.eye(n_seq, dtype=torch.complex128, device=device) + K_b_high[0]
+
+                         try:
+                             inv_I_plus_K_high = torch.linalg.inv(I_plus_K_high)
+                         except RuntimeError:
+                             inv_I_plus_K_high = torch.linalg.pinv(I_plus_K_high)
+
+                         G_ii[b] = torch.diag(inv_I_plus_K_high).to(torch.complex64)
+                    else:
+                        inv_I_plus_K = torch.linalg.inv(I_plus_K)
+                        G_ii[b] = torch.diag(inv_I_plus_K).to(torch.complex64)
+
                 except RuntimeError:
+                    self.logger.warning("Inversion failed. Falling back to pseudoinverse.")
                     I_plus_K = torch.eye(n_seq, dtype=K.dtype, device=device) + K[b]
                     inv_I_plus_K = torch.linalg.pinv(I_plus_K)
                     G_ii[b] = torch.diag(inv_I_plus_K).to(torch.complex64)

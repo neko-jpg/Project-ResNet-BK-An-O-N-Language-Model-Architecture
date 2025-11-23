@@ -161,16 +161,17 @@ class GradientCachingTrainer:
         # Add to cache
         self.gradient_cache.append((example_embedding.detach(), grads, loss_val))
     
-    def apply_cached_gradients(self, cached_grads: List[torch.Tensor]):
+    def apply_cached_gradients(self, cached_grads: List[torch.Tensor], scale: float = 1.0):
         """
         Apply cached gradients to model parameters.
         
         Args:
             cached_grads: List of gradient tensors
+            scale: Scaling factor for gradients
         """
         for param, cached_grad in zip(self.model.parameters(), cached_grads):
             if cached_grad is not None:
-                param.grad = cached_grad.clone()
+                param.grad = cached_grad.clone() * scale
             else:
                 param.grad = None
     
@@ -241,9 +242,14 @@ class GradientCachingTrainer:
                  return loss.item(), False # False means we computed fresh gradients
 
             else:
-                # Cache is valid, apply gradients
+                # Cache is valid, apply gradients with scaling
+                # Normalize gradient scale based on loss ratio (Requirement: Normalize gradient scale differences)
+                scale_factor = current_loss.item() / (cached_loss_val + 1e-9)
+                # Clamp scale to prevent instability
+                scale_factor = max(0.5, min(2.0, scale_factor))
+
                 optimizer.zero_grad()
-                self.apply_cached_gradients(cached_grads)
+                self.apply_cached_gradients(cached_grads, scale=scale_factor)
                 optimizer.step()
                 return current_loss.item(), True  # Used cache
         

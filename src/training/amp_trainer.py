@@ -14,6 +14,10 @@ import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from typing import Optional, Dict, Callable
 import time
+import dataclasses
+import json
+import os
+from src.utils.resource_guard import ResourceGuard
 
 
 class MixedPrecisionTrainer:
@@ -36,7 +40,9 @@ class MixedPrecisionTrainer:
         criterion: nn.Module,
         grad_clip: float = 0.5,
         enabled: bool = True,
-        growth_interval: int = 2000
+        growth_interval: int = 2000,
+        memory_limit_gb: float = 9.5,
+        log_path: Optional[str] = "logs/training_metrics.jsonl"
     ):
         """
         Initialize AMP trainer.
@@ -48,6 +54,8 @@ class MixedPrecisionTrainer:
             grad_clip: Gradient clipping threshold
             enabled: Enable AMP (set False for debugging)
             growth_interval: Gradient scaler growth interval
+            memory_limit_gb: Memory limit for ResourceGuard
+            log_path: Path to JSONL log file
         """
         self.model = model
         self.optimizer = optimizer
@@ -58,10 +66,18 @@ class MixedPrecisionTrainer:
         # Initialize gradient scaler
         self.scaler = GradScaler(enabled=self.enabled, growth_interval=growth_interval)
         
+        # Resource Guard
+        self.resource_guard = ResourceGuard(memory_limit_gb=memory_limit_gb)
+
+        self.log_path = log_path
+        if self.log_path:
+            os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+
         # Statistics
         self.stats = {
             'total_steps': 0,
             'overflow_steps': 0,
+            'oom_steps': 0,
             'scale_history': [],
             'loss_history': [],
             'grad_norm_history': []
@@ -84,59 +100,76 @@ class MixedPrecisionTrainer:
         Returns:
             Dictionary with loss and statistics
         """
+        # Proactive memory check
+        if not self.resource_guard.check_memory():
+            torch.cuda.empty_cache()
+
         self.model.train()
         self.optimizer.zero_grad()
         
-        # Forward pass with autocast
-        with autocast(enabled=self.enabled):
-            logits = self.model(x_batch)
-            loss = self.criterion(
-                logits.view(-1, logits.size(-1)),
-                y_batch
+        try:
+            # Forward pass with autocast
+            with autocast(enabled=self.enabled):
+                logits = self.model(x_batch)
+                loss = self.criterion(
+                    logits.view(-1, logits.size(-1)),
+                    y_batch
+                )
+
+            # Backward pass with gradient scaling
+            self.scaler.scale(loss).backward()
+
+            # Unscale gradients for clipping
+            self.scaler.unscale_(self.optimizer)
+
+            # Gradient clipping
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.model.parameters(),
+                self.grad_clip
             )
-        
-        # Backward pass with gradient scaling
-        self.scaler.scale(loss).backward()
-        
-        # Unscale gradients for clipping
-        self.scaler.unscale_(self.optimizer)
-        
-        # Gradient clipping
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(),
-            self.grad_clip
-        )
-        
-        # Optimizer step with scaler
-        self.scaler.step(self.optimizer)
-        
-        # Update scaler
-        old_scale = self.scaler.get_scale()
-        self.scaler.update()
-        new_scale = self.scaler.get_scale()
-        
-        # Track overflow
-        overflow = (new_scale < old_scale)
-        
-        # Update statistics
-        self.stats['total_steps'] += 1
-        if overflow:
-            self.stats['overflow_steps'] += 1
-        self.stats['scale_history'].append(new_scale)
-        self.stats['loss_history'].append(loss.item())
-        self.stats['grad_norm_history'].append(grad_norm.item())
-        
-        result = {
-            'loss': loss.item(),
-            'grad_norm': grad_norm.item(),
-            'scale': new_scale,
-            'overflow': overflow
-        }
-        
-        if return_logits:
-            result['logits'] = logits.detach()
-        
-        return result
+
+            # Optimizer step with scaler
+            self.scaler.step(self.optimizer)
+
+            # Update scaler
+            old_scale = self.scaler.get_scale()
+            self.scaler.update()
+            new_scale = self.scaler.get_scale()
+
+            # Track overflow
+            overflow = (new_scale < old_scale)
+
+            # Update statistics
+            self.stats['total_steps'] += 1
+            if overflow:
+                self.stats['overflow_steps'] += 1
+            self.stats['scale_history'].append(new_scale)
+            self.stats['loss_history'].append(loss.item())
+            self.stats['grad_norm_history'].append(grad_norm.item())
+
+            result = {
+                'loss': loss.item(),
+                'grad_norm': grad_norm.item(),
+                'scale': new_scale,
+                'overflow': overflow,
+                'oom': False
+            }
+
+            if return_logits:
+                result['logits'] = logits.detach()
+
+            return result
+
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                self.stats['oom_steps'] += 1
+                suggested_bs = self.resource_guard.handle_oom(x_batch.size(0))
+                return {
+                    'loss': float('nan'),
+                    'oom': True,
+                    'suggested_batch_size': suggested_bs
+                }
+            raise e
     
     def train_epoch(
         self,
@@ -190,6 +223,21 @@ class MixedPrecisionTrainer:
                       f"Grad Norm: {result['grad_norm']:.4f} | "
                       f"Scale: {result['scale']:.0f} | "
                       f"Speed: {steps_per_sec:.2f} steps/s")
+
+                if self.log_path:
+                    log_entry = {
+                        'epoch': epoch,
+                        'step': step + 1,
+                        'loss': result['loss'],
+                        'avg_loss': avg_loss,
+                        'grad_norm': result['grad_norm'],
+                        'scale': result['scale'],
+                        'speed': steps_per_sec,
+                        'timestamp': time.time(),
+                        'oom': result.get('oom', False)
+                    }
+                    with open(self.log_path, 'a') as f:
+                        f.write(json.dumps(log_entry) + "\n")
         
         elapsed = time.time() - start_time
         
@@ -222,12 +270,21 @@ class MixedPrecisionTrainer:
             epoch: Current epoch
             **kwargs: Additional items to save
         """
+        # Unified config saving logic
+        config_data = kwargs.get('config', None)
+        if config_data is None and hasattr(self.model, 'config'):
+            if dataclasses.is_dataclass(self.model.config):
+                config_data = dataclasses.asdict(self.model.config)
+            else:
+                config_data = self.model.config
+
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scaler_state_dict': self.scaler.state_dict(),
             'stats': self.stats,
+            'config': config_data,
             **kwargs
         }
         torch.save(checkpoint, path)

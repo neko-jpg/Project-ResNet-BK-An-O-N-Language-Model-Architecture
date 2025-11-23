@@ -78,6 +78,9 @@ data:
 test:
 	$(PYTEST) tests/
 
+ci:
+	$(PYTHON) scripts/run_ci.py
+
 demo:
 	$(PYTHON) scripts/demo_muse_full.py
 

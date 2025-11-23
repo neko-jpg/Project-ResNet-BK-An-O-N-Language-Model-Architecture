@@ -173,6 +173,8 @@ def main():
     parser.add_argument("--seq-length", type=int, default=2048)
     parser.add_argument("--train-steps", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--n-layers", type=int, default=6)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dataset-name", default="wikitext")
@@ -195,7 +197,7 @@ def main():
         args.seq_length, args.batch_size, args.seed, args.dataset_name, args.dataset_config, tok
     )
     bk_base, bk_act, mamba = build_models(
-        args.seq_length, tok.vocab_size, d_model=256, n_layers=6, dropout=0.1
+        args.seq_length, tok.vocab_size, d_model=args.d_model, n_layers=args.n_layers, dropout=0.1
     )
 
     print("\n[1/3] ResNet-BK (baseline)")

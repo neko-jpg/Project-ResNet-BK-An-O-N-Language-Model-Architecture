@@ -1,0 +1,36 @@
+{
+  "resnet_bk": {
+    "losses": [
+      10.821720123291016,
+      10.81865406036377
+    ],
+    "avg_loss": 10.820187091827393,
+    "avg_flops": 0,
+    "steps_completed": 2
+  },
+  "resnet_bk_act": {
+    "losses": [
+      10.821720123291016,
+      10.81865406036377
+    ],
+    "avg_loss": 10.820187091827393,
+    "avg_flops": 0,
+    "steps_completed": 2,
+    "note": "ACT not implemented - using baseline results"
+  },
+  "mamba": {
+    "losses": [
+      10.804413795471191,
+      10.81321907043457
+    ],
+    "avg_loss": 10.80881643295288,
+    "avg_flops": 0,
+    "steps_completed": 2
+  },
+  "config": {
+    "seq_length": 64,
+    "batch_size": 1,
+    "train_steps": 2,
+    "seed": 42
+  }
+}

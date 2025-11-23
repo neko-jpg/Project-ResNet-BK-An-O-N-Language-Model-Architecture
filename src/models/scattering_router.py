@@ -22,7 +22,9 @@ import torch.nn.functional as F
 from typing import Tuple, Optional, Dict, List
 import numpy as np
 import math
+import logging
 
+logger = logging.getLogger(__name__)
 
 class ScatteringRouter(nn.Module):
     """
@@ -462,6 +464,21 @@ class ScatteringRouter(nn.Module):
         # Route by phase
         expert_indices, routing_weights = self.route_by_phase(phase, is_resonance)
         
+        # Compute entropy and alerts
+        indices_flat = expert_indices.view(-1)
+        expert_counts = torch.bincount(indices_flat, minlength=self.num_experts).float()
+        expert_probs = expert_counts / (expert_counts.sum() + 1e-10)
+        entropy = -torch.sum(expert_probs * torch.log(expert_probs + 1e-10))
+        max_entropy = math.log(self.num_experts)
+        norm_entropy = entropy / (max_entropy + 1e-10)
+
+        # Alerts
+        if norm_entropy.item() < 0.5:
+             logger.warning(f"Router Entropy Low ({norm_entropy.item():.2f}): Risk of Mode Collapse.")
+
+        if phase.abs().mean() > 3.0:
+             logger.warning(f"High Phase Shift detected ({phase.abs().mean():.2f}): Possible divergence.")
+
         # Compute diagnostics
         diagnostics = {
             'mean_phase': phase.mean().item(),
@@ -470,6 +487,8 @@ class ScatteringRouter(nn.Module):
             'mean_spectral_shift': xi.mean().item(),
             'phases': phase.detach(),  # Store per-token phases for visualization
             'spectral_shift': xi.detach(),  # Store per-token spectral shift
+            'routing_entropy': entropy.item(),
+            'normalized_entropy': norm_entropy.item(),
         }
         
         # Add Clark measure diagnostics if enabled
