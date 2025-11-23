@@ -7,7 +7,7 @@
 torch==2.2.0+cu118
 torchvision==0.17.0+cu118
 torchaudio==2.2.0+cu118
-triton==2.1.0; platform_system != "Windows"
+triton==2.2.0; platform_system != "Windows"
 ninja==1.11.1.1
 
 # Hugging Face ecosystem

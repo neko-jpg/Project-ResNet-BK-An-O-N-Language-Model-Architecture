@@ -145,7 +145,8 @@ VENV_NAME="venv_ubuntu"
 echo -e "\n${YELLOW}$MSG_STEP2${NC}"
 
 if [ -d "$VENV_NAME" ]; then
-    read -p "$MSG_VENV_RECREATE" VENV_CHOICE
+    echo -e -n "$MSG_VENV_RECREATE"
+    read VENV_CHOICE
     if [[ "$VENV_CHOICE" =~ ^[Yy]$ ]]; then
         echo -e "$MSG_VENV_RECREATING"
         rm -rf "$VENV_NAME"
