@@ -593,3 +593,23 @@ When reporting issues, please include:
 ---
 
 **Last Updated**: 2025-01-15
+
+## 🐧 WSL Issues
+
+### Read-only File System Error
+If you see `wsl: An error occurred mounting the distribution disk...`, your WSL disk is corrupted or mounted incorrectly.
+**Solution:**
+1. Open PowerShell as Administrator.
+2. Run `wsl --shutdown`.
+3. Try opening Ubuntu again.
+
+### Command Not Found (`make`)
+If `make` is not found:
+```bash
+sudo apt update && sudo apt install -y make
+```
+
+### Windows vs WSL Sync
+If you edit files in Windows but don't see changes in WSL (or vice versa), check if you are running in `/mnt/c/` or `/home/user/`.
+- `/mnt/c/...`: Direct access to Windows files. Slow but synced.
+- `/home/...`: Fast (Linux FS), but requires `git pull` to sync with Windows changes pushed to GitHub.
