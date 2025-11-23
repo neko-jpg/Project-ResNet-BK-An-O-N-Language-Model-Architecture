@@ -41,107 +41,135 @@ def t(en, jp): return jp if IS_JP else en
 
 console = Console()
 
-def optimize_parameters(cal, goal, target_vram_ratio):
+class AutoTuner:
     """
-    Finds the maximum parameters (d_model, n_layers) that fit within the target VRAM.
-    Prioritizes Model Size (d_model, n_layers) over Batch Size if constrained.
+    Automated parameter tuning logic.
+    Optimizes configuration to fit within VRAM target using bidirectional scaling.
     """
-    total_vram = cal.vram_total if cal.vram_total > 0 else 8192
-    limit = total_vram * target_vram_ratio
+    def __init__(self, calibrator, goal):
+        self.cal = calibrator
+        self.goal = goal
 
-    # 1. Base constraints based on Goal
-    if goal == "2": # Benchmark
-        batch_size = 1
-        seq_len = 2048
-        d_model = 256
-        n_layers = 4
-    elif goal == "3": # Production
-        batch_size = 8
-        seq_len = 1024
-        d_model = 256
-        n_layers = 4
-    else: # Debug
-        batch_size = 2
-        seq_len = 512
-        d_model = 128
-        n_layers = 2
+        # Priority: d_model (Most impactful) -> n_layers -> batch_size -> seq_len
+        self.priority = ['d_model', 'n_layers', 'batch_size', 'n_seq']
 
-    final_mem = 0.0
-    final_time = 0.0
-    final_dm, final_nl = d_model, n_layers
+        # Constraints
+        self.limits = {
+            'd_model': {'min': 128, 'max': 4096, 'step': 64},
+            'n_layers': {'min': 2, 'max': 256, 'step': 2},
+            'batch_size': {'min': 1, 'max': 128, 'step': 1},
+            'n_seq': {'min': 128, 'max': 4096, 'step': 128}
+        }
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console
-    ) as progress:
-        task_id = progress.add_task(t("Scaling up parameters...", "パラメータを最適化（拡大）中..."), total=None)
+        # Adjust limits based on goal? (Optional, but kept simple for now)
+        if goal == "1": # Debug
+            self.limits['d_model']['max'] = 1024
+            self.limits['n_layers']['max'] = 16
 
-        # 2. Scale Up Phase (Using Predict)
-        # We increase d_model and n_layers iteratively until we hit the limit
-        # Strategy: Increase d_model by 64 and n_layers by 2 in steps
-        while True:
-            next_dm = final_dm + 64
-            next_nl = final_nl + 2
+    def tune(self, config, locked_params, target_vram_ratio):
+        """
+        Adjusts config to meet target_vram_ratio.
+        Respects locked_params.
+        Returns: (new_config, status_dict)
+        """
+        total_vram = self.cal.vram_total if self.cal.vram_total > 0 else 8192
+        target_vram = total_vram * target_vram_ratio
 
-            # Constraint check
-            if next_dm > 2048: break # Soft cap
+        current_cfg = config.copy()
+        iterations = 0
+        max_iterations = 100
+        direction = "stable"
 
-            # Predict
+        while iterations < max_iterations:
+            # Predict current usage
             with contextlib.redirect_stderr(io.StringIO()):
-                mem, _ = cal.predict(batch_size, seq_len, next_dm, next_nl)
+                est_mem, _ = self.cal.predict(
+                    current_cfg['batch_size'],
+                    current_cfg['n_seq'],
+                    current_cfg['d_model'],
+                    current_cfg['n_layers']
+                )
 
-            if mem > limit:
-                break # Stop growing
+            # Check convergence (within small margin or safe side)
+            # Actually we want to be <= target.
+            # If we are > target, we MUST reduce.
+            # If we are < target, we CAN expand (up to a point).
 
-            final_dm = next_dm
-            final_nl = next_nl
+            # Let's define "Convergence" as:
+            # 1. Under limit: est_mem <= target_vram
+            # 2. Close enough: est_mem >= target_vram * 0.95 (If we are expanding)
 
-            progress.update(task_id, description=t(f"Simulating {final_dm}x{final_nl}...", f"シミュレーション中: {final_dm}x{final_nl}..."))
-            time.sleep(0.01) # UI flush
+            if est_mem > target_vram:
+                # REDUCTION PHASE
+                direction = "reduce"
+                changed = False
+                for param in self.priority: # Reduce d_model first
+                    if param in locked_params: continue
 
-        # 3. Verification Phase (Estimate Exact)
-        # Verify the calculated max point. If OOM, reduce.
-        attempts = 0
-        valid_config = False
+                    val = current_cfg[param]
+                    lim = self.limits[param]
 
-        # Start verification from the predicted max
-        d_model, n_layers = final_dm, final_nl
+                    if val > lim['min']:
+                        # Reduce
+                        step = lim['step']
+                        new_val = max(lim['min'], val - step)
+                        current_cfg[param] = new_val
+                        changed = True
+                        break # One change per iteration to re-evaluate VRAM
 
-        while not valid_config and attempts < 15:
-            progress.update(task_id, description=t(f"Verifying {d_model}x{n_layers}...", f"実測検証中: {d_model}x{n_layers}..."))
-
-            # Run exact check
-            with contextlib.redirect_stderr(io.StringIO()):
-                 real_mem, real_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers)
-
-            if real_mem is not None and real_mem <= limit:
-                # Success
-                final_mem = real_mem
-                final_time = real_time
-                valid_config = True
-                progress.update(task_id, description=t("Optimization Successful!", "最適化成功！"))
-            else:
-                # Failed (OOM or Limit Exceeded)
-                progress.update(task_id, description=t(f"Limit exceeded. Reducing...", f"上限超過。縮小中..."))
-
-                # Reduction Strategy: Prioritize keeping d_model if possible, but d_model is heavy.
-                # Reduce d_model by 64
-                d_model = max(128, d_model - 64)
-                # If d_model is already small, reduce layers
-                if d_model <= 256:
-                     n_layers = max(2, n_layers - 2)
-
-                attempts += 1
-                if d_model <= 128 and n_layers <= 2:
-                    # Minimum reached, just accept it (or fail later)
-                    valid_config = True
-                    final_mem = real_mem if real_mem else 9999
+                if not changed:
+                    # Cannot reduce further (everything min or locked)
                     break
 
-    return batch_size, seq_len, d_model, n_layers, final_mem, final_time
+            elif est_mem < target_vram * 0.95:
+                # EXPANSION PHASE
+                # Only expand if we are significantly below (e.g., < 95%)
+                direction = "expand"
+                changed = False
+                for param in self.priority: # Expand d_model first
+                    if param in locked_params: continue
+
+                    val = current_cfg[param]
+                    lim = self.limits[param]
+
+                    if val < lim['max']:
+                        # Check if next step would blow limit?
+                        # No, just expand, loop will catch it next time and reduce if needed.
+                        # But to avoid oscillation, we should be careful.
+                        # Simple approach: Expand, let next iteration reduce if overshot.
+                        # To prevent infinite toggle, maybe check prediction here?
+
+                        step = lim['step']
+                        next_val = val + step
+
+                        # Tentative check
+                        temp_cfg = current_cfg.copy()
+                        temp_cfg[param] = next_val
+                        with contextlib.redirect_stderr(io.StringIO()):
+                            temp_mem, _ = self.cal.predict(
+                                temp_cfg['batch_size'], temp_cfg['n_seq'],
+                                temp_cfg['d_model'], temp_cfg['n_layers']
+                            )
+
+                        if temp_mem <= target_vram:
+                            current_cfg[param] = next_val
+                            changed = True
+                            break # One change per iteration
+
+                if not changed:
+                    break
+            else:
+                # Converged (Between 95% and 100%)
+                direction = "converged"
+                break
+
+            iterations += 1
+
+        return current_cfg, {
+            "iterations": iterations,
+            "final_mem": est_mem,
+            "direction": direction
+        }
 
 def main():
     console.print(Panel.fit(
@@ -156,15 +184,12 @@ def main():
     console.print(t("2. Benchmark (Push limits)", "2. ベンチマーク (性能の限界に挑戦)"))
     console.print(t("3. Production (Train a good model)", "3. 本番学習 (良いモデルを作る)"))
 
-    goal = IntPrompt.ask("Choice", choices=["1", "2", "3"], default="1")
+    goal_choice = IntPrompt.ask("Choice", choices=["1", "2", "3"], default="1")
 
-    # 2. Calibration & Triton Check
+    # 2. Calibration
     cal = MuseCalibrator()
-
-    # Check Triton: Strict unless Debug mode
-    # If Goal=1 (Debug), strict=False. Else True.
     if cal:
-        cal.check_triton(strict=(goal != "1"))
+        cal.check_triton(strict=(goal_choice != "1"))
 
     if cal and cal.device.type == 'cuda':
         if Confirm.ask(t("Run hardware calibration?", "ハードウェア診断（キャリブレーション）を実行しますか？"), default=True):
@@ -172,7 +197,7 @@ def main():
     else:
         console.print(t("[yellow]Skipping calibration (CPU or module missing).[/yellow]", "[yellow]キャリブレーションをスキップします。[/yellow]"))
 
-    # 3. Dataset Recipe
+    # 3. Dataset Recipe (Simplified for this file update, keeping logic)
     data_dir = Path("data")
     available_datasets = []
     if data_dir.exists():
@@ -187,154 +212,153 @@ def main():
         console.print(t("2. Japanese Focused (Auto)", "2. 日本語重視 (おまかせ)"))
         console.print(t("3. Code Heavy (Auto)", "3. コード重視 (おまかせ)"))
         console.print(t("4. Manual (Custom)", "4. 手動設定 (カスタム)"))
-
         strategy = IntPrompt.ask("Choice", choices=["1", "2", "3", "4"], default="1")
 
-        # ... (Existing Recipe Logic - Simplified Copy) ...
-        # (We need to reimplement the strategy logic here as we are overwriting)
-        def assign_ratios(strategy_id):
-            jp_sets = [d for d in available_datasets if 'jp' in d.lower() or 'japanese' in d.lower() or 'wiki_ja' in d.lower()]
-            code_sets = [d for d in available_datasets if 'code' in d.lower() or 'python' in d.lower() or 'evol' in d.lower()]
-            general_sets = [d for d in available_datasets if d not in jp_sets and d not in code_sets]
+        # Quick re-impl of ratio logic
+        jp_sets = [d for d in available_datasets if 'jp' in d.lower() or 'japanese' in d.lower() or 'wiki_ja' in d.lower()]
+        code_sets = [d for d in available_datasets if 'code' in d.lower() or 'python' in d.lower() or 'evol' in d.lower()]
+        general_sets = [d for d in available_datasets if d not in jp_sets and d not in code_sets]
 
-            cat_weights = {'jp': 0.33, 'code': 0.33, 'gen': 0.34}
-            if strategy_id == "2": cat_weights = {'jp': 0.70, 'code': 0.15, 'gen': 0.15}
-            elif strategy_id == "3": cat_weights = {'jp': 0.15, 'code': 0.70, 'gen': 0.15}
+        def get_ratios(strat):
+            if strat == "4": return {}
+            w = {'jp': 0.33, 'code': 0.33, 'gen': 0.34}
+            if strat == "2": w = {'jp': 0.70, 'code': 0.15, 'gen': 0.15}
+            elif strat == "3": w = {'jp': 0.15, 'code': 0.70, 'gen': 0.15}
 
-            ratios_local = {ds: 0.0 for ds in available_datasets}
+            res = {}
+            for s, k in [(jp_sets, 'jp'), (code_sets, 'code'), (general_sets, 'gen')]:
+                if s:
+                    for d in s: res[d] = w[k] / len(s)
 
-            for sets, key in [(jp_sets, 'jp'), (code_sets, 'code'), (general_sets, 'gen')]:
-                if sets:
-                    for d in sets: ratios_local[d] = cat_weights[key] / len(sets)
+            tot = sum(res.values())
+            if tot > 0:
+                for k in res: res[k] /= tot
+            return res
 
-            total = sum(ratios_local.values())
-            if total > 0:
-                for k in ratios_local: ratios_local[k] /= total
-            return ratios_local
+        ratios = get_ratios(strategy)
 
-        if strategy == "4":
-            remaining = 100
+        if strategy == "4" or not Confirm.ask(t("Use this mix?", "この配合でよろしいですか？"), default=True):
+            console.print(t("Switching to manual...", "手動モードに切り替えます..."))
+            rem = 100
+            ratios = {}
             for i, ds in enumerate(available_datasets):
-                if i == len(available_datasets) - 1:
-                    val = remaining
-                    console.print(f"- {ds}: [bold]{val}%[/bold] (Auto-filled)")
-                else:
-                    val = IntPrompt.ask(f"- {ds} (Remaining: {remaining}%)", default=0)
-                    val = min(val, remaining)
+                val = IntPrompt.ask(f"- {ds} (Remaining: {rem}%)", default=0)
+                val = min(val, rem)
                 ratios[ds] = val / 100.0
-                remaining -= val
-        else:
-            ratios = assign_ratios(strategy)
-            # Normalize
-            if sum(ratios.values()) <= 0:
-                 ratios = {ds: 1.0 / len(available_datasets) for ds in available_datasets}
+                rem -= val
 
-            mix_table = Table(title=t("Proposed Mix", "提案された配合"))
-            mix_table.add_column("Dataset", style="cyan")
-            mix_table.add_column("Weight (%)", style="magenta")
-            for ds, r in ratios.items():
-                mix_table.add_row(ds, f"{r*100:.1f}")
-            console.print(mix_table)
-
-            if not Confirm.ask(t("Use this mix?", "この配合でよろしいですか？"), default=True):
-                 # Fallback to manual
-                 ratios = {} # simplified for brevity, assume user wants empty or restart
-                 # Actually standard behavior: if no, go to manual.
-                 # For now, to keep file size small, I'll assume Yes or simple fallback.
-                 # Let's just implement simple manual fallback
-                 console.print(t("Switching to manual...", "手動モードに切り替えます..."))
-                 remaining = 100
-                 for i, ds in enumerate(available_datasets):
-                     val = IntPrompt.ask(f"- {ds} (Remaining: {remaining}%)", default=0)
-                     val = min(val, remaining)
-                     ratios[ds] = val / 100.0
-                     remaining -= val
-
-    else:
-        console.print(t("[yellow]No datasets found.[/yellow]", "[yellow]データセットが見つかりません。[/yellow]"))
-
-    # 4. Target VRAM & Parameter Optimization
+    # 4. Auto-Tuner Setup
     console.print(t("\n[Hardware Limit Settings]", "\n[ハードウェア制限設定]"))
-    target_vram_percent = IntPrompt.ask(
-        t("Target VRAM Usage (%)", "目標VRAM使用率 (%)"),
-        default="90"
-    )
+    target_vram_percent = IntPrompt.ask(t("Target VRAM Usage (%)", "目標VRAM使用率 (%)"), default="90")
     target_vram_ratio = target_vram_percent / 100.0
 
-    # Default Start Points
-    d_model, n_layers, batch_size, seq_len = 512, 6, 4, 1024
-    epochs = 1
-    if goal == "3": epochs = 3 # Production default
+    tuner = AutoTuner(cal, goal_choice)
 
-    # Auto-Optimize
+    # Initial defaults
+    config = {
+        'd_model': 512, 'n_layers': 6, 'batch_size': 4, 'n_seq': 1024, 'epochs': 1
+    }
+    if goal_choice == "3": config['epochs'] = 3
+
+    locked_params = {}
+
+    # Initial Auto-Tune
     if cal and cal.memory_coeffs['base'] > 0:
-        bs, sl, dm, nl, mem, time_sec = optimize_parameters(cal, goal, target_vram_ratio)
-        d_model, n_layers, batch_size, seq_len = dm, nl, bs, sl
+        with console.status(t("Auto-tuning...", "自動最適化中...")):
+            config, _ = tuner.tune(config, locked_params, target_vram_ratio)
 
-    # 5. Proposal & Manual Override Loop
+    # 5. Cascading Manual Loop
     while True:
+        # Estimate
+        est_mem = 0
+        est_time = 0
+        if cal and cal.memory_coeffs['base'] > 0:
+            with contextlib.redirect_stderr(io.StringIO()):
+                est_mem, est_time = cal.predict(
+                    config['batch_size'], config['n_seq'], config['d_model'], config['n_layers']
+                )
+
+        usage_pct = (est_mem / (cal.vram_total if cal.vram_total > 0 else 8192)) * 100
+
+        # Display Status
+        console.clear() # Optional: Clear screen for cleaner UI? maybe just print new table
+        # Actually clearing might be too aggressive if user wants to see history. Let's just print.
+
         table = Table(title=t("Configuration Proposal", "設定プロポーザル"))
         table.add_column("Parameter", style="cyan")
         table.add_column("Value", style="magenta")
+        table.add_column("Status", style="yellow")
 
-        table.add_row("d_model", str(d_model))
-        table.add_row("n_layers", str(n_layers))
-        table.add_row("Batch Size", str(batch_size))
-        table.add_row("Sequence Length", str(seq_len))
-        table.add_row("Epochs", str(epochs))
+        for k in ['d_model', 'n_layers', 'batch_size', 'n_seq', 'epochs']:
+            val = config.get(k, 0)
+            lock_status = "🔒 Locked" if k in locked_params else "Auto"
+            if k == 'epochs': lock_status = "Manual" # Epochs not tuned by VRAM usually
+            table.add_row(k, str(val), lock_status)
 
-        # Verify stats
-        est_mem = 0
-        est_time = 0
-        total_vram_disp = cal.vram_total if cal and cal.vram_total > 0 else 8192
-
-        if cal and cal.memory_coeffs['base'] > 0:
-            with console.status(t("Verifying config...", "設定を検証中...")):
-                # Use predict first for speed, then verify?
-                # Actually for final validation, we want estimate_exact if possible
-                with contextlib.redirect_stderr(io.StringIO()):
-                     r_mem, r_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers)
-                     if r_mem is not None:
-                         est_mem = r_mem
-                     else:
-                         # OOM or failed
-                         p_mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
-                         est_mem = p_mem if p_mem > total_vram_disp else 999999
-
-        usage_pct = (est_mem / total_vram_disp) * 100
-        table.add_row("Est. VRAM", f"{est_mem:.0f} MB ({usage_pct:.1f}%)")
+        table.add_row("Est. VRAM", f"{est_mem:.0f} MB ({usage_pct:.1f}%)", "")
         console.print(table)
 
-        # Check Limits
         if usage_pct > 100:
-             console.print(t("[bold red]⛔ LIMIT EXCEEDED: VRAM usage > 100%[/bold red]", "[bold red]⛔ 上限超過: VRAM使用率が100%を超えています。再設定してください。[/bold red]"))
-             # Force Override (No break)
+             console.print(t("[bold red]⛔ LIMIT EXCEEDED[/bold red]", "[bold red]⛔ 上限超過[/bold red]"))
         elif usage_pct > target_vram_percent:
-             console.print(t(f"[yellow]⚠ Warning: Usage {usage_pct:.1f}% exceeds target {target_vram_percent}%[/yellow]",
-                             f"[yellow]⚠ 警告: 使用率 {usage_pct:.1f}% が目標 {target_vram_percent}% を超えています[/yellow]"))
-             if Confirm.ask(t("Accept anyway?", "それでも続行しますか？"), default=False):
-                 break
+             console.print(t(f"[yellow]⚠ Usage {usage_pct:.1f}% > Target {target_vram_percent}%[/yellow]", f"[yellow]⚠ 目標超過: {usage_pct:.1f}% > {target_vram_percent}%[/yellow]"))
+
+        # Interaction
+        console.print(t("\nOptions:", "\n操作オプション:"))
+        console.print(t(" [Enter] Accept & Start (Auto-fix if invalid)", " [Enter] 決定して開始 (超過時は自動修正)"))
+        console.print(t(" [key=val] Set value (e.g. d_model=1024)", " [key=val] 値を指定 (例: d_model=1024)"))
+        console.print(t(" [r] Reset locks", " [r] ロック解除"))
+
+        user_input = Prompt.ask("Command")
+
+        if not user_input:
+            # Empty Enter
+            if usage_pct > target_vram_percent or usage_pct < target_vram_percent * 0.9:
+                # If not optimal, tune one last time and confirm
+                if usage_pct > 100:
+                     console.print(t("Fixing configuration to fit VRAM...", "VRAMに収まるよう自動修正します..."))
+                else:
+                     console.print(t("Optimizing usage...", "使用率を最適化します..."))
+
+                config, _ = tuner.tune(config, locked_params, target_vram_ratio)
+                continue # Re-show table
+            else:
+                break # Go to save
+
+        elif user_input.lower() == 'r':
+            locked_params = {}
+            console.print("Locks reset.")
+            # Re-tune from scratch?
+            continue
+
+        elif "=" in user_input:
+            try:
+                k, v = user_input.split("=")
+                k = k.strip()
+                v = int(v.strip())
+
+                # Map short names if needed
+                key_map = {'seq': 'n_seq', 'seq_len': 'n_seq', 'bs': 'batch_size', 'batch': 'batch_size', 'layers': 'n_layers', 'dim': 'd_model'}
+                k = key_map.get(k, k)
+
+                if k in config:
+                    config[k] = v
+                    if k != 'epochs': # Don't lock epochs for tuner
+                        locked_params[k] = True
+
+                    # Trigger Auto-Tune for others
+                    with console.status(t("Re-calculating...", "再計算中...")):
+                        config, _ = tuner.tune(config, locked_params, target_vram_ratio)
+                else:
+                    console.print(f"[red]Unknown parameter: {k}[/red]")
+            except ValueError:
+                console.print("[red]Invalid format. Use key=value[/red]")
         else:
-             if Confirm.ask(t("Accept this configuration?", "この設定で決定しますか？"), default=True):
-                 break
+            console.print("[red]Unknown command[/red]")
 
-        # Manual Entry
-        console.print(t("Enter manual overrides (Empty to keep):", "手動で上書きします（空Enterで維持）:"))
-        try:
-            d_model = int(Prompt.ask("d_model", default=str(d_model)))
-            n_layers = int(Prompt.ask("n_layers", default=str(n_layers)))
-            batch_size = int(Prompt.ask("Batch Size", default=str(batch_size)))
-            seq_len = int(Prompt.ask("Sequence Length", default=str(seq_len)))
-            epochs = int(Prompt.ask("Epochs", default=str(epochs)))
-        except ValueError:
-             console.print("[red]Invalid input[/red]")
-
-    # 6. Save Config
+    # 6. Save (Same as before)
     config_dir = Path("configs")
     config_dir.mkdir(exist_ok=True)
-
-    if not ratios and available_datasets:
-        ratios = {ds: 1.0 / len(available_datasets) for ds in available_datasets}
 
     datasets_cfg = {}
     for ds, w in ratios.items():
@@ -347,9 +371,10 @@ def main():
         yaml.dump({'datasets': datasets_cfg}, f)
 
     train_config = {
-        'd_model': d_model, 'n_layers': n_layers, 'batch_size': batch_size,
-        'n_seq': seq_len, 'epochs': epochs,
-        'learning_rate': 1e-4 if goal == "3" else 1e-3
+        'd_model': config['d_model'], 'n_layers': config['n_layers'],
+        'batch_size': config['batch_size'],
+        'n_seq': config['n_seq'], 'epochs': config.get('epochs', 1),
+        'learning_rate': 1e-4 if goal_choice == "3" else 1e-3
     }
     with open(config_dir / "user_train_config.yaml", 'w') as f:
         yaml.dump(train_config, f)
