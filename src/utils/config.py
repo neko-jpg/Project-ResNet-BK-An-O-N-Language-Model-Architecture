@@ -109,6 +109,7 @@ def parse_args():
     parser.add_argument('--data-limit', type=int, default=500000, help='Max tokens to use')
     parser.add_argument('--log-interval', type=int, default=50, help='Logging interval (steps)')
     parser.add_argument('--save-dir', type=str, default='checkpoints', help='Checkpoint save directory')
+    parser.add_argument('--resume-from', type=str, default=None, help='Path to checkpoint to resume from')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     
     # Device

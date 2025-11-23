@@ -23,6 +23,13 @@ help:
 		echo "make test       - テストの実行"; \
 		echo "make demo       - MUSEデモの実行"; \
 		echo "make clean      - 仮想環境とキャッシュの削除"; \
+		echo "make scale-up   - ハードウェアに合わせた最適設定の自動生成"; \
+		echo "make chat       - MUSE Creative Studio (Chat & Merge)"; \
+		echo "make dashboard  - 学習状況の可視化 (Streamlit)"; \
+		echo "make clean-safe - ゴミファイルと古いチェックポイントの掃除"; \
+		echo "make deploy     - Hugging Faceへデプロイ"; \
+		echo "make pack       - 配布用Zipの作成"; \
+		echo "make restore    - 現在の状態をバックアップ"; \
 		echo "make up         - Docker環境の起動"; \
 		echo "make down       - Docker環境の停止"; \
 	else \
@@ -34,11 +41,20 @@ help:
 		echo "make import     - Import user data from data/import/"; \
 		echo "make recipe     - Configure dataset mixing recipe"; \
 		echo "make train-user - Start training with user recipe"; \
+		echo "make train-resume - Resume training (Usage: make train-resume CHECKPOINT=...)"; \
+		echo "make reborn       - Reborn Ritual (Usage: make reborn CHECKPOINT=...)"; \
 		echo "make data-lite  - Download small test dataset"; \
 		echo "make data       - Download ALL datasets"; \
 		echo "make test       - Run tests"; \
 		echo "make demo       - Run MUSE capabilities demo"; \
 		echo "make clean      - Remove venv and artifacts"; \
+		echo "make scale-up   - Auto-configure for hardware"; \
+		echo "make chat       - MUSE Creative Studio (Chat & Merge)"; \
+		echo "make dashboard  - Visualize Training (Streamlit)"; \
+		echo "make clean-safe - Clean garbage and old checkpoints"; \
+		echo "make deploy     - Deploy to Hugging Face"; \
+		echo "make pack       - Create distribution Zip"; \
+		echo "make restore    - Backup current state"; \
 		echo "make up         - Start Docker environment"; \
 		echo "make down       - Stop Docker environment"; \
 	fi'
@@ -87,9 +103,56 @@ recipe:
 	$(PYTHON) scripts/configure_recipe.py
 
 train-user:
-	@if [ -f configs/user_train_config.yaml ]; then \
+	@if [ -f configs/auto_optimized.yaml ]; then \
+		echo "Using auto-optimized config..."; \
+		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/auto_optimized.yaml; \
+	elif [ -f configs/user_train_config.yaml ]; then \
 		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/user_train_config.yaml; \
 	else \
 		echo "User config not found. Running with default preset 'small'."; \
 		$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config-preset small; \
 	fi
+
+train-resume:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --resume-from $(CHECKPOINT)
+
+reborn:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/elder.pt"; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/reborn.py --checkpoint $(CHECKPOINT)
+
+merge:
+	$(PYTHON) scripts/merge_models.py --help
+
+scale-up:
+	$(PYTHON) scripts/auto_scale.py
+
+chat:
+	$(VENV)/bin/streamlit run app.py
+
+dashboard:
+	$(VENV)/bin/streamlit run app.py
+
+clean-safe:
+	$(PYTHON) scripts/muse_utils.py clean-safe
+
+deploy:
+	$(PYTHON) scripts/deploy_interactive.py
+
+restore:
+	$(PYTHON) scripts/muse_utils.py restore-point
+
+pack:
+	$(PYTHON) scripts/muse_utils.py pack
+
+check-update:
+	$(PYTHON) scripts/muse_utils.py version-guardian
+
+notify:
+	$(PYTHON) scripts/muse_utils.py notify

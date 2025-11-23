@@ -12,6 +12,17 @@ from typing import Optional, Dict
 import json
 
 
+def load_env():
+    """Load environment variables from .env file manually."""
+    if os.path.exists(".env"):
+        with open(".env", "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    os.environ[key] = val
+
+
 def upload_model_to_hub(
     model_path: str,
     repo_id: str,
@@ -374,6 +385,7 @@ def batch_upload_models(
 
 
 def main():
+    load_env()
     parser = argparse.ArgumentParser(description="Upload ResNet-BK models to Hugging Face Hub")
     parser.add_argument(
         "--model_path",

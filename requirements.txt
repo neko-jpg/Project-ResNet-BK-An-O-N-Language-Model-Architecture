@@ -58,3 +58,7 @@ zarr==2.16.0
 aiofiles==23.2.1
 networkx==3.1
 sympy==1.12
+
+# UI / Dashboard
+streamlit>=1.24.0
+plotly>=5.18.0

@@ -27,6 +27,7 @@ from src.utils import (
     MetricsLogger,
     WandBLogger,
 )
+from src.training.curriculum import CurriculumScheduler
 
 
 def train():
@@ -98,6 +99,19 @@ def train():
         lr=args.lr,
         weight_decay=args.weight_decay
     )
+
+    # Resume from checkpoint
+    if args.resume_from:
+        print(f"Loading checkpoint: {args.resume_from}")
+        try:
+            checkpoint = torch.load(args.resume_from, map_location=device)
+            model.model.load_state_dict(checkpoint['model_state_dict'])
+            if 'optimizer_state_dict' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            print("✓ Resume successful")
+        except Exception as e:
+            print(f"Error resuming from checkpoint: {e}")
+            return
     
     criterion = nn.CrossEntropyLoss()
     
@@ -111,6 +125,12 @@ def train():
         eta_min=args.lr / 10
     )
     
+    # Curriculum Scheduler (only for mixed data)
+    curriculum = None
+    if use_mixed:
+        curriculum = CurriculumScheduler(mixed_loader, window_size=50, threshold=0.001)
+        print("Enable Curriculum Optimizer: ON")
+
     # Setup logging
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +198,11 @@ def train():
             )
             optimizer.step()
             scheduler.step()
+
+            # Curriculum Step
+            if curriculum:
+                curriculum.step(loss.item())
+
             global_step += 1
             
             step_time = time.time() - step_start
