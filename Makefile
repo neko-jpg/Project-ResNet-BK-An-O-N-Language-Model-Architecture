@@ -57,7 +57,7 @@ data-lite:
 	$(PYTHON) scripts/prepare_datasets.py --datasets cosmopedia --max_samples 1000
 
 data:
-	$(PYTHON) scripts/prepare_datasets.py --all
+	$(PYTHON) scripts/prepare_datasets.py
 
 test:
 	$(PYTEST) tests/

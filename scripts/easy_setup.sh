@@ -198,7 +198,7 @@ case $DATA_CHOICE in
         ;;
     2)
         echo -e "${BLUE}$MSG_DATA_FULL${NC}"
-        python scripts/prepare_datasets.py --all
+        python scripts/prepare_datasets.py
         ;;
     *)
         echo -e "$MSG_DATA_SKIP"
