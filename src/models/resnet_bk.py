@@ -14,6 +14,7 @@ Hamiltonian `H_ε = H_0 + V_ε` as features for the language model.
 
 import torch
 import torch.nn as nn
+from typing import Optional, Dict
 
 from .bk_core import BKCoreFunction
 from .moe import SparseMoELayer
@@ -29,6 +30,9 @@ class MoEResNetBKLayer(nn.Module):
     features `x` as a source to define a potential `V_ε`, which perturbs a
     base Hamiltonian `H_0`. The spectral response of this perturbed system,
     `H_ε = H_0 + V_ε`, is then computed and used as learned features.
+
+    Now supports Non-Hermitian Physics via learnable gamma decay term:
+    H_eff = H - i*gamma
 
     Architectural Flow (Forward Pass):
     1.  Input `x` (B, N, D) is projected to a scalar potential `v_prelim` (B, N).
@@ -60,6 +64,7 @@ class MoEResNetBKLayer(nn.Module):
         use_lap: bool = True,
         schatten_threshold: float = 100.0,
         precision_upgrade_threshold: float = 1e6,
+        use_bitnet: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -75,6 +80,10 @@ class MoEResNetBKLayer(nn.Module):
         # Learnable scale for BK branch contribution (per-channel scaling)
         self.bk_scale = nn.Parameter(torch.ones(d_model, dtype=torch.float32))
 
+        # Non-Hermitian Physics: Learnable decay rate gamma (init 0.0)
+        # H_eff = H - i*gamma
+        self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
+
         # Initialize BK-Core (either Birman-Schwinger or original)
         if use_birman_schwinger:
             self.birman_schwinger_core = BirmanSchwingerCore(
@@ -84,6 +93,7 @@ class MoEResNetBKLayer(nn.Module):
                 use_lap=use_lap,
                 schatten_threshold=schatten_threshold,
                 precision_upgrade_threshold=precision_upgrade_threshold,
+                use_bitnet=use_bitnet,
             )
             # Store diagnostics
             self.last_bs_diagnostics = {}
@@ -123,12 +133,16 @@ class MoEResNetBKLayer(nn.Module):
         v_prelim = self.v_proj(x).squeeze(-1)  # (B, N)
         v_prelim = torch.clamp(v_prelim, -self.v_max, self.v_max)
 
+        # Get gamma decay rate
+        gamma_val = self.gamma
+
         # Compute BK features using either Birman-Schwinger or original core
         # This gives us G_ii for scattering router
         G_ii = None
         if self.use_birman_schwinger:
-            # Use Birman-Schwinger core with LAP stability
-            features, diagnostics = self.birman_schwinger_core(v_prelim, z=1.0j)  # (B, N, 2)
+            # Use Birman-Schwinger core with LAP stability and Non-Hermitian gamma
+            # Pass gamma explicitly
+            features, diagnostics = self.birman_schwinger_core(v_prelim, z=1.0j, gamma=gamma_val)  # (B, N, 2)
             self.last_bs_diagnostics = diagnostics
             
             # Extract G_ii for scattering router
@@ -147,6 +161,10 @@ class MoEResNetBKLayer(nn.Module):
             # epsilon = softplus(param) to ensure positivity
             epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-6
             z = 1.0j * epsilon
+
+            # Add Non-Hermitian decay gamma to z
+            z = z + 1j * gamma_val
+
             z = z.to(dtype=torch.complex64, device=he_diag.device)
 
             # BK-Core + hybrid analytic gradient
@@ -216,6 +234,7 @@ class ResNetBKBlock(nn.Module):
         use_lap: bool = True,
         schatten_threshold: float = 100.0,
         precision_upgrade_threshold: float = 1e6,
+        use_bitnet: bool = False,
     ):
         super().__init__()
         self.layer_norm = nn.LayerNorm(d_model)
@@ -234,12 +253,169 @@ class ResNetBKBlock(nn.Module):
             use_lap=use_lap,
             schatten_threshold=schatten_threshold,
             precision_upgrade_threshold=precision_upgrade_threshold,
+            use_bitnet=use_bitnet,
         )
 
     def forward(self, x):
         """Pre-Norm residual structure."""
         out = self.bk_layer(self.layer_norm(x))
         return x + out
+
+
+class SymplecticBKBlock(nn.Module):
+    """
+    Symplectic Integrator Block (The "Time Machine").
+
+    Replaces standard residual connection with a physical Hamiltonian time evolution
+    using Velocity Verlet integration.
+
+    State:
+        x -> separated into (q, p)
+        q: Position (canonical coordinate)
+        p: Momentum (conjugate momentum)
+
+    Dynamics (Velocity Verlet):
+        1. p_{t+0.5} = p_t - 0.5 * eps * dV/dq(q_t)
+        2. q_{t+1}   = q_t + eps * p_{t+0.5}
+        3. p_{t+1}   = p_{t+0.5} - 0.5 * eps * dV/dq(q_{t+1})
+
+    Force term:
+        F(q) = -dV/dq ≈ MoEResNetBKLayer(q)
+        We interpret the BK layer output as the "force" acting on the system.
+
+    Energy Conservation:
+        H(q, p) = |p|^2 / 2 + V(q)
+        The symplectic integrator approximately conserves this energy.
+    """
+
+    def __init__(
+        self,
+        d_model,
+        n_seq,
+        num_experts=4,
+        top_k=1,
+        dropout_p=0.1,
+        use_scattering_router: bool = False,
+        scattering_scale: float = 0.1,
+        scattering_scale_warmup_steps: int = 0,
+        use_birman_schwinger: bool = False,
+        epsilon: float = 1.0,
+        use_mourre: bool = True,
+        use_lap: bool = True,
+        schatten_threshold: float = 100.0,
+        precision_upgrade_threshold: float = 1e6,
+        use_bitnet: bool = False,
+        dt: float = 0.1, # Time step size
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.dt = dt
+
+        # Ensure d_model is even for q, p splitting if we were splitting.
+        # However, to be compatible with ResNetBKBlock interface where x is (B, N, D),
+        # we will treat input x as q, and maintain p as a persistent state or duplicate dimensions?
+        # A common ResNet replacement strategy is:
+        # Input x is treated as [q, p] concatenated or we augment it.
+        # But standard Transformer blocks keep D constant.
+        #
+        # Better approach for "Block" replacement:
+        # Input x is q. We need p.
+        # If we want to replace ResNet, we must maintain state across layers.
+        # But layers are independent modules.
+        #
+        # The user said: "State split into (q, p)".
+        # This implies the model backbone must carry (q, p).
+        # But for this Block class to be a drop-in, it might be tricky.
+        #
+        # ADAPTATION:
+        # We assume the input `x` to this block is actually a tuple (q, p) OR
+        # we assume `x` has shape (B, N, 2*D_half).
+        # Given the instruction "Split state into (q, p)", let's assume d_model covers both.
+        # Or simpler: The "state" of the network is (q, p).
+        # We will assume input x is concatenated [q, p] along last dim.
+
+        self.d_q = d_model // 2
+        assert d_model % 2 == 0, "d_model must be even for Symplectic Block (q, p split)"
+
+        self.layer_norm_q = nn.LayerNorm(self.d_q)
+
+        # The BK Layer acts as the Force Field F(q)
+        # Note: It acts on q (d_model/2) and must return Force (d_model/2)
+        self.force_field = MoEResNetBKLayer(
+            d_model=self.d_q,
+            n_seq=n_seq,
+            num_experts=num_experts,
+            top_k=top_k,
+            dropout_p=dropout_p,
+            use_scattering_router=use_scattering_router,
+            scattering_scale=scattering_scale,
+            scattering_scale_warmup_steps=scattering_scale_warmup_steps,
+            use_birman_schwinger=use_birman_schwinger,
+            epsilon=epsilon,
+            use_mourre=use_mourre,
+            use_lap=use_lap,
+            schatten_threshold=schatten_threshold,
+            precision_upgrade_threshold=precision_upgrade_threshold,
+            use_bitnet=use_bitnet,
+        )
+
+    def forward(self, x):
+        """
+        Symplectic Step.
+
+        Args:
+            x: Tensor of shape (B, N, D).
+               We split this into q = x[..., :D/2] and p = x[..., D/2:]
+
+        Returns:
+            next_state: Tensor of shape (B, N, D) containing [next_q, next_p]
+        """
+        B, N, D = x.shape
+        q = x[..., :self.d_q]
+        p = x[..., self.d_q:]
+
+        # Velocity Verlet Integration
+        dt = self.dt
+
+        # 1. First half-step for momentum
+        # p_{t+0.5} = p_t + 0.5 * dt * F(q_t)
+        # Note: Force = -dV/dq.
+        # BK Layer returns "features" which we interpret as Force.
+        # Apply LayerNorm to q before Force calculation for stability
+        q_norm = self.layer_norm_q(q)
+        force_t = self.force_field(q_norm)
+
+        # Ensure dimensionality matches
+        assert force_t.shape == p.shape, f"Force shape {force_t.shape} mismatch with p shape {p.shape}"
+
+        p_half = p + 0.5 * dt * force_t
+
+        # 2. Full step for position
+        # q_{t+1} = q_t + dt * p_{t+0.5}
+        q_next = q + dt * p_half
+
+        # 3. Second half-step for momentum
+        # p_{t+1} = p_{t+0.5} + 0.5 * dt * F(q_{t+1})
+        q_next_norm = self.layer_norm_q(q_next)
+        force_next = self.force_field(q_next_norm)
+
+        p_next = p_half + 0.5 * dt * force_next
+
+        # Re-assemble state
+        next_state = torch.cat([q_next, p_next], dim=-1)
+
+        # Diagnostic: Energy Conservation Check
+        # H = |p|^2/2. (Potential energy V is implicit, hard to measure directly from Force)
+        # We can check Kinetic Energy change
+        with torch.no_grad():
+            ke_prev = 0.5 * p.norm(p=2, dim=-1).mean()
+            ke_next = 0.5 * p_next.norm(p=2, dim=-1).mean()
+            self.last_ke_diff = (ke_next - ke_prev).abs()
+
+        return next_state
+
+    def get_energy_diff(self):
+        return getattr(self, 'last_ke_diff', torch.tensor(0.0))
 
 
 class LanguageModel(nn.Module):
@@ -285,12 +461,16 @@ class LanguageModel(nn.Module):
         schatten_threshold: float = 100.0,
         precision_upgrade_threshold: float = 1e6,
         k_max: int = 3,
+        use_bitnet: bool = False,
+        use_symplectic: bool = False, # New Flag
+        symplectic_dt: float = 0.1,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
         self.use_birman_schwinger = use_birman_schwinger
         self.prime_bump_init = prime_bump_init
+        self.use_symplectic = use_symplectic
 
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.position_embedding = nn.Embedding(n_seq, d_model)
@@ -306,8 +486,14 @@ class LanguageModel(nn.Module):
         else:
             self.prime_bump_potential = None
 
+        block_class = SymplecticBKBlock if use_symplectic else ResNetBKBlock
+
+        # If symplectic, d_model must be even and acts as combined [q,p]
+        if use_symplectic and d_model % 2 != 0:
+            raise ValueError("d_model must be even when use_symplectic=True")
+
         self.blocks = nn.ModuleList([
-            ResNetBKBlock(
+            block_class(
                 d_model=d_model,
                 n_seq=n_seq,
                 num_experts=num_experts,
@@ -322,6 +508,8 @@ class LanguageModel(nn.Module):
                 use_lap=use_lap,
                 schatten_threshold=schatten_threshold,
                 precision_upgrade_threshold=precision_upgrade_threshold,
+                use_bitnet=use_bitnet,
+                **({'dt': symplectic_dt} if use_symplectic else {})
             )
             for _ in range(n_layers)
         ])
@@ -403,16 +591,27 @@ class LanguageModel(nn.Module):
         routing_diagnostics_list = []
         for block in self.blocks:
             h = block(h)
-            # collect routing entropy if available
-            if hasattr(block.bk_layer.moe_ffn, "last_routing_entropy"):
-                ent = block.bk_layer.moe_ffn.last_routing_entropy
-                if ent is not None:
-                    routing_entropies.append(ent)
-            # collect routing diagnostics if available
-            if hasattr(block.bk_layer, "last_routing_diagnostics"):
-                diag = block.bk_layer.last_routing_diagnostics
-                if diag is not None:
-                    routing_diagnostics_list.append(diag)
+
+            # Use appropriate attribute access depending on block type
+            if self.use_symplectic:
+                 # Symplectic block has .force_field instead of .bk_layer
+                 if hasattr(block.force_field.moe_ffn, "last_routing_entropy"):
+                    ent = block.force_field.moe_ffn.last_routing_entropy
+                    if ent is not None:
+                        routing_entropies.append(ent)
+                 if hasattr(block.force_field, "last_routing_diagnostics"):
+                    diag = block.force_field.last_routing_diagnostics
+                    if diag is not None:
+                        routing_diagnostics_list.append(diag)
+            else:
+                if hasattr(block.bk_layer.moe_ffn, "last_routing_entropy"):
+                    ent = block.bk_layer.moe_ffn.last_routing_entropy
+                    if ent is not None:
+                        routing_entropies.append(ent)
+                if hasattr(block.bk_layer, "last_routing_diagnostics"):
+                    diag = block.bk_layer.last_routing_diagnostics
+                    if diag is not None:
+                        routing_diagnostics_list.append(diag)
         
         h = self.layer_norm_final(h)
         logits = self.lm_head(h)           # (B, N, vocab_size)
@@ -450,8 +649,13 @@ class LanguageModel(nn.Module):
         }
         
         for block in self.blocks:
-            if hasattr(block.bk_layer, 'last_bs_diagnostics'):
-                diag = block.bk_layer.last_bs_diagnostics
+            if self.use_symplectic:
+                 layer = block.force_field
+            else:
+                 layer = block.bk_layer
+
+            if hasattr(layer, 'last_bs_diagnostics'):
+                diag = layer.last_bs_diagnostics
                 if diag:
                     diagnostics['schatten_s1'].append(diag.get('schatten_s1', 0.0))
                     diagnostics['schatten_s2'].append(diag.get('schatten_s2', 0.0))

@@ -10,6 +10,7 @@ This enables:
 - O(N log N) total memory instead of O(N²)
 - 70% memory reduction vs dense attention
 - Gradient checkpointing with 85% activation memory reduction
+- 1.58-bit Quantization (BitNet) for extreme memory compression
 
 Mathematical Foundation:
 From requirements 5.1-5.13, this implements the semiseparable structure
@@ -35,11 +36,13 @@ class SemiseparableMatrix(nn.Module):
         rank: low-rank component rank (default: ⌈log₂(n_seq)⌉)
         device: torch device
         dtype: torch dtype (default: float32)
+        use_bitnet: Enable 1.58-bit quantization for tridiagonal components
     
     Properties:
         - O(N) matrix-vector multiplication
         - O(N log N) memory storage
         - Gradient checkpointing support
+        - BitNet b1.58 quantization (optional)
     """
     
     def __init__(
@@ -48,9 +51,11 @@ class SemiseparableMatrix(nn.Module):
         rank: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32,
+        use_bitnet: bool = False,
     ):
         super().__init__()
         self.n_seq = n_seq
+        self.use_bitnet = use_bitnet
         
         # Set rank r = ⌈log₂(N)⌉ for logarithmic growth (Requirement 5.2)
         if rank is None:
@@ -61,11 +66,23 @@ class SemiseparableMatrix(nn.Module):
         self.device = device
         self.dtype = dtype
         
-        # Tridiagonal components: main diagonal, super-diagonal, sub-diagonal
-        # Storage: O(N)
-        self.register_buffer('main_diag', torch.zeros(n_seq, dtype=dtype, device=device))
-        self.register_buffer('super_diag', torch.zeros(n_seq - 1, dtype=dtype, device=device))
-        self.register_buffer('sub_diag', torch.zeros(n_seq - 1, dtype=dtype, device=device))
+        if self.use_bitnet:
+            # BitNet: Store FP32 master weights as Parameters
+            # These will be quantized on the fly during forward pass
+            self.main_master = nn.Parameter(torch.zeros(n_seq, dtype=dtype, device=device))
+            self.super_master = nn.Parameter(torch.zeros(n_seq - 1, dtype=dtype, device=device))
+            self.sub_master = nn.Parameter(torch.zeros(n_seq - 1, dtype=dtype, device=device))
+
+            # Keep buffers for compatibility/caching, but they won't be the primary storage
+            self.register_buffer('main_diag', torch.zeros(n_seq, dtype=dtype, device=device))
+            self.register_buffer('super_diag', torch.zeros(n_seq - 1, dtype=dtype, device=device))
+            self.register_buffer('sub_diag', torch.zeros(n_seq - 1, dtype=dtype, device=device))
+        else:
+            # Standard: Tridiagonal components as buffers (fixed or externally updated)
+            # Storage: O(N)
+            self.register_buffer('main_diag', torch.zeros(n_seq, dtype=dtype, device=device))
+            self.register_buffer('super_diag', torch.zeros(n_seq - 1, dtype=dtype, device=device))
+            self.register_buffer('sub_diag', torch.zeros(n_seq - 1, dtype=dtype, device=device))
         
         # Low-rank factors: U (N × r), V (N × r)
         # Storage: O(N log N)
@@ -76,7 +93,57 @@ class SemiseparableMatrix(nn.Module):
         # Checkpointing state
         self._checkpointing_enabled = False
         self._stored_tridiag = None
+
+    @staticmethod
+    def ternary_weight(w: torch.Tensor) -> torch.Tensor:
+        """
+        BitNet b1.58 quantization function with Straight-Through Estimator (STE).
+
+        w_q = clamp(round(w / s), -1, 1) * s
+        s = mean(|w|)
+
+        Args:
+            w: Input weight tensor
+
+        Returns:
+            Quantized weight tensor (effectively {-s, 0, s})
+        """
+        if w.numel() == 0:
+            return w
+
+        # 1. Calculate scale s = mean(|w|)
+        scale = w.abs().mean()
+
+        # Avoid division by zero
+        scale = torch.clamp(scale, min=1e-6)
+
+        # 2. Quantize: round(w/s) clipped to {-1, 0, 1}
+        w_scaled = w / scale
+        w_quant = torch.clamp(torch.round(w_scaled), -1, 1)
+
+        # 3. Rescale
+        w_out = w_quant * scale
+
+        # 4. Straight-Through Estimator (STE)
+        # Forward: use w_out
+        # Backward: pass gradient to w
+        return (w_out - w).detach() + w
     
+    def _get_tridiagonal_components(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Get the effective tridiagonal components, applying quantization if enabled.
+
+        Returns:
+            (main_diag, super_diag, sub_diag)
+        """
+        if self.use_bitnet:
+            main = self.ternary_weight(self.main_master)
+            super_d = self.ternary_weight(self.super_master)
+            sub_d = self.ternary_weight(self.sub_master)
+            return main, super_d, sub_d
+        else:
+            return self.main_diag, self.super_diag, self.sub_diag
+
     def factorize(self, H: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Decompose H into tridiagonal + low-rank: H = T + U·V^T
@@ -138,10 +205,24 @@ class SemiseparableMatrix(nn.Module):
             V = torch.cat([V, torch.zeros(N, pad_size, dtype=H.dtype, device=H.device)], dim=1)
         
         # Store components
-        self.main_diag.copy_(main_diag)
-        if N > 1:
-            self.super_diag.copy_(super_diag)
-            self.sub_diag.copy_(sub_diag)
+        if self.use_bitnet:
+            # Update masters
+            with torch.no_grad():
+                self.main_master.copy_(main_diag)
+                if N > 1:
+                    self.super_master.copy_(super_diag)
+                    self.sub_master.copy_(sub_diag)
+                # Also update buffers for consistency
+                self.main_diag.copy_(main_diag)
+                if N > 1:
+                    self.super_diag.copy_(super_diag)
+                    self.sub_diag.copy_(sub_diag)
+        else:
+            self.main_diag.copy_(main_diag)
+            if N > 1:
+                self.super_diag.copy_(super_diag)
+                self.sub_diag.copy_(sub_diag)
+
         # Use .data to update parameters without breaking the graph if used during init
         with torch.no_grad():
             self.U.copy_(U)
@@ -170,16 +251,19 @@ class SemiseparableMatrix(nn.Module):
         B, N = x.shape
         assert N == self.n_seq, f"Expected sequence length {self.n_seq}, got {N}"
         
+        # Get effective components (quantized if BitNet)
+        main_diag, super_diag, sub_diag = self._get_tridiagonal_components()
+
         # Tridiagonal part: T·x
         # T·x = main_diag * x + super_diag * x[1:] (shifted) + sub_diag * x[:-1] (shifted)
-        y_tridiag = self.main_diag.unsqueeze(0) * x  # (B, N)
+        y_tridiag = main_diag.unsqueeze(0) * x  # (B, N)
         
         if N > 1:
             # Super-diagonal contribution: T[i, i+1] * x[i+1]
-            y_tridiag[:, :-1] += self.super_diag.unsqueeze(0) * x[:, 1:]
+            y_tridiag[:, :-1] += super_diag.unsqueeze(0) * x[:, 1:]
             
             # Sub-diagonal contribution: T[i+1, i] * x[i]
-            y_tridiag[:, 1:] += self.sub_diag.unsqueeze(0) * x[:, :-1]
+            y_tridiag[:, 1:] += sub_diag.unsqueeze(0) * x[:, :-1]
         
         # Low-rank part: U·(V^T·x)
         # V^T·x: (r, N) @ (B, N)^T = (r, B) -> (B, r)
@@ -230,16 +314,19 @@ class SemiseparableMatrix(nn.Module):
         if not self._checkpointing_enabled:
             return self.matvec(x)
         
+        # Get effective components (quantized if BitNet)
+        main_diag, super_diag, sub_diag = self._get_tridiagonal_components()
+
         # Store tridiagonal components only (O(N) memory)
         self._stored_tridiag = {
-            'main_diag': self.main_diag.clone(),
-            'super_diag': self.super_diag.clone(),
-            'sub_diag': self.sub_diag.clone(),
+            'main_diag': main_diag.clone(), # Clone effectively stores the quantized values
+            'super_diag': super_diag.clone(),
+            'sub_diag': sub_diag.clone(),
         }
         
         # Use custom autograd function for checkpointing
         return SemiseparableCheckpointFunction.apply(
-            x, self.main_diag, self.super_diag, self.sub_diag, self.U, self.V
+            x, main_diag, super_diag, sub_diag, self.U, self.V
         )
     
     def get_memory_usage(self) -> dict:
@@ -287,12 +374,15 @@ class SemiseparableMatrix(nn.Module):
         """
         N = H.shape[0]
         
+        # Get effective components
+        main_diag, super_diag, sub_diag = self._get_tridiagonal_components()
+
         # Reconstruct T
         T = torch.zeros_like(H)
-        T.diagonal().copy_(self.main_diag)
+        T.diagonal().copy_(main_diag)
         if N > 1:
-            T.diagonal(1).copy_(self.super_diag)
-            T.diagonal(-1).copy_(self.sub_diag)
+            T.diagonal(1).copy_(super_diag)
+            T.diagonal(-1).copy_(sub_diag)
         
         # Reconstruct UV^T
         UVt = torch.matmul(self.U, self.V.T)
@@ -378,7 +468,49 @@ class SemiseparableCheckpointFunction(torch.autograd.Function):
         grad_x = grad_x_tridiag + grad_x_lowrank
         
         # No gradients for matrix components (they're not learnable parameters)
-        return grad_x, None, None, None, None, None
+        # Note: In BitNet mode, main_diag etc are derived tensors, so they have grad functions
+        # but SemiseparableCheckpointFunction treats them as inputs.
+        # So we should return gradients for them if they require grad.
+
+        grad_main = None
+        grad_super = None
+        grad_sub = None
+        grad_U = None
+        grad_V = None
+
+        # Gradient w.r.t main_diag
+        # y_tridiag = main_diag * x + ...
+        # dL/dmain = sum_over_B (dL/dy * x)
+        if ctx.needs_input_grad[1]:
+            grad_main = (grad_output * x).sum(dim=0)
+
+        # Gradient w.r.t super_diag
+        if N > 1 and ctx.needs_input_grad[2]:
+            # y_i += super_diag[i] * x[i+1]
+            grad_super = (grad_output[:, :-1] * x[:, 1:]).sum(dim=0)
+
+        # Gradient w.r.t sub_diag
+        if N > 1 and ctx.needs_input_grad[3]:
+            # y_i+1 += sub_diag[i] * x[i]
+            grad_sub = (grad_output[:, 1:] * x[:, :-1]).sum(dim=0)
+
+        # Gradient w.r.t U
+        # y_lowrank = Vt_x @ U^T
+        # dL/dU = grad_output^T @ Vt_x
+        if ctx.needs_input_grad[4]:
+             # Vt_x was not saved, recompute
+             Vt_x = torch.matmul(x, V)
+             grad_U = torch.matmul(grad_output.transpose(0, 1), Vt_x)
+
+        # Gradient w.r.t V
+        # y_lowrank = x @ V @ U^T
+        # let A = U^T. dL/dV = x^T @ (dL/dy_lowrank @ U)
+        # dL/dy_lowrank = grad_output
+        if ctx.needs_input_grad[5]:
+             grad_output_U = torch.matmul(grad_output, U)
+             grad_V = torch.matmul(x.transpose(0, 1), grad_output_U)
+
+        return grad_x, grad_main, grad_super, grad_sub, grad_U, grad_V
 
 
 def create_semiseparable_from_dense(H: torch.Tensor, rank: Optional[int] = None) -> SemiseparableMatrix:
