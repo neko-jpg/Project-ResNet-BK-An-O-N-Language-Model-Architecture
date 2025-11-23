@@ -18,8 +18,8 @@ accelerate==0.24.1
 safetensors==0.4.0
 
 # Scientific computing
-numpy==1.24.3  # Numerical stability
-scipy==1.11.4  # Scientific computing
+numpy>=1.26.0  # Numerical stability (Py3.12 support)
+scipy>=1.11.4  # Scientific computing
 einops==0.7.0  # Tensor operations
 
 # Visualization
