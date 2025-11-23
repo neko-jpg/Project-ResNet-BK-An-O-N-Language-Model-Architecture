@@ -7,6 +7,8 @@ import os
 import sys
 import yaml
 import time
+import io
+import contextlib
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
@@ -14,6 +16,9 @@ from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.table import Table
 from rich.layout import Layout
 from rich.live import Live
+from rich.spinner import Spinner
+from rich.status import Status
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 # Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -69,6 +74,9 @@ def main():
 
     ratios = {}
     if available_datasets:
+        def _fallback_uniform():
+            return {ds: 1.0 / len(available_datasets) for ds in available_datasets}
+
         console.print(t("\n[Dataset Recipe Strategy]", "\n[データセット配合戦略]"))
         console.print(t("1. Balanced (Auto)", "1. バランス型 (おまかせ)"))
         console.print(t("2. Japanese Focused (Auto)", "2. 日本語重視 (おまかせ)"))
@@ -76,6 +84,42 @@ def main():
         console.print(t("4. Manual (Custom)", "4. 手動設定 (カスタム)"))
 
         strategy = IntPrompt.ask("Choice", choices=["1", "2", "3", "4"], default="1")
+
+        # helper: deterministic ratio assignment
+        def assign_ratios(strategy_id):
+            jp_sets = [d for d in available_datasets if 'jp' in d.lower() or 'japanese' in d.lower() or 'wiki_ja' in d.lower()]
+            code_sets = [d for d in available_datasets if 'code' in d.lower() or 'python' in d.lower() or 'evol' in d.lower()]
+            general_sets = [d for d in available_datasets if d not in jp_sets and d not in code_sets]
+
+            n_jp, n_code, n_gen = len(jp_sets), len(code_sets), len(general_sets)
+            ratios_local = {ds: 0.0 for ds in available_datasets}
+
+            if strategy_id == "1":  # Balanced: 33/33/34 across categories
+                cat_weights = {'jp': 0.33, 'code': 0.33, 'gen': 0.34}
+            elif strategy_id == "2":  # JP heavy: 70% JP
+                cat_weights = {'jp': 0.70, 'code': 0.15, 'gen': 0.15}
+            elif strategy_id == "3":  # Code heavy: 70% Code
+                cat_weights = {'jp': 0.15, 'code': 0.70, 'gen': 0.15}
+            else:
+                cat_weights = {'jp': 1/3, 'code': 1/3, 'gen': 1/3}
+
+            # distribute per category if exists
+            if n_jp > 0:
+                for d in jp_sets:
+                    ratios_local[d] = cat_weights['jp'] / n_jp
+            if n_code > 0:
+                for d in code_sets:
+                    ratios_local[d] = cat_weights['code'] / n_code
+            if n_gen > 0:
+                for d in general_sets:
+                    ratios_local[d] = cat_weights['gen'] / n_gen
+
+            # normalize to 1.0
+            total = sum(ratios_local.values())
+            if total > 0:
+                for k in ratios_local:
+                    ratios_local[k] /= total
+            return ratios_local
 
         if strategy == "4":
             # Manual Mode
@@ -90,66 +134,28 @@ def main():
                 ratios[ds] = val / 100.0
                 remaining -= val
         else:
-            # Auto Modes
-            ratios = {ds: 0.0 for ds in available_datasets}
-
-            # Simple keyword matching
-            jp_sets = [d for d in available_datasets if 'jp' in d or 'japanese' in d or 'wiki_ja' in d]
-            code_sets = [d for d in available_datasets if 'code' in d or 'python' in d or 'evol' in d]
-            general_sets = [d for d in available_datasets if d not in jp_sets and d not in code_sets]
-
-            # Ensure no division by zero
-            n_jp = len(jp_sets)
-            n_code = len(code_sets)
-            n_gen = len(general_sets)
-
-            if strategy == "1": # Balanced
-                # Distribute evenly across categories, then within categories
-                # Target: 33% JP, 33% Code, 33% General
-                if n_jp > 0:
-                    for d in jp_sets: ratios[d] = 0.33 / n_jp
-                if n_code > 0:
-                    for d in code_sets: ratios[d] = 0.33 / n_code
-                if n_gen > 0:
-                    for d in general_sets: ratios[d] = 0.34 / n_gen
-
-                # Normalize if some categories were empty
-                total = sum(ratios.values())
-                if total > 0:
-                    for k in ratios: ratios[k] /= total
-
-            elif strategy == "2": # Japanese Focused
-                # 70% JP, 30% others
-                target_jp = 0.7 if n_jp > 0 else 0.0
-                target_others = 1.0 - target_jp
-
-                if n_jp > 0:
-                    for d in jp_sets: ratios[d] = target_jp / n_jp
-
-                n_others = n_code + n_gen
-                if n_others > 0:
-                    for d in code_sets + general_sets: ratios[d] = target_others / n_others
-
-            elif strategy == "3": # Code Heavy
-                # 70% Code, 30% others
-                target_code = 0.7 if n_code > 0 else 0.0
-                target_others = 1.0 - target_code
-
-                if n_code > 0:
-                    for d in code_sets: ratios[d] = target_code / n_code
-
-                n_others = n_jp + n_gen
-                if n_others > 0:
-                    for d in jp_sets + general_sets: ratios[d] = target_others / n_others
+            # Auto Modes with explicit ratios
+            ratios = assign_ratios(strategy)
 
             # Display Proposed Ratio
-            console.print(t("\n[Proposed Mix]", "\n[提案された配合]"))
+            # Normalize if total is zero (edge cases)
+            total_mix = sum(ratios.values())
+            if total_mix <= 0 and available_datasets:
+                ratios = {ds: 1.0 / len(available_datasets) for ds in available_datasets}
+
+            # Display Proposed Ratio in a table
+            if sum(ratios.values()) <= 0:
+                ratios = _fallback_uniform()
+
+            mix_table = Table(title=t("Proposed Mix", "提案された配合"))
+            mix_table.add_column("Dataset", style="cyan")
+            mix_table.add_column("Weight (%)", style="magenta")
             for ds, r in ratios.items():
-                if r > 0.001:
-                    console.print(f"- {ds}: [bold]{r*100:.1f}%[/bold]")
+                mix_table.add_row(ds, f"{r*100:.1f}")
+            console.print(mix_table)
 
             if not Confirm.ask(t("Use this mix?", "この配合でよろしいですか？"), default=True):
-                 # Fallback to manual if rejected
+                # Fallback to manual if rejected
                 console.print(t("Switching to manual mode...", "手動モードに切り替えます..."))
                 ratios = {}
                 remaining = 100
@@ -162,6 +168,14 @@ def main():
                         val = min(val, remaining)
                     ratios[ds] = val / 100.0
                     remaining -= val
+
+                # Show manual mix table
+                mix_table = Table(title=t("Manual Mix", "手動配合"))
+                mix_table.add_column("Dataset", style="cyan")
+                mix_table.add_column("Weight (%)", style="magenta")
+                for ds, r in ratios.items():
+                    mix_table.add_row(ds, f"{r*100:.1f}")
+                console.print(mix_table)
 
     else:
         console.print(t("[yellow]No datasets found. Using default logic.[/yellow]", "[yellow]データセットが見つかりません。[/yellow]"))
@@ -188,31 +202,90 @@ def main():
         batch_size, seq_len = 8, 2048
         epochs = 3
 
-    # Apply calibration limits if available
-    if cal and cal.memory_coeffs['base'] > 0:
-        mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
-        # Use cal.vram_total or fallback
-        total_vram = cal.vram_total if cal.vram_total > 0 else 8192 # Default 8GB if unknown
+    # Rigorous Optimization Function
+    def tune_with_cal_rigorous(bs, slen, dm, nl, cal_obj):
+        if cal_obj is None or cal_obj.memory_coeffs['base'] <= 0:
+            return bs, slen, dm, nl, None, None
+
+        total_vram = cal_obj.vram_total if cal_obj.vram_total > 0 else 8192
         limit = total_vram * 0.9
 
-        if mem > limit:
-            console.print(t(f"[red]Proposal {mem:.0f}MB exceeds VRAM {limit:.0f}MB. Downgrading...[/red]", f"[red]提案設定 ({mem:.0f}MB) がVRAM ({limit:.0f}MB) を超えます。設定を下げます...[/red]"))
+        final_bs, final_slen, final_dm, final_nl = bs, slen, dm, nl
+        final_mem, final_time = 0.0, 0.0
 
-            # Simple iterative reduction
-            # 1. Reduce Batch Size
-            while mem > limit and batch_size > 1:
-                batch_size = max(1, batch_size // 2)
-                mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
 
-            # 2. Reduce Sequence Length
-            while mem > limit and seq_len > 512:
-                seq_len = seq_len // 2
-                mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
+            task_id = progress.add_task(t("Optimizing parameters...", "最適設定を探索中..."), total=None)
 
-            # 3. Reduce Layers (Last resort)
-            while mem > limit and n_layers > 2:
-                n_layers -= 2
-                mem, _ = cal.predict(batch_size, seq_len, d_model, n_layers)
+            # 1. Regression Search (Fast)
+            # Find a config that fits regression model first
+            attempts = 0
+            while attempts < 20:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    mem, tcost = cal_obj.predict(final_bs, final_slen, final_dm, final_nl)
+
+                if mem <= limit:
+                    break
+
+                # Reduce parameters logic
+                if final_bs > 1:
+                    final_bs = max(1, final_bs // 2)
+                elif final_slen > 256:
+                    final_slen = max(256, final_slen // 2)
+                elif final_dm > 256:
+                    final_dm = max(256, final_dm - 128)
+                elif final_nl > 2:
+                    final_nl = max(2, final_nl - 2)
+                else:
+                    break
+                attempts += 1
+
+            # 2. Validation (Rigorous)
+            # Run exact measurement. If fail, reduce and retry.
+            progress.update(task_id, description=t(f"Verifying {final_dm}x{final_nl}, B={final_bs}...", f"実測検証中: {final_dm}x{final_nl}, B={final_bs}..."))
+
+            valid_config = False
+            while not valid_config and attempts < 30:
+                with contextlib.redirect_stderr(io.StringIO()):
+                     real_mem, real_time = cal_obj.estimate_exact(final_bs, final_slen, final_dm, final_nl)
+
+                if real_mem is not None and real_mem <= limit:
+                    # Success
+                    final_mem, final_time = real_mem, real_time
+                    valid_config = True
+                    progress.update(task_id, description=t("Optimization Successful!", "最適化成功！"))
+                else:
+                    # Failed (OOM or Over limit)
+                    progress.update(task_id, description=t(f"OOM detected. Reducing...", f"メモリ不足を検知。縮小中..."))
+
+                    if final_bs > 1:
+                        final_bs = max(1, final_bs // 2)
+                    elif final_slen > 256:
+                        final_slen = max(256, final_slen // 2)
+                    elif final_dm > 256:
+                        final_dm = max(256, final_dm - 128)
+                    elif final_nl > 2:
+                        final_nl = max(2, final_nl - 2)
+                    else:
+                        break # Cannot reduce further
+                    attempts += 1
+
+        return final_bs, final_slen, final_dm, final_nl, final_mem, final_time
+
+    tuned_mem = None
+    tuned_time = None
+
+    if cal and cal.memory_coeffs['base'] > 0:
+        # Use rigorous tuning
+        batch_size, seq_len, d_model, n_layers, tuned_mem, tuned_time = tune_with_cal_rigorous(
+            batch_size, seq_len, d_model, n_layers, cal
+        )
 
     # Show Proposal
     table = Table(title=t("Recommended Configuration", "推奨設定"))
@@ -226,54 +299,72 @@ def main():
     table.add_row("Epochs", str(epochs))
 
     if cal and cal.memory_coeffs['base'] > 0:
-        pred_mem, pred_time = cal.predict(batch_size, seq_len, d_model, n_layers)
+        if tuned_mem is not None and tuned_mem > 0:
+             # Use the rigorous measurement
+             pred_mem, pred_time = tuned_mem, tuned_time
+        else:
+             # Fallback to prediction
+             with contextlib.redirect_stderr(io.StringIO()):
+                pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+
         total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
         table.add_row("Est. VRAM", f"{pred_mem:.0f} MB / {total_vram_disp:.0f} MB")
+        if tuned_time is not None:
+            table.add_row("Est. Step Time", f"{pred_time:.3f}s")
 
     console.print(table)
 
+
     if not Confirm.ask(t("Accept this configuration?", "この設定で決定しますか？"), default=True):
-        console.print(t("Manual tuning not yet implemented. Using proposed config.", "手動調整は未実装です。提案設定を使用します。"))
+        console.print(t("Enter manual overrides. Press Enter to keep current value.", "手動で上書きします。空Enterで現在値を維持します。"))
+        try:
+            d_model = int(Prompt.ask("d_model", default=str(d_model)))
+            n_layers = int(Prompt.ask("n_layers", default=str(n_layers)))
+            batch_size = int(Prompt.ask("Batch Size", default=str(batch_size)))
+            seq_len = int(Prompt.ask("Sequence Length", default=str(seq_len)))
+            epochs = int(Prompt.ask("Epochs", default=str(epochs)))
+        except Exception:
+            console.print(t("[yellow]Invalid input detected. Keeping previous proposal.[/yellow]", "[yellow]入力が不正です。提案設定をそのまま使用します。[/yellow]"))
+
+        # Re-run calibration check after manual override
+        if cal and cal.memory_coeffs['base'] > 0:
+            total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
+            with contextlib.redirect_stderr(io.StringIO()):
+                pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+
+            if pred_mem > total_vram_disp * 0.9:
+                console.print(t(f"[red]Warning: Est. VRAM {pred_mem:.0f} MB exceeds 90% of device ({total_vram_disp:.0f} MB).[/red]",
+                                f"[red]警告: 推定VRAM {pred_mem:.0f} MB がデバイスの90% ({total_vram_disp:.0f} MB) を超えます。[/red]"))
 
     # 5. Save
     config_dir = Path("configs")
     config_dir.mkdir(exist_ok=True)
 
     # Save Recipe
-    yaml_path = config_dir / "dataset_mixing.yaml"
+    if not ratios and available_datasets:
+        # If nothing was set (e.g., user skipped), fall back to uniform weights
+        ratios = {ds: 1.0 / len(available_datasets) for ds in available_datasets}
 
-    # Try to load existing to preserve paths/metadata
-    existing_data = {}
-    if yaml_path.exists():
-        try:
-            with open(yaml_path, 'r') as f:
-                existing_data = yaml.safe_load(f) or {}
-        except Exception:
-            existing_data = {}
+    datasets_cfg = {}
+    for ds, w in ratios.items():
+        datasets_cfg[ds] = {
+            'path': f"./data/{ds}",
+            'weight': float(w)
+        }
 
-    if 'datasets' not in existing_data or not isinstance(existing_data['datasets'], dict):
-        # Fallback if file is broken/missing: construct minimal valid config
-        console.print(t("[yellow]Warning: Reconstructing dataset config from scratch (metadata lost).[/yellow]",
-                        "[yellow]警告: データセット設定を再構築します（メタデータは失われます）。[/yellow]"))
-        existing_data['datasets'] = {}
-        # If we are reconstructing, we assume we can just use the keys from ratios (which came from data dir)
-        for ds in ratios:
-             existing_data['datasets'][ds] = {'path': f"./data/{ds}"}
-
-    # Update weights
-    for ds, weight in ratios.items():
-        if ds in existing_data.get('datasets', {}):
-            existing_data['datasets'][ds]['weight'] = float(weight)
-        else:
-            # New dataset found in data/ but not in yaml? Add it.
-            existing_data.setdefault('datasets', {})[ds] = {
-                'path': f"./data/{ds}",
-                'weight': float(weight)
+    # Final guard: ensure at least one dataset entry exists
+    if not datasets_cfg:
+        console.print(t("[red]No datasets selected. Creating a placeholder pointing to data/wiki_ja.[/red]",
+                        "[red]データセットが見つかりません。data/wiki_ja への代替設定を作成します。[/red]"))
+        datasets_cfg = {
+            'wiki_ja': {
+                'path': "./data/wiki_ja",
+                'weight': 1.0
             }
+        }
 
-    # Write back preserving structure
-    with open(yaml_path, 'w') as f:
-        yaml.dump(existing_data, f, default_flow_style=False, sort_keys=False)
+    with open(config_dir / "dataset_mixing.yaml", 'w') as f:
+        yaml.dump({'datasets': datasets_cfg}, f)
 
     # Save Train Config
     train_config = {

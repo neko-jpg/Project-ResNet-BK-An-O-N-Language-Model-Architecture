@@ -2,7 +2,8 @@
 BK-Core: O(N) Tridiagonal Inverse Diagonal Computation
 Implements the core algorithm for computing diag((H - zI)^-1) in O(N) time.
 
-Supports both PyTorch (vmap) and Triton implementations with automatic fallback.
+Supports both PyTorch (vmap) and Triton implementations.
+Strict Triton Mode: If Triton is enabled, it must succeed or fail loudly.
 Includes input sanitization and gradient warning system for robust training.
 """
 
@@ -202,27 +203,15 @@ class BKCoreFunction(torch.autograd.Function):
                     from src.kernels.bk_scan import is_triton_available
                     BKCoreFunction.USE_TRITON = is_triton_available()
                     if BKCoreFunction.USE_TRITON:
-                        print("BK-Core: Triton acceleration enabled")
+                        pass # logger.info("BK-Core: Triton acceleration enabled")
                 except Exception:
                     BKCoreFunction.USE_TRITON = False
             use_triton = BKCoreFunction.USE_TRITON
         
-        # Try Triton implementation with fallback
+        # Strict Triton implementation (No Fallback)
         if use_triton:
-            try:
-                from src.kernels.bk_scan import bk_scan_triton
-                G_ii = bk_scan_triton(he_diag, h0_super, h0_sub, z)
-
-                # Double-check numerical stability (Task 3)
-                if not torch.isfinite(G_ii).all():
-                    raise ValueError("Triton kernel produced non-finite values (NaN/Inf)")
-
-            except Exception as e:
-                warnings.warn(
-                    f"Triton kernel failed or unstable: {e}. Falling back to PyTorch implementation.",
-                    UserWarning
-                )
-                G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
+            from src.kernels.bk_scan import bk_scan_triton
+            G_ii = bk_scan_triton(he_diag, h0_super, h0_sub, z)
         else:
             # Use PyTorch vmap implementation
             G_ii = vmapped_get_diag(he_diag, h0_super, h0_sub, z)
