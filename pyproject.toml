@@ -35,10 +35,10 @@ classifiers = [
 ]
 
 dependencies = [
-    "torch==2.1.2",
-    "torchvision==0.16.2",
-    "torchaudio==2.1.2",
-    "triton==2.1.0; platform_system != 'Windows'",
+    "torch==2.2.0",
+    "torchvision==0.17.0",
+    "torchaudio==2.2.0",
+    "triton==2.2.0; platform_system != 'Windows'",
     "ninja==1.11.1.1",
     "numpy==1.24.3",
     "scipy==1.11.4",
