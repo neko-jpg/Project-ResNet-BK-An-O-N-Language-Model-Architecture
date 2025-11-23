@@ -7,6 +7,8 @@ import os
 import sys
 import yaml
 import time
+import io
+import contextlib
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
@@ -14,6 +16,9 @@ from rich.prompt import Prompt, IntPrompt, Confirm
 from rich.table import Table
 from rich.layout import Layout
 from rich.live import Live
+from rich.spinner import Spinner
+from rich.status import Status
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 # Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -197,34 +202,92 @@ def main():
         batch_size, seq_len = 8, 2048
         epochs = 3
 
-    # Apply calibration limits if available
-    def tune_with_cal(bs, slen, dm, nl, cal_obj):
+    # Rigorous Optimization Function
+    def tune_with_cal_rigorous(bs, slen, dm, nl, cal_obj):
         if cal_obj is None or cal_obj.memory_coeffs['base'] <= 0:
             return bs, slen, dm, nl, None, None
-        total_vram = cal_obj.vram_total if cal_obj.vram_total > 0 else 8192  # MB
+
+        total_vram = cal_obj.vram_total if cal_obj.vram_total > 0 else 8192
         limit = total_vram * 0.9
-        mem, tcost = cal_obj.predict(bs, slen, dm, nl)
-        while mem > limit:
-            if bs > 1:
-                bs = max(1, bs // 2)
-            elif slen > 256:
-                slen = max(256, slen // 2)
-            elif dm > 256:
-                dm = max(256, dm - 128)
-            elif nl > 2:
-                nl = max(2, nl - 2)
-            else:
-                break
-            mem, tcost = cal_obj.predict(bs, slen, dm, nl)
-        return bs, slen, dm, nl, mem, tcost
+
+        final_bs, final_slen, final_dm, final_nl = bs, slen, dm, nl
+        final_mem, final_time = 0.0, 0.0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console
+        ) as progress:
+
+            task_id = progress.add_task(t("Optimizing parameters...", "最適設定を探索中..."), total=None)
+
+            # 1. Regression Search (Fast)
+            # Find a config that fits regression model first
+            attempts = 0
+            while attempts < 20:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    mem, tcost = cal_obj.predict(final_bs, final_slen, final_dm, final_nl)
+
+                if mem <= limit:
+                    break
+
+                # Reduce parameters logic
+                if final_bs > 1:
+                    final_bs = max(1, final_bs // 2)
+                elif final_slen > 256:
+                    final_slen = max(256, final_slen // 2)
+                elif final_dm > 256:
+                    final_dm = max(256, final_dm - 128)
+                elif final_nl > 2:
+                    final_nl = max(2, final_nl - 2)
+                else:
+                    break
+                attempts += 1
+
+            # 2. Validation (Rigorous)
+            # Run exact measurement. If fail, reduce and retry.
+            progress.update(task_id, description=t(f"Verifying {final_dm}x{final_nl}, B={final_bs}...", f"実測検証中: {final_dm}x{final_nl}, B={final_bs}..."))
+
+            valid_config = False
+            while not valid_config and attempts < 30:
+                with contextlib.redirect_stderr(io.StringIO()):
+                     real_mem, real_time = cal_obj.estimate_exact(final_bs, final_slen, final_dm, final_nl)
+
+                if real_mem is not None and real_mem <= limit:
+                    # Success
+                    final_mem, final_time = real_mem, real_time
+                    valid_config = True
+                    progress.update(task_id, description=t("Optimization Successful!", "最適化成功！"))
+                else:
+                    # Failed (OOM or Over limit)
+                    progress.update(task_id, description=t(f"OOM detected. Reducing...", f"メモリ不足を検知。縮小中..."))
+
+                    if final_bs > 1:
+                        final_bs = max(1, final_bs // 2)
+                    elif final_slen > 256:
+                        final_slen = max(256, final_slen // 2)
+                    elif final_dm > 256:
+                        final_dm = max(256, final_dm - 128)
+                    elif final_nl > 2:
+                        final_nl = max(2, final_nl - 2)
+                    else:
+                        break # Cannot reduce further
+                    attempts += 1
+
+        return final_bs, final_slen, final_dm, final_nl, final_mem, final_time
 
     tuned_mem = None
     tuned_time = None
+
     if cal and cal.memory_coeffs['base'] > 0:
-        batch_size, seq_len, d_model, n_layers, tuned_mem, tuned_time = tune_with_cal(
+        # Use rigorous tuning
+        batch_size, seq_len, d_model, n_layers, tuned_mem, tuned_time = tune_with_cal_rigorous(
             batch_size, seq_len, d_model, n_layers, cal
         )
-# Show Proposal
+
+    # Show Proposal
     table = Table(title=t("Recommended Configuration", "推奨設定"))
     table.add_column("Parameter", style="cyan")
     table.add_column("Value", style="magenta")
@@ -236,7 +299,14 @@ def main():
     table.add_row("Epochs", str(epochs))
 
     if cal and cal.memory_coeffs['base'] > 0:
-        pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+        if tuned_mem is not None and tuned_mem > 0:
+             # Use the rigorous measurement
+             pred_mem, pred_time = tuned_mem, tuned_time
+        else:
+             # Fallback to prediction
+             with contextlib.redirect_stderr(io.StringIO()):
+                pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+
         total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
         table.add_row("Est. VRAM", f"{pred_mem:.0f} MB / {total_vram_disp:.0f} MB")
         if tuned_time is not None:
@@ -259,7 +329,9 @@ def main():
         # Re-run calibration check after manual override
         if cal and cal.memory_coeffs['base'] > 0:
             total_vram_disp = cal.vram_total if cal.vram_total > 0 else 8192
-            pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+            with contextlib.redirect_stderr(io.StringIO()):
+                pred_mem, pred_time = cal.estimate_exact(batch_size, seq_len, d_model, n_layers) or cal.predict(batch_size, seq_len, d_model, n_layers)
+
             if pred_mem > total_vram_disp * 0.9:
                 console.print(t(f"[red]Warning: Est. VRAM {pred_mem:.0f} MB exceeds 90% of device ({total_vram_disp:.0f} MB).[/red]",
                                 f"[red]警告: 推定VRAM {pred_mem:.0f} MB がデバイスの90% ({total_vram_disp:.0f} MB) を超えます。[/red]"))
@@ -283,7 +355,7 @@ def main():
     # Final guard: ensure at least one dataset entry exists
     if not datasets_cfg:
         console.print(t("[red]No datasets selected. Creating a placeholder pointing to data/wiki_ja.[/red]",
-                        "[red]�f�[�^�Z�b�g���������Ă��܂���Bdata/wiki_ja �ւ̕ύX�̕�����쐬���܂�.[/red]"))
+                        "[red]データセットが見つかりません。data/wiki_ja への代替設定を作成します。[/red]"))
         datasets_cfg = {
             'wiki_ja': {
                 'path': "./data/wiki_ja",

@@ -14,8 +14,10 @@ from rich.progress import Progress
 # Try to import model, handle error if not found (e.g. during initial setup check)
 try:
     from src.models.configurable_resnet_bk import ConfigurableResNetBK, ResNetBKConfig
+    from src.models.bk_core import set_triton_mode
 except ImportError:
     ConfigurableResNetBK = None
+    def set_triton_mode(x): pass
 
 console = Console()
 
@@ -29,6 +31,8 @@ class MuseCalibrator:
         if self.device.type == 'cuda':
             try:
                 self.vram_total = torch.cuda.get_device_properties(0).total_memory / (1024**2) # MB
+                # Enforce Triton Mode for calibration on GPU
+                set_triton_mode(True)
             except:
                 self.vram_total = 0
         else:
@@ -49,6 +53,7 @@ class MuseCalibrator:
         """
         Run a single forward/backward to measure peak memory and step time.
         This is slower but more accurate than linear regression.
+        Returns: (peak_mem_mb, step_time_sec) or (None, None) if failed/OOM
         """
         if ConfigurableResNetBK is None or self.device.type != 'cuda':
             return None, None
@@ -95,6 +100,7 @@ class MuseCalibrator:
             self._clear_memory()
             return peak_mem, step_time
         except Exception:
+            # Catch all exceptions (OOM, Triton Failure)
             self._clear_memory()
             return None, None
 
@@ -169,7 +175,8 @@ class MuseCalibrator:
         if ConfigurableResNetBK is None:
             return False
 
-        console.print("[bold blue]Running System Calibration...[/bold blue]")
+        # Use rich status or print
+        # console.print("[bold blue]Running System Calibration...[/bold blue]")
 
         # Initial Probes
         probes = [
@@ -193,6 +200,14 @@ class MuseCalibrator:
         def run_probes(probe_list, label="Measuring..."):
             measured_points = []
             base_config = ResNetBKConfig(d_model=128, n_layers=2, vocab_size=1000, n_seq=128)
+            # Use Progress
+            # Note: Progress bar handling moved to outer scope/wizard usually.
+            # But for standalone calibration, we keep it here.
+            # We assume this is running under status/progress in wizard if called from there?
+            # Actually, `calibrate()` in wizard was just `cal.calibrate()`.
+            # We can use a context manager to suppress output if needed, but `calibrate` prints to console.
+            # Let's keep it clean.
+
             with Progress() as progress:
                 task = progress.add_task(f"[cyan]{label}", total=len(probe_list))
                 for seq_len, batch, d_model, layers in probe_list:

@@ -37,6 +37,9 @@ help:
 		echo "make import     - 独自データのインポート (data/import/ から)"; \
 		echo "make recipe     - 学習データの配合設定"; \
 		echo "make train-user - 設定したレシピで学習開始"; \
+		echo "make train-resume - 学習の再開 (Usage: make train-resume CHECKPOINT=...)"; \
+		echo "make reborn       - Reborn Ritual (強化学習的転生)"; \
+		echo "make merge        - モデルのマージ"; \
 		echo "make data-lite  - テスト用データセットのダウンロード"; \
 		echo "make data       - 全データセットのダウンロード"; \
 		echo "make test       - テストの実行"; \
@@ -62,6 +65,7 @@ help:
 		echo "make train-user - Start training with user recipe"; \
 		echo "make train-resume - Resume training (Usage: make train-resume CHECKPOINT=...)"; \
 		echo "make reborn       - Reborn Ritual (Usage: make reborn CHECKPOINT=...)"; \
+		echo "make merge        - Merge Models"; \
 		echo "make data-lite  - Download small test dataset"; \
 		echo "make data       - Download ALL datasets"; \
 		echo "make test       - Run tests"; \
@@ -125,6 +129,10 @@ recipe:
 	$(PYTHON) scripts/configure_recipe.py
 
 train-user:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Error: Recipe not found. Please run 'make recipe' first."; \
+		exit 1; \
+	fi
 	@if [ -f configs/auto_optimized.yaml ]; then \
 		echo "Using auto-optimized config..."; \
 		cmd="$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/auto_optimized.yaml $(TRAIN_OVERRIDES)"; \
