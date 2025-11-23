@@ -240,8 +240,40 @@ def main():
     config_dir.mkdir(exist_ok=True)
 
     # Save Recipe
-    with open(config_dir / "dataset_mixing.yaml", 'w') as f:
-        yaml.dump({'mixing_ratios': ratios}, f)
+    yaml_path = config_dir / "dataset_mixing.yaml"
+
+    # Try to load existing to preserve paths/metadata
+    existing_data = {}
+    if yaml_path.exists():
+        try:
+            with open(yaml_path, 'r') as f:
+                existing_data = yaml.safe_load(f) or {}
+        except Exception:
+            existing_data = {}
+
+    if 'datasets' not in existing_data or not isinstance(existing_data['datasets'], dict):
+        # Fallback if file is broken/missing: construct minimal valid config
+        console.print(t("[yellow]Warning: Reconstructing dataset config from scratch (metadata lost).[/yellow]",
+                        "[yellow]警告: データセット設定を再構築します（メタデータは失われます）。[/yellow]"))
+        existing_data['datasets'] = {}
+        # If we are reconstructing, we assume we can just use the keys from ratios (which came from data dir)
+        for ds in ratios:
+             existing_data['datasets'][ds] = {'path': f"./data/{ds}"}
+
+    # Update weights
+    for ds, weight in ratios.items():
+        if ds in existing_data.get('datasets', {}):
+            existing_data['datasets'][ds]['weight'] = float(weight)
+        else:
+            # New dataset found in data/ but not in yaml? Add it.
+            existing_data.setdefault('datasets', {})[ds] = {
+                'path': f"./data/{ds}",
+                'weight': float(weight)
+            }
+
+    # Write back preserving structure
+    with open(yaml_path, 'w') as f:
+        yaml.dump(existing_data, f, default_flow_style=False, sort_keys=False)
 
     # Save Train Config
     train_config = {
