@@ -54,6 +54,13 @@ class ResNetBKConfig:
         use_active_learning: enable active learning
         use_gradient_caching: enable gradient caching
     
+    Phase 4 - New Physics & Optimization:
+        use_bitnet: Enable 1.58-bit quantization
+        use_symplectic: Enable Symplectic Integrator (Velocity Verlet)
+        symplectic_dt: Time step for symplectic integration
+        use_non_hermitian: Enable non-Hermitian decay (gamma learning)
+        model_type: "resnet_bk" or "koopman"
+
     Numerical Stability:
         v_max: potential clipping range
         feature_clamp: BK feature clipping range
@@ -98,6 +105,13 @@ class ResNetBKConfig:
     use_active_learning: bool = False
     use_gradient_caching: bool = False
     
+    # Phase 4 - New Physics
+    use_bitnet: bool = False
+    use_symplectic: bool = False
+    symplectic_dt: float = 0.1
+    use_non_hermitian: bool = False
+    model_type: str = "resnet_bk" # or "koopman"
+
     # Numerical Stability
     v_max: float = 3.0
     feature_clamp: float = 10.0
@@ -112,6 +126,14 @@ class ResNetBKConfig:
     scattering_scale: float = 0.1
     scattering_scale_warmup_steps: int = 0
     
+    # Birman-Schwinger (Phase 2/3)
+    use_birman_schwinger: bool = False
+    epsilon: float = 1.0
+    use_mourre: bool = True
+    use_lap: bool = True
+    schatten_threshold: float = 100.0
+    precision_upgrade_threshold: float = 1e6
+
     def __post_init__(self):
         """Validate configuration."""
         assert self.d_model > 0, "d_model must be positive"
@@ -260,6 +282,36 @@ FULL_CONFIG = ResNetBKConfig(
     use_gradient_caching=True,
 )
 
+PHASE4_STRONGEST_CONFIG = ResNetBKConfig(
+    # Strongest Phase 4 Model
+    use_analytic_gradient=True,
+    grad_blend=0.5,
+    use_koopman=True,
+    koopman_dim=100000,
+    use_physics_informed=True,
+    use_quantization=False, # BitNet handles quantization internally
+    use_mixed_precision=True,
+    use_custom_kernels=True,
+    use_gradient_checkpointing=True,
+    use_adaptive_computation=True,
+    use_multi_scale=True,
+    use_learned_sparsity=True,
+    use_curriculum_learning=True,
+    use_active_learning=True,
+    use_gradient_caching=True,
+
+    # Phase 4 Specifics
+    use_bitnet=True,
+    use_symplectic=True,
+    symplectic_dt=0.1,
+    use_non_hermitian=True,
+
+    use_birman_schwinger=True,
+    epsilon=1.0,
+    use_mourre=True,
+    use_lap=True,
+)
+
 
 class ConfigurableResNetBK(nn.Module):
     """
@@ -273,21 +325,58 @@ class ConfigurableResNetBK(nn.Module):
         super().__init__()
         self.config = config
         
-        # Create base model
-        self.model = LanguageModel(
-            vocab_size=config.vocab_size,
-            d_model=config.d_model,
-            n_layers=config.n_layers,
-            n_seq=config.n_seq,
-            num_experts=config.num_experts,
-            top_k=config.top_k,
-            dropout_p=config.dropout_p,
-            prime_bump_init=config.prime_bump_init,
-            prime_bump_scale=config.prime_bump_scale,
-            use_scattering_router=config.use_scattering_router,
-            scattering_scale=config.scattering_scale,
-            scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
-        )
+        # Logic to switch between Standard ResNet and Koopman Model
+        if config.model_type == "koopman":
+            from src.models.koopman.model import KoopmanBKModel
+            from src.models.koopman.config import KoopmanConfig
+
+            k_config = KoopmanConfig(
+                vocab_size=config.vocab_size,
+                d_model=config.d_model,
+                n_layers=config.n_layers,
+                n_seq=config.n_seq,
+                num_experts=config.num_experts,
+                top_k=config.top_k,
+                dropout_p=config.dropout_p,
+                use_scattering_router=config.use_scattering_router,
+                scattering_scale=config.scattering_scale,
+                scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
+                use_birman_schwinger=config.use_birman_schwinger,
+                epsilon=config.epsilon,
+                use_mourre=config.use_mourre,
+                use_lap=config.use_lap,
+                schatten_threshold=config.schatten_threshold,
+                precision_upgrade_threshold=config.precision_upgrade_threshold,
+                use_bitnet=config.use_bitnet,
+                use_symplectic=config.use_symplectic,
+                symplectic_dt=config.symplectic_dt,
+            )
+            self.model = KoopmanBKModel(k_config)
+        else:
+            # Create base model (LanguageModel)
+            self.model = LanguageModel(
+                vocab_size=config.vocab_size,
+                d_model=config.d_model,
+                n_layers=config.n_layers,
+                n_seq=config.n_seq,
+                num_experts=config.num_experts,
+                top_k=config.top_k,
+                dropout_p=config.dropout_p,
+                prime_bump_init=config.prime_bump_init,
+                prime_bump_scale=config.prime_bump_scale,
+                use_scattering_router=config.use_scattering_router,
+                scattering_scale=config.scattering_scale,
+                scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
+                use_birman_schwinger=config.use_birman_schwinger,
+                epsilon=config.epsilon,
+                use_mourre=config.use_mourre,
+                use_lap=config.use_lap,
+                schatten_threshold=config.schatten_threshold,
+                precision_upgrade_threshold=config.precision_upgrade_threshold,
+                use_bitnet=config.use_bitnet,
+                use_symplectic=config.use_symplectic,
+                symplectic_dt=config.symplectic_dt,
+            )
         
         # Apply configuration to model components
         self._apply_config()
@@ -300,19 +389,28 @@ class ConfigurableResNetBK(nn.Module):
         # Step 2: Learning algorithm
         if self.config.use_analytic_gradient:
             BKCoreFunction.GRAD_BLEND = self.config.grad_blend
-        # Routing proxy settings
-        for block in self.model.blocks:
-            if isinstance(block.bk_layer.moe_ffn, SparseMoELayer):
-                block.bk_layer.moe_ffn.use_scattering_router = self.config.use_scattering_router
-                block.bk_layer.moe_ffn.scattering_scale = self.config.scattering_scale
         
-        # Apply numerical stability settings
-        for block in self.model.blocks:
-            block.bk_layer.v_max = self.config.v_max
-            block.bk_layer.feature_clamp = self.config.feature_clamp
-        
-        # Note: Other optimizations (Koopman, physics-informed, compression, etc.)
-        # will be implemented in their respective modules and integrated here.
+        # Iterate over blocks to set runtime flags
+        if hasattr(self.model, 'blocks'):
+            for block in self.model.blocks:
+                # Handle Symplectic vs Standard blocks
+                if hasattr(block, 'force_field'):
+                    layer = block.force_field
+                else:
+                    layer = block.bk_layer
+
+                # Routing proxy settings
+                if isinstance(layer.moe_ffn, SparseMoELayer):
+                    layer.moe_ffn.use_scattering_router = self.config.use_scattering_router
+                    layer.moe_ffn.scattering_scale = self.config.scattering_scale
+
+                # Apply numerical stability settings
+                layer.v_max = self.config.v_max
+                layer.feature_clamp = self.config.feature_clamp
+
+                # Apply Non-Hermitian setting (if not handled in init)
+                # Actually, gamma logic is internal to layer, but we can verify or init here
+                pass
     
     def forward(self, x):
         """Forward pass through configured model."""
@@ -358,9 +456,18 @@ class ConfigurableResNetBK(nn.Module):
             enabled_features.append("Gradient Caching")
         if self.config.prime_bump_init:
             enabled_features.append(f"Prime-bump Init (scale={self.config.prime_bump_scale})")
+        if self.config.use_bitnet:
+            enabled_features.append("BitNet b1.58 (1.58-bit Weights)")
+        if self.config.use_symplectic:
+            enabled_features.append(f"Symplectic Integrator (dt={self.config.symplectic_dt})")
+        if self.config.use_non_hermitian:
+            enabled_features.append("Non-Hermitian Physics (Decay Gamma)")
+        if self.config.model_type == "koopman":
+            enabled_features.append("KOOPMAN MODEL ARCHITECTURE")
         
         summary = {
-            "Model": f"ResNet-BK (d={self.config.d_model}, L={self.config.n_layers}, N={self.config.n_seq})",
+            "Model Type": self.config.model_type,
+            "Specs": f"d={self.config.d_model}, L={self.config.n_layers}, N={self.config.n_seq}",
             "Parameters": f"{self.get_num_parameters()/1e6:.2f}M",
             "MoE": f"{self.config.num_experts} experts, top-{self.config.top_k}",
             "Enabled Features": enabled_features if enabled_features else ["Baseline only"],
