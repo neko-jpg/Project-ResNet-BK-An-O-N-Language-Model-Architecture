@@ -32,6 +32,7 @@ from src.utils import (
 )
 from src.training.curriculum import CurriculumScheduler
 from src.eval.skill_bench import SkillEvaluator
+from scripts.calibration import MuseCalibrator
 
 # Silence noisy warnings early
 warnings.filterwarnings("ignore", message=".*_register_pytree_node is deprecated.*")
@@ -51,6 +52,14 @@ def train():
     warnings.filterwarnings("ignore", category=UserWarning, message=".*To copy construct from a tensor.*")
     # Parse arguments
     args = parse_args()
+
+    # Strict Triton Check for Training
+    # We must ensure Triton is available if we are running the O(N) kernel on GPU
+    # If device is CPU, MuseCalibrator handles it gracefully (returns True)
+    # If device is CUDA, strict=True will exit if Triton is missing.
+    cal = MuseCalibrator()
+    if args.device != 'cpu': # Only check strict if potentially using GPU
+        cal.check_triton(strict=True)
 
     # Build config early so that sequence length and related params propagate to data loaders
     config = get_config_from_args(args)
