@@ -172,10 +172,6 @@ class MuseCalibrator:
 
         except Exception as e:
             # Catch RuntimeErrors (OOM) and ValueErrors (Triton issues)
-            # Log minimal info if needed, but don't crash
-            # if "out of memory" in str(e).lower():
-            #     return float('inf'), float('inf')
-            # For any error (OOM or Kernel failure), treat as invalid point
             self._clear_memory()
             return float('inf'), float('inf')
 
@@ -183,9 +179,6 @@ class MuseCalibrator:
         """Run calibration points to fit the model."""
         if ConfigurableResNetBK is None:
             return False
-
-        # Use rich status or print
-        # console.print("[bold blue]Running System Calibration...[/bold blue]")
 
         # Initial Probes
         probes = [
@@ -209,13 +202,6 @@ class MuseCalibrator:
         def run_probes(probe_list, label="Measuring..."):
             measured_points = []
             base_config = ResNetBKConfig(d_model=128, n_layers=2, vocab_size=1000, n_seq=128)
-            # Use Progress
-            # Note: Progress bar handling moved to outer scope/wizard usually.
-            # But for standalone calibration, we keep it here.
-            # We assume this is running under status/progress in wizard if called from there?
-            # Actually, `calibrate()` in wizard was just `cal.calibrate()`.
-            # We can use a context manager to suppress output if needed, but `calibrate` prints to console.
-            # Let's keep it clean.
 
             with Progress() as progress:
                 task = progress.add_task(f"[cyan]{label}", total=len(probe_list))
@@ -276,7 +262,13 @@ class MuseCalibrator:
 
         return True
 
-    def predict(self, batch, seq_len, d_model, layers):
+    def predict(self, batch, seq_len, d_model, layers, **kwargs):
+        """
+        Predict VRAM usage.
+
+        Kwargs:
+            use_symplectic (bool): If True, doubles dynamic memory estimation (2.0x).
+        """
         complexity = batch * seq_len * d_model * layers
 
         # Model Weights (Static Memory) - explicit calculation
@@ -285,6 +277,11 @@ class MuseCalibrator:
 
         # Dynamic Memory (Activations)
         dynamic_mem_mb = self.memory_coeffs['per_complex'] * complexity
+
+        # --- Phase 4 Multipliers ---
+        if kwargs.get('use_symplectic', False):
+            # Symplectic integrator splits state into (q, p), effectively doubling activation memory
+            dynamic_mem_mb *= 2.0
 
         # Total
         mem_mb = self.memory_coeffs['base'] + static_mem_mb + dynamic_mem_mb
@@ -309,6 +306,7 @@ class MuseCalibrator:
                 console.print("Please install triton or run in a compatible environment (Linux/WSL).")
                 sys.exit(1)
             else:
+                console.print("[yellow]Warning: Triton is missing. Performance will be degraded.[/yellow]")
                 return False
         return True
 
@@ -320,6 +318,10 @@ if __name__ == "__main__":
         m, t = cal.predict(4, 1024, 512, 6)
         console.print(f"Prediction for B=4, N=1024, D=512, L=6:")
         console.print(f"  Memory: {m:.1f} MB (Limit: {cal.vram_total:.1f} MB)")
-        console.print(f"  Step Time: {t*1000:.1f} ms")
+
+        # Test Symplectic Prediction
+        m_sym, t_sym = cal.predict(4, 1024, 512, 6, use_symplectic=True)
+        console.print(f"Prediction (Symplectic) for B=4, N=1024, D=512, L=6:")
+        console.print(f"  Memory: {m_sym:.1f} MB (Factor: {m_sym/m:.2f}x)")
     else:
         console.print("Skipping calibration (CPU mode)")
