@@ -1,4 +1,4 @@
-.PHONY: help setup install data data-lite test demo clean up down doctor import recipe train-user
+.PHONY: help setup install data data-lite test demo clean up down doctor import recipe train-user phase4
 
 # Default shell
 SHELL := /bin/bash
@@ -36,6 +36,7 @@ help:
 		echo "make doctor     - システム診断とトラブルシューティング"; \
 		echo "make import     - 独自データのインポート (data/import/ から)"; \
 		echo "make recipe     - 学習データの配合設定"; \
+		echo "make phase4     - Phase 4最強設定(BitNet/Symplectic)を現在の設定に適用"; \
 		echo "make train-user - 設定したレシピで学習開始"; \
 		echo "make train-resume - 学習の再開 (Usage: make train-resume CHECKPOINT=...)"; \
 		echo "make reborn       - Reborn Ritual (強化学習的転生)"; \
@@ -62,6 +63,7 @@ help:
 		echo "make doctor     - Run system diagnostics"; \
 		echo "make import     - Import user data from data/import/"; \
 		echo "make recipe     - Configure dataset mixing recipe"; \
+		echo "make phase4     - Merge Phase 4 Config into current recipe"; \
 		echo "make train-user - Start training with user recipe"; \
 		echo "make train-resume - Resume training (Usage: make train-resume CHECKPOINT=...)"; \
 		echo "make reborn       - Reborn Ritual (Usage: make reborn CHECKPOINT=...)"; \
@@ -128,6 +130,9 @@ import:
 recipe:
 	$(PYTHON) scripts/configure_recipe.py
 
+phase4:
+	$(PYTHON) scripts/apply_phase4_config.py
+
 train-user:
 	@if [ ! -f configs/dataset_mixing.yaml ]; then \
 		echo "Error: Recipe not found. Please run 'make recipe' first."; \
@@ -139,6 +144,7 @@ train-user:
 		echo "$$cmd"; \
 		$$cmd; \
 	elif [ -f configs/user_train_config.yaml ]; then \
+		echo "Using user_train_config.yaml (Phase 4 / Manual)..."; \
 		cmd="$(PYTHON) scripts/train.py --dataset configs/dataset_mixing.yaml --config configs/user_train_config.yaml $(TRAIN_OVERRIDES)"; \
 		echo "$$cmd"; \
 		$$cmd; \

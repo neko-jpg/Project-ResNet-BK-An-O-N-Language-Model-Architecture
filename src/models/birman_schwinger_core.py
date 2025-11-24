@@ -78,6 +78,7 @@ class BirmanSchwingerCore(nn.Module):
         use_semiseparable: bool = True,
         semiseparable_rank: Optional[int] = None,
         enable_gradient_checkpointing: bool = False,
+        use_bitnet: bool = False,
     ):
         super().__init__()
         
@@ -89,6 +90,7 @@ class BirmanSchwingerCore(nn.Module):
         self.precision_upgrade_threshold = precision_upgrade_threshold
         self.use_semiseparable = use_semiseparable
         self.enable_gradient_checkpointing = enable_gradient_checkpointing
+        self.use_bitnet = use_bitnet
         
         # Position grid for resolvent kernel computation
         self.register_buffer(
@@ -103,6 +105,7 @@ class BirmanSchwingerCore(nn.Module):
                 n_seq=n_seq,
                 rank=semiseparable_rank,
                 dtype=torch.float32,
+                use_bitnet=use_bitnet,
             )
             if enable_gradient_checkpointing:
                 self.semiseparable.enable_checkpointing()
@@ -166,7 +169,11 @@ class BirmanSchwingerCore(nn.Module):
         sgn = torch.where(diff == 0, torch.zeros_like(sgn), sgn)
         
         # Convert to complex
-        z_tensor = torch.tensor(z, dtype=dtype, device=device)
+        if isinstance(z, torch.Tensor):
+             z_tensor = z.to(dtype=dtype, device=device)
+        else:
+             z_tensor = torch.tensor(z, dtype=dtype, device=device)
+
         diff_complex = diff.to(dtype)
         sgn_complex = sgn.to(dtype)
         
@@ -301,7 +308,11 @@ class BirmanSchwingerCore(nn.Module):
         V_l2 = torch.sqrt((V ** 2).mean(dim=0).sum()).item()  # L2 norm
         
         # Theoretical bounds
-        im_z = abs(z.imag)
+        if isinstance(z, torch.Tensor):
+            im_z = z.imag.abs().item()
+        else:
+            im_z = abs(z.imag)
+
         s2_bound = 0.5 * (im_z ** (-0.5)) * V_l2
         s1_bound = 0.5 * (im_z ** (-1.0)) * V_l1 if self.epsilon > 0.5 else float('inf')
         
@@ -444,7 +455,8 @@ class BirmanSchwingerCore(nn.Module):
     def compute_semiseparable_resolvent(
         self,
         v: torch.Tensor,
-        z: complex
+        z: complex,
+        gamma: Optional[float] = None,
     ) -> torch.Tensor:
         """
         Compute G_ii = diag((H_ε - zI)^{-1}) using semiseparable structure.
@@ -459,6 +471,7 @@ class BirmanSchwingerCore(nn.Module):
         Args:
             v: (B, N) potential values
             z: complex shift
+            gamma: Optional learnable decay rate (H_eff = H - i*gamma)
         
         Returns:
             G_ii: (B, N) complex diagonal of resolvent
@@ -474,6 +487,17 @@ class BirmanSchwingerCore(nn.Module):
         
         # Main diagonal: -2 + v (from Laplacian + potential)
         he_diag = -2.0 * torch.ones_like(v) + v
+
+        # Apply Non-Hermitian decay gamma
+        # H_eff = H - i*gamma
+        if gamma is not None:
+             # Since v is real, we need to handle this carefully.
+             # However, he_diag is used in vmapped_get_diag which takes real he_diag.
+             # But z is complex.
+             # (H - zI) = (H_real - i*gamma - zI) = (H_real - (z + i*gamma)I)
+             # So we can absorb gamma into z!
+             # z_effective = z + i*gamma
+             z = z + 1j * gamma
         
         # Off-diagonals: +1 (from Laplacian)
         h0_super = torch.ones(batch_size, n_seq - 1, device=device)
@@ -508,7 +532,12 @@ class BirmanSchwingerCore(nn.Module):
         # G_ii^{tridiag} = diag((T - zI)^{-1})
         # Convert z to tensor for compatibility with bk_core
         z_dtype = torch.complex128 if use_high_precision else torch.complex64
-        z_tensor = torch.tensor(z, dtype=z_dtype, device=device)
+
+        if isinstance(z, torch.Tensor):
+             z_tensor = z.to(dtype=z_dtype, device=device)
+        else:
+             z_tensor = torch.tensor(z, dtype=z_dtype, device=device)
+
         G_ii_tridiag = vmapped_get_diag(he_diag, h0_super, h0_sub, z_tensor)
         
         if not self.use_semiseparable or self.semiseparable is None:
@@ -730,7 +759,8 @@ class BirmanSchwingerCore(nn.Module):
     def forward(
         self,
         v: torch.Tensor,
-        z: complex = 1.0j
+        z: complex = 1.0j,
+        gamma: Optional[float] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Compute G_ii = diag((H_ε - zI)^{-1}) with stability guarantees.
@@ -740,6 +770,7 @@ class BirmanSchwingerCore(nn.Module):
         Args:
             v: (B, N) potential from Prime-Bump initialization
             z: complex shift (default: 1.0j)
+            gamma: Optional learnable decay rate
         
         Returns:
             features: (B, N, 2) [real(G_ii), imag(G_ii)]
@@ -755,9 +786,13 @@ class BirmanSchwingerCore(nn.Module):
         
         # Compute resolvent diagonal using semiseparable structure
         if self.use_semiseparable:
-            G_ii = self.compute_semiseparable_resolvent(v, z)
+            G_ii = self.compute_semiseparable_resolvent(v, z, gamma=gamma)
         else:
             # Fallback to Birman-Schwinger operator (original implementation)
+            # Apply gamma shift to z if provided
+            if gamma is not None:
+                z = z + 1j * gamma
+
             K = self.compute_birman_schwinger_operator(v, z, use_high_precision)
             
             # Verify Schatten bounds
