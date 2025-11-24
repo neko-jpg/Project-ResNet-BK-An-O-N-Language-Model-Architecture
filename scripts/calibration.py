@@ -255,8 +255,9 @@ class MuseCalibrator:
 
         if use_fallback:
             # Theoretical Fallback (Last Resort)
-            self.memory_coeffs['per_complex'] = 2.0e-5 # slightly conservative
-            self.memory_coeffs['base'] = 500 # 500MB fixed overhead
+            # Use more conservative defaults to avoid underestimating VRAM
+            self.memory_coeffs['per_complex'] = 5.0e-5
+            self.memory_coeffs['base'] = 800 # 800MB fixed overhead
             self.speed_coeffs['per_complex'] = 1.0e-8
             self.speed_coeffs['base'] = 0.0
 
@@ -273,21 +274,27 @@ class MuseCalibrator:
 
         # Model Weights (Static Memory) - explicit calculation
         param_count = 12 * layers * (d_model**2) + (50000 * d_model)
-        static_mem_mb = (param_count * 4) / (1024**2)
+        # Optimizer (AdamW) keeps two fp32 states per parameter (8 bytes) + weights.
+        weight_bytes = 4  # keep conservative even with BitNet to avoid underestimation
+        static_mem_mb = (param_count * (weight_bytes + 8)) / (1024**2)
 
         # Dynamic Memory (Activations)
         dynamic_mem_mb = self.memory_coeffs['per_complex'] * complexity
 
         # --- Phase 4 Multipliers ---
         if kwargs.get('use_symplectic', False):
-            # Symplectic integrator splits state into (q, p), effectively doubling activation memory
-            dynamic_mem_mb *= 2.0
+            # Symplectic integrator splits state into (q, p), effectively increasing activation memory
+            dynamic_mem_mb *= 2.5
+
+        # Gradient checkpointing reduces saved activations
+        if kwargs.get('use_gradient_checkpointing', False):
+            dynamic_mem_mb *= 0.65
 
         # Total
         mem_mb = self.memory_coeffs['base'] + static_mem_mb + dynamic_mem_mb
 
         # Add safety margin
-        mem_mb *= 1.1
+        mem_mb *= 1.25
 
         time_sec = self.speed_coeffs['base'] + self.speed_coeffs['per_complex'] * complexity
 

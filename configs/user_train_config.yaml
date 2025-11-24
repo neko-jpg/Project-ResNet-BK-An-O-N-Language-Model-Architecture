@@ -1,9 +1,9 @@
-batch_size: 4
-d_model: 3008
+batch_size: 2
+d_model: 1408
 epochs: 10
 learning_rate: 0.001
 n_layers: 6
-n_seq: 1024
+n_seq: 768
 model_type: resnet_bk
 num_experts: 4
 top_k: 1
@@ -18,3 +18,6 @@ use_lap: true
 lr: 1e-3
 grad_clip: 0.5
 dataset: phase4
+use_mixed_precision: true
+use_gradient_checkpointing: true
+use_custom_kernels: true

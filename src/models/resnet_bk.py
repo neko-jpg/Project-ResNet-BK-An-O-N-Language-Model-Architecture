@@ -65,6 +65,7 @@ class MoEResNetBKLayer(nn.Module):
         schatten_threshold: float = 100.0,
         precision_upgrade_threshold: float = 1e6,
         use_bitnet: bool = False,
+        enable_gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -93,6 +94,7 @@ class MoEResNetBKLayer(nn.Module):
                 use_lap=use_lap,
                 schatten_threshold=schatten_threshold,
                 precision_upgrade_threshold=precision_upgrade_threshold,
+                enable_gradient_checkpointing=enable_gradient_checkpointing,
                 use_bitnet=use_bitnet,
             )
             # Store diagnostics
@@ -235,6 +237,7 @@ class ResNetBKBlock(nn.Module):
         schatten_threshold: float = 100.0,
         precision_upgrade_threshold: float = 1e6,
         use_bitnet: bool = False,
+        enable_gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.layer_norm = nn.LayerNorm(d_model)
@@ -254,6 +257,7 @@ class ResNetBKBlock(nn.Module):
             schatten_threshold=schatten_threshold,
             precision_upgrade_threshold=precision_upgrade_threshold,
             use_bitnet=use_bitnet,
+            enable_gradient_checkpointing=enable_gradient_checkpointing,
         )
 
     def forward(self, x):
@@ -306,6 +310,7 @@ class SymplecticBKBlock(nn.Module):
         precision_upgrade_threshold: float = 1e6,
         use_bitnet: bool = False,
         dt: float = 0.1, # Time step size
+        enable_gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -357,6 +362,7 @@ class SymplecticBKBlock(nn.Module):
             schatten_threshold=schatten_threshold,
             precision_upgrade_threshold=precision_upgrade_threshold,
             use_bitnet=use_bitnet,
+            enable_gradient_checkpointing=enable_gradient_checkpointing,
         )
 
     def forward(self, x):
@@ -464,6 +470,7 @@ class LanguageModel(nn.Module):
         use_bitnet: bool = False,
         use_symplectic: bool = False, # New Flag
         symplectic_dt: float = 0.1,
+        use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -471,6 +478,7 @@ class LanguageModel(nn.Module):
         self.use_birman_schwinger = use_birman_schwinger
         self.prime_bump_init = prime_bump_init
         self.use_symplectic = use_symplectic
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.position_embedding = nn.Embedding(n_seq, d_model)
@@ -509,6 +517,7 @@ class LanguageModel(nn.Module):
                 schatten_threshold=schatten_threshold,
                 precision_upgrade_threshold=precision_upgrade_threshold,
                 use_bitnet=use_bitnet,
+                enable_gradient_checkpointing=use_gradient_checkpointing,
                 **({'dt': symplectic_dt} if use_symplectic else {})
             )
             for _ in range(n_layers)
@@ -590,7 +599,12 @@ class LanguageModel(nn.Module):
         routing_entropies = []
         routing_diagnostics_list = []
         for block in self.blocks:
-            h = block(h)
+            if self.use_gradient_checkpointing and self.training:
+                from torch.utils.checkpoint import checkpoint
+                # use_reentrant=True avoids saved tensor hooks incompatibility with vmap
+                h = checkpoint(lambda inp, blk=block: blk(inp), h)
+            else:
+                h = block(h)
 
             # Use appropriate attribute access depending on block type
             if self.use_symplectic:

@@ -271,7 +271,11 @@ elif "Chat" in page:
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 # Mock inference for demo
-                dummy = torch.randint(0, 1000, (1, 10))
+                # Use model sequence length if available to avoid n_seq mismatch
+                seq_len = getattr(getattr(model, "config", None), "n_seq", None)
+                if seq_len is None:
+                    seq_len = getattr(model, "n_seq", 128)
+                dummy = torch.randint(0, 1000, (1, seq_len), dtype=torch.long)
                 out = model(dummy)
                 diag = out.get('diagnostics', {})
                 meta = diag.get('meta_commentary', "Processing...")

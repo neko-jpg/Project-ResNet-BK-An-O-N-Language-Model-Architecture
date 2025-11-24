@@ -350,6 +350,7 @@ class ConfigurableResNetBK(nn.Module):
                 use_bitnet=config.use_bitnet,
                 use_symplectic=config.use_symplectic,
                 symplectic_dt=config.symplectic_dt,
+                use_gradient_checkpointing=config.use_gradient_checkpointing,
             )
             self.model = KoopmanBKModel(k_config)
         else:
@@ -376,6 +377,7 @@ class ConfigurableResNetBK(nn.Module):
                 use_bitnet=config.use_bitnet,
                 use_symplectic=config.use_symplectic,
                 symplectic_dt=config.symplectic_dt,
+                use_gradient_checkpointing=config.use_gradient_checkpointing,
             )
         
         # Apply configuration to model components

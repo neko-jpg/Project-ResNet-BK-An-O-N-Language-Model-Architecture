@@ -64,8 +64,19 @@ class Phase4IntegratedModel(nn.Module):
 
         # Phase 3 Base Model
         self.phase3_model = phase3_model
-        self.d_model = phase3_model.d_model
-        self.config = phase3_model.config
+        # ConfigurableResNetBK does not expose d_model directly; fall back to config
+        self.d_model = getattr(phase3_model, "d_model", None)
+        if self.d_model is None and hasattr(phase3_model, "config"):
+            self.d_model = getattr(phase3_model.config, "d_model", None)
+        if self.d_model is None:
+            self.d_model = 512  # safe default
+        # Minimum config for downstream components
+        self.config = getattr(phase3_model, "config", None)
+        if self.config is None:
+            class _MiniConfig:
+                vocab_size = 50257
+                max_seq_len = 2048
+            self.config = _MiniConfig()
 
         # Phase 4 Configuration
         self.enable_emotion = enable_emotion
@@ -178,17 +189,36 @@ class Phase4IntegratedModel(nn.Module):
         def hook_fn(module, input, output):
             captured_states['last_hidden'] = input[0].clone()
 
-        handle = self.phase3_model.dialectic.register_forward_hook(hook_fn)
+        handle = None
+        if hasattr(self.phase3_model, "dialectic"):
+            handle = self.phase3_model.dialectic.register_forward_hook(hook_fn)
         try:
-            # Pass initial_phase to Phase 3 Model
-            phase3_output = self.phase3_model(
-                input_ids,
-                labels,
-                return_diagnostics,
-                initial_phase=initial_phase
-            )
+            # Pass initial_phase to Phase 3 Model if supported (Phase3IntegratedModel)
+            if hasattr(self.phase3_model, "dialectic"):
+                phase3_output = self.phase3_model(
+                    input_ids,
+                    labels,
+                    return_diagnostics,
+                    initial_phase=initial_phase
+                )
+            else:
+                # Fallback for ConfigurableResNetBK-style models
+                logits = self.phase3_model(input_ids)
+                loss = None
+                diagnostics = {}
+                if labels is not None:
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.view(-1, logits.size(-1)),
+                        labels.view(-1)
+                    )
+                phase3_output = {
+                    'logits': logits,
+                    'loss': loss,
+                    'diagnostics': diagnostics
+                }
         finally:
-            handle.remove()
+            if handle is not None:
+                handle.remove()
 
         logits = phase3_output['logits']
         loss = phase3_output.get('loss', None)

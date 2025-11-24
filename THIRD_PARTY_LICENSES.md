@@ -1,4 +1,4 @@
-# Third-Party Licenses
+git status --short# Third-Party Licenses
 
 This document lists all third-party dependencies used in ResNet-BK and their respective licenses.
 

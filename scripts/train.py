@@ -65,6 +65,18 @@ def train():
     config = get_config_from_args(args)
     if hasattr(config, "n_seq"):
         args.n_seq = config.n_seq
+    # Prefer CUDA-friendly defaults when using Phase 4
+    if torch.cuda.is_available():
+        if not getattr(config, "use_mixed_precision", False):
+            config.use_mixed_precision = True
+            if hasattr(args, "use_mixed_precision"):
+                args.use_mixed_precision = True
+            print("Enabling mixed precision for CUDA to reduce VRAM pressure.")
+        if getattr(config, "use_symplectic", False) and not getattr(config, "use_gradient_checkpointing", False):
+            config.use_gradient_checkpointing = True
+            if hasattr(args, "use_gradient_checkpointing"):
+                args.use_gradient_checkpointing = True
+            print("Enabling gradient checkpointing for Symplectic mode.")
     
     # Set random seed
     torch.manual_seed(args.seed)
@@ -76,6 +88,41 @@ def train():
         device = torch.device(args.device)
     
     print(f"Using device: {device}")
+
+    # Pre-flight VRAM guard (conservative) to avoid CUDA OOM
+    if device.type == 'cuda' and cal.vram_total > 0:
+        target_limit = cal.vram_total * 0.78  # keep more headroom for activations
+        safety_kwargs = {
+            'use_symplectic': getattr(config, 'use_symplectic', False),
+            'use_gradient_checkpointing': getattr(config, 'use_gradient_checkpointing', False),
+            'use_bitnet': getattr(config, 'use_bitnet', False),
+        }
+        est_mem, _ = cal.predict(args.batch_size, args.n_seq, args.d_model, args.n_layers, **safety_kwargs)
+        if est_mem > target_limit:
+            print(f"Preflight estimate {est_mem:.0f}MB > safe limit {target_limit:.0f}MB. Shrinking config...")
+            # Reduce batch size first
+            while est_mem > target_limit and args.batch_size > 1:
+                args.batch_size = max(1, args.batch_size // 2)
+                config.batch_size = args.batch_size
+                est_mem, _ = cal.predict(args.batch_size, args.n_seq, args.d_model, args.n_layers, **safety_kwargs)
+            # Reduce d_model next
+            while est_mem > target_limit and args.d_model > 256:
+                args.d_model = max(256, args.d_model - 128)
+                if getattr(config, 'use_symplectic', False) and args.d_model % 2 != 0:
+                    args.d_model -= 1
+                config.d_model = args.d_model
+                est_mem, _ = cal.predict(args.batch_size, args.n_seq, args.d_model, args.n_layers, **safety_kwargs)
+            # Reduce depth if still heavy
+            while est_mem > target_limit and args.n_layers > 2:
+                args.n_layers = max(2, args.n_layers - 1)
+                config.n_layers = args.n_layers
+                est_mem, _ = cal.predict(args.batch_size, args.n_seq, args.d_model, args.n_layers, **safety_kwargs)
+            # Shorten sequence length last
+            while est_mem > target_limit and args.n_seq > 256:
+                args.n_seq = max(256, args.n_seq - 128)
+                config.n_seq = args.n_seq
+                est_mem, _ = cal.predict(args.batch_size, args.n_seq, args.d_model, args.n_layers, **safety_kwargs)
+            print(f"Using safe config: batch_size={args.batch_size}, d_model={args.d_model}, n_layers={args.n_layers}, n_seq={args.n_seq} (est. {est_mem:.0f}MB)")
     
     # Load data
     print("\nLoading data...")
@@ -156,6 +203,8 @@ def train():
         T_max=num_total_steps,
         eta_min=args.lr / 10
     )
+    use_amp = getattr(config, "use_mixed_precision", False) and device.type == 'cuda'
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     
     # Curriculum Scheduler (only for mixed data)
     curriculum = None
@@ -230,24 +279,43 @@ def train():
 
                 x_batch, y_batch = x_batch.to(device), y_batch.to(device)
 
-                # Forward pass
                 optimizer.zero_grad()
-                logits = model(x_batch)
-                loss = criterion(logits.view(-1, logits.size(-1)), y_batch)
+                try:
+                    with torch.cuda.amp.autocast(enabled=use_amp):
+                        logits = model(x_batch)
+                        loss = criterion(logits.view(-1, logits.size(-1)), y_batch)
 
-                # Skip if loss is NaN/Inf
-                if torch.isnan(loss) or torch.isinf(loss):
-                    progress.update(task, advance=1)
-                    continue
+                    # Skip if loss is NaN/Inf
+                    if torch.isnan(loss) or torch.isinf(loss):
+                        progress.update(task, advance=1)
+                        continue
 
-                # Backward pass
-                loss.backward()
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(),
-                    args.grad_clip
-                )
-                optimizer.step()
-                scheduler.step()
+                    if use_amp:
+                        scaler.scale(loss).backward()
+                        scaler.unscale_(optimizer)
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                            model.parameters(),
+                            args.grad_clip
+                        )
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        loss.backward()
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                            model.parameters(),
+                            args.grad_clip
+                        )
+                        optimizer.step()
+                    scheduler.step()
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        print("CUDA OOM detected. Clearing cache and skipping this step.")
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        progress.update(task, advance=1)
+                        continue
+                    else:
+                        raise
 
                 # Curriculum Step
                 if curriculum:

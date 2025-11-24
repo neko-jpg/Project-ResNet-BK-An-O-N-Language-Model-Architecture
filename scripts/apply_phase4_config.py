@@ -41,7 +41,11 @@ def apply_phase4_settings():
             "use_birman_schwinger": True,
             "epsilon": 1.0,
             "use_mourre": True,
-            "use_lap": True
+            "use_lap": True,
+            # Memory saving defaults for Phase 4 on 8-10GB GPUs
+            "use_mixed_precision": True,
+            "use_gradient_checkpointing": True,
+            "use_custom_kernels": True,
         }
     else:
         with open(phase4_config_path, 'r') as f:
@@ -86,8 +90,8 @@ def apply_phase4_settings():
         else:
              console.print("  Using CPU/Fallback profile.")
              # Set fallback defaults for CPU/safe mode so tuner works
-             cal.memory_coeffs['per_complex'] = 2.0e-5
-             cal.memory_coeffs['base'] = 500
+             cal.memory_coeffs['per_complex'] = 5.0e-5
+             cal.memory_coeffs['base'] = 800
 
     # Initialize AutoTuner
     # We don't know the goal ("Debug", "Benchmark", "Production") from the config easily.
@@ -111,7 +115,7 @@ def apply_phase4_settings():
 
     # Read target VRAM from somewhere? Or default to 90%?
     # The user instruction said "VRAM 90% target".
-    target_vram_ratio = 0.90
+    target_vram_ratio = 0.80
 
     console.print(f"  Target VRAM: {target_vram_ratio*100:.0f}%")
     console.print(f"  Current Config: d={user_config.get('d_model')}, L={user_config.get('n_layers')}")
@@ -124,6 +128,10 @@ def apply_phase4_settings():
 
     new_config, status = tuner.tune(user_config, locked_params, target_vram_ratio, **phase4_flags)
 
+    # Symplectic requires even d_model
+    if new_config.get('use_symplectic', False) and new_config.get('d_model', 0) % 2 != 0:
+        new_config['d_model'] = max(128, new_config['d_model'] - 1)
+
     # Report changes
     if new_config['d_model'] < user_config['d_model']:
         console.print(f"  [red]Downscaled d_model: {user_config['d_model']} -> {new_config['d_model']}[/red] (to fit Symplectic state)")
@@ -134,6 +142,45 @@ def apply_phase4_settings():
 
     if new_config['n_layers'] != user_config['n_layers']:
         console.print(f"  Adjusted n_layers: {user_config['n_layers']} -> {new_config['n_layers']}")
+
+    # Final safety check with conservative estimator
+    target_limit = cal.vram_total * target_vram_ratio if cal.vram_total > 0 else float('inf')
+
+    def estimate_mem(cfg):
+        return cal.predict(
+            cfg['batch_size'],
+            cfg['n_seq'],
+            cfg['d_model'],
+            cfg['n_layers'],
+            use_symplectic=cfg.get('use_symplectic', False),
+            use_gradient_checkpointing=cfg.get('use_gradient_checkpointing', False),
+            use_bitnet=cfg.get('use_bitnet', False),
+        )[0]
+
+    est_mem = estimate_mem(new_config)
+    if est_mem > target_limit:
+        target_msg = f"{target_limit:.0f}MB" if target_limit != float('inf') else "target"
+        console.print(f"  [yellow]Estimated usage {est_mem:.0f}MB exceeds target ({target_msg}). Downshifting for safety...[/yellow]")
+        # Try reducing batch size first
+        while est_mem > target_limit and new_config['batch_size'] > tuner.limits['batch_size']['min']:
+            new_config['batch_size'] = max(tuner.limits['batch_size']['min'], new_config['batch_size'] // 2)
+            est_mem = estimate_mem(new_config)
+        # Then reduce d_model
+        while est_mem > target_limit and new_config['d_model'] > tuner.limits['d_model']['min']:
+            new_config['d_model'] = max(tuner.limits['d_model']['min'], new_config['d_model'] - tuner.limits['d_model']['step'])
+            # Keep even dimension for symplectic
+            if new_config.get('use_symplectic', False) and new_config['d_model'] % 2 != 0:
+                new_config['d_model'] -= 1
+            est_mem = estimate_mem(new_config)
+        # Reduce depth if still heavy
+        while est_mem > target_limit and new_config['n_layers'] > tuner.limits['n_layers']['min']:
+            new_config['n_layers'] = max(tuner.limits['n_layers']['min'], new_config['n_layers'] - tuner.limits['n_layers']['step'])
+            est_mem = estimate_mem(new_config)
+        # Finally, shorten sequence length if still above target
+        while est_mem > target_limit and new_config['n_seq'] > tuner.limits['n_seq']['min']:
+            new_config['n_seq'] = max(tuner.limits['n_seq']['min'], new_config['n_seq'] - tuner.limits['n_seq']['step'])
+            est_mem = estimate_mem(new_config)
+        console.print(f"  [green]Memory guard applied: B={new_config['batch_size']}, d_model={new_config['d_model']}, n_seq={new_config['n_seq']} (est. {est_mem:.0f}MB)[/green]")
 
     # Save back
     with open(user_config_path, 'w') as f:
