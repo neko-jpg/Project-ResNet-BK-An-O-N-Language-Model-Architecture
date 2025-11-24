@@ -233,13 +233,18 @@ class BinaryIndexedDataset:
     The .bin file stores uint32 token ids concatenated for all documents.
     """
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, split: str = "train"):
         root = Path(path)
-        bin_path = root / "train.bin"
-        idx_path = root / "train.idx"
+        bin_path = root / f"{split}.bin"
+        idx_path = root / f"{split}.idx"
 
         if not bin_path.exists() or not idx_path.exists():
-            raise FileNotFoundError(f"Missing bin/idx files under {root}")
+            # Fallback for legacy setups where only 'train' might exist if split is validation,
+            # but strictly we should raise error.
+            # However, to be nice during transition:
+            if split == "validation" and not bin_path.exists():
+                 raise FileNotFoundError(f"Validation split not found at {bin_path}")
+            raise FileNotFoundError(f"Missing bin/idx files under {root} for split '{split}'")
 
         with open(idx_path, "rb") as f:
             magic = f.read(4)
@@ -291,6 +296,7 @@ class MixedBinaryDataset:
         total_tokens: int,
         seed: int,
         vocab_size: int,
+        split: str = "train",
     ):
         self.config_path = Path(config_path)
         self.batch_size = batch_size
@@ -298,6 +304,7 @@ class MixedBinaryDataset:
         self.total_tokens = total_tokens
         self.seed = seed
         self.vocab_size = vocab_size
+        self.split = split
 
         with open(self.config_path, "r") as f:
             cfg = yaml.safe_load(f)
@@ -315,13 +322,28 @@ class MixedBinaryDataset:
             weight = float(info.get("weight", 0.0))
             if not path:
                 continue
-            # Keep even if weight is 0 initially, to allow dynamic enabling
-            self.datasets.append(BinaryIndexedDataset(path))
-            self.weights.append(weight)
-            self.dataset_names.append(name)
+
+            # Try to load the dataset for the requested split
+            try:
+                ds = BinaryIndexedDataset(path, split=split)
+                # Keep even if weight is 0 initially, to allow dynamic enabling
+                self.datasets.append(ds)
+                self.weights.append(weight)
+                self.dataset_names.append(name)
+            except FileNotFoundError:
+                if split == "train":
+                    # Critical failure if training data is missing
+                    raise
+                else:
+                    # Soft failure for validation: just warn and skip this dataset
+                    print(f"[Dataset] Warning: Split '{split}' missing for {name}, skipping.")
+                    continue
 
         if not self.datasets:
-            raise ValueError(f"All datasets missing in {self.config_path}")
+             if split == "validation":
+                 print(f"[Dataset] Warning: No datasets found for split '{split}'. Validation will be empty.")
+             else:
+                 raise ValueError(f"All datasets missing in {self.config_path} for split {split}")
 
         # Normalize initial weights
         self._normalize_weights()
@@ -399,6 +421,7 @@ def get_mixed_data_loader(
     total_tokens: int,
     seed: int,
     vocab_size: int,
+    split: str = "train",
 ) -> Tuple[MixedBinaryDataset, Dict[str, object], int]:
     """
     Build a mixed dataset loader from .bin/.idx datasets defined in YAML.
@@ -410,8 +433,11 @@ def get_mixed_data_loader(
         total_tokens=total_tokens,
         seed=seed,
         vocab_size=vocab_size,
+        split=split,
     )
-    # Guard: ensure embedding size covers all token ids from prepared binaries
+
+    # Only expand vocab based on training data to ensure consistency,
+    # but we scan whatever we loaded.
     max_token_id = mixed.max_token_id()
     if max_token_id + 1 > mixed.vocab_size:
         mixed.vocab_size = max_token_id + 1

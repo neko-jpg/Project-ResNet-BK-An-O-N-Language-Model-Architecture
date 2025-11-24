@@ -127,20 +127,42 @@ def train():
     # Load data
     print("\nLoading data...")
     use_mixed = args.use_mixed_datasets or args.dataset in ("mixed", "phase4", "phase4-mix") or args.dataset.endswith(".yaml")
+
+    val_loader = None
+    val_steps_per_epoch = 0
+
     if use_mixed:
+        config_path = args.dataset_mix_config if not args.dataset.endswith(".yaml") else args.dataset
         mixed_loader, vocab, steps_per_epoch = get_mixed_data_loader(
-            config_path=args.dataset_mix_config if not args.dataset.endswith(".yaml") else args.dataset,
+            config_path=config_path,
             batch_size=args.batch_size,
             n_seq=args.n_seq,
             total_tokens=args.data_limit,
             seed=args.seed,
             vocab_size=args.vocab_size,
+            split='train'
         )
         train_data = None
         get_batch = None
         training_tokens = steps_per_epoch * args.batch_size * args.n_seq
         print(f"Vocabulary size: {vocab['vocab_size']}")
         print(f"Training tokens (per epoch): {training_tokens}")
+
+        # Try to load validation data
+        try:
+            val_loader, _, val_steps_per_epoch = get_mixed_data_loader(
+                config_path=config_path,
+                batch_size=args.batch_size,
+                n_seq=args.n_seq,
+                total_tokens=max(10000, args.data_limit // 10), # 10% size or min 10k
+                seed=args.seed + 999, # Different seed
+                vocab_size=vocab['vocab_size'], # Use training vocab size
+                split='validation'
+            )
+            print(f"Validation enabled. Steps per epoch: {val_steps_per_epoch}")
+        except Exception as e:
+            print(f"Validation loader skipped: {e}")
+            val_loader = None
     else:
         train_data, vocab, get_batch = get_data_loader(
             batch_size=args.batch_size,
@@ -394,6 +416,40 @@ def train():
 
                 progress.update(task, advance=1)
         
+        # Validation Loop
+        val_metrics = {}
+        if val_loader:
+            model.eval()
+            val_loss_sum = 0.0
+            val_batches = 0
+            val_iter = val_loader.iter_epoch(epoch)
+
+            print("Running Validation...")
+            with torch.no_grad():
+                for vx, vy in val_iter:
+                    vx, vy = vx.to(device), vy.to(device)
+                    # Handle potential shape mismatch
+                    if vx.size(1) != args.n_seq:
+                        continue
+
+                    with torch.cuda.amp.autocast(enabled=use_amp):
+                        logits = model(vx)
+                        v_loss = criterion(logits.view(-1, logits.size(-1)), vy)
+
+                    if not torch.isnan(v_loss) and not torch.isinf(v_loss):
+                        val_loss_sum += v_loss.item()
+                        val_batches += 1
+
+            if val_batches > 0:
+                avg_val_loss = val_loss_sum / val_batches
+                val_perplexity = math.exp(min(avg_val_loss, 20))
+                val_metrics = {
+                    'val_loss': avg_val_loss,
+                    'val_perplexity': val_perplexity
+                }
+
+            model.train()
+
         # Epoch summary
         epoch_time = time.time() - epoch_start
         avg_loss = total_loss / max(1, num_batches)
@@ -403,6 +459,10 @@ def train():
         print(f"  Time: {epoch_time:.1f}s")
         print(f"  Avg Loss: {avg_loss:.4f}")
         print(f"  Perplexity: {perplexity:.2f}")
+
+        if val_metrics:
+            print(f"  Val Loss: {val_metrics['val_loss']:.4f}")
+            print(f"  Val PPL:  {val_metrics['val_perplexity']:.2f}")
         
         # Print stability diagnostics if using Birman-Schwinger
         if hasattr(model.model, 'get_stability_diagnostics'):

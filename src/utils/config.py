@@ -175,9 +175,10 @@ def get_config_from_args(args):
                     else:
                         if hasattr(cfg_obj, k):
                             setattr(cfg_obj, k, v)
-                            # Also update args so it reflects in logs
-                            if hasattr(args, k):
-                                setattr(args, k, v)
+
+                        # Also update args so it reflects in logs and usage in train.py
+                        if hasattr(args, k):
+                            setattr(args, k, v)
 
             update_config_from_dict(config, yaml_config)
 
