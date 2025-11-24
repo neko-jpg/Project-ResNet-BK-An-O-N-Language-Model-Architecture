@@ -66,7 +66,7 @@ class AutoTuner:
             self.limits['d_model']['max'] = 1024
             self.limits['n_layers']['max'] = 16
 
-    def tune(self, config, locked_params, target_vram_ratio):
+    def tune(self, config, locked_params, target_vram_ratio, **kwargs):
         """
         Adjusts config to meet target_vram_ratio.
         Respects locked_params.
@@ -87,7 +87,8 @@ class AutoTuner:
                     current_cfg['batch_size'],
                     current_cfg['n_seq'],
                     current_cfg['d_model'],
-                    current_cfg['n_layers']
+                    current_cfg['n_layers'],
+                    **kwargs
                 )
 
             # Check convergence (within small margin or safe side)
@@ -148,7 +149,8 @@ class AutoTuner:
                         with contextlib.redirect_stderr(io.StringIO()):
                             temp_mem, _ = self.cal.predict(
                                 temp_cfg['batch_size'], temp_cfg['n_seq'],
-                                temp_cfg['d_model'], temp_cfg['n_layers']
+                                temp_cfg['d_model'], temp_cfg['n_layers'],
+                                **kwargs
                             )
 
                         if temp_mem <= target_vram:
