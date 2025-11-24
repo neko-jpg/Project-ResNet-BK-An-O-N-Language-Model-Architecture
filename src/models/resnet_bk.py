@@ -20,6 +20,7 @@ from .bk_core import BKCoreFunction
 from .moe import SparseMoELayer
 from .birman_schwinger_core import BirmanSchwingerCore
 from .prime_bump_potential import PrimeBumpPotential
+from src.models.phase4.homeostasis import HomeostasisController
 
 
 class MoEResNetBKLayer(nn.Module):
@@ -84,6 +85,9 @@ class MoEResNetBKLayer(nn.Module):
         # Non-Hermitian Physics: Learnable decay rate gamma (init 0.0)
         # H_eff = H - i*gamma
         self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
+
+        # Dynamic Criticality Control (Homeostasis)
+        self.homeostasis = HomeostasisController()
 
         # Initialize BK-Core (either Birman-Schwinger or original)
         if use_birman_schwinger:
@@ -204,6 +208,18 @@ class MoEResNetBKLayer(nn.Module):
             norm_in = x.norm(p=2, dim=-1).mean()
             norm_out = output.norm(p=2, dim=-1).mean()
             self.last_unitarity_violation = (norm_out / (norm_in + 1e-9) - 1.0).abs()
+
+            # --- Dynamic Criticality Control ---
+            # Update gamma based on homeostasis
+            if self.training:
+                diagnostics = {
+                    'unitarity_violation': self.last_unitarity_violation.item(),
+                    'growth_ratio': (norm_out / (norm_in + 1e-9)).item()
+                }
+                # Update gamma parameter
+                # Note: We update the data directly to act as a state variable
+                new_gamma = self.homeostasis(self.gamma, diagnostics)
+                self.gamma.data.copy_(new_gamma)
 
         return output
 

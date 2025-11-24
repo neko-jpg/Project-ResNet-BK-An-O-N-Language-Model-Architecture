@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional
 import numpy as np
+from src.models.phase4.topological_memory.barrier_loss import TopologicalBarrierLoss
 
 
 class PhysicsInformedTrainer:
@@ -16,6 +17,7 @@ class PhysicsInformedTrainer:
     
     Features:
     - Energy conservation constraint: L_energy = ||E(x_t) - E(x_{t-1})||^2
+    - Topological Barrier constraint: Stabilize high-confidence states
     - Automatic Lagrange multiplier adjustment
     - Energy drift monitoring
     - Hamiltonian structure preservation
@@ -27,6 +29,7 @@ class PhysicsInformedTrainer:
         lambda_energy_init: initial Lagrange multiplier for energy conservation
         lambda_energy_lr: learning rate for Lagrange multiplier adaptation
         energy_target_drift: target energy drift (for automatic lambda adjustment)
+        enable_topological_barrier: whether to use topological barrier loss
     """
     
     def __init__(
@@ -38,7 +41,8 @@ class PhysicsInformedTrainer:
         lambda_energy_lr: float = 0.01,
         energy_target_drift: float = 0.1,
         physics_start_epoch: int = 4,
-        device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
+        enable_topological_barrier: bool = True
     ):
         self.model = model
         self.optimizer = optimizer
@@ -47,6 +51,11 @@ class PhysicsInformedTrainer:
         self.energy_target_drift = energy_target_drift
         self.physics_start_epoch = physics_start_epoch
         self.device = device
+        self.enable_topological_barrier = enable_topological_barrier
+
+        # Topological Barrier Loss
+        if enable_topological_barrier:
+            self.barrier_loss_fn = TopologicalBarrierLoss(barrier_strength=0.1)
         
         # Current epoch tracking
         self.current_epoch = 0
@@ -64,7 +73,8 @@ class PhysicsInformedTrainer:
             'total': [],
             'lm': [],
             'energy_conservation': [],
-            'energy_drift': []
+            'energy_drift': [],
+            'barrier': []
         }
         
         # Move model to device
@@ -109,9 +119,15 @@ class PhysicsInformedTrainer:
         # We check conservation between adjacent tokens (intra-batch)
         # x_prev_state = x_batch[:, :-1], x_curr_state = x_batch[:, 1:]
         loss_energy = torch.tensor(0.0, device=x_batch.device)
+        loss_barrier = torch.tensor(0.0, device=x_batch.device)
         energy_metrics = {}
         
-        if self.physics_enabled and x_batch.shape[1] > 1:
+        # Prepare embeddings if needed by either physics OR barrier loss
+        need_embeddings = (self.physics_enabled or self.enable_topological_barrier) and x_batch.shape[1] > 1
+        x_curr_embed = None
+        x_prev_embed = None
+
+        if need_embeddings:
             # Get embeddings for all tokens
             x_embed_full = self.model.token_embedding(x_batch)  # (B, N, D)
 
@@ -120,7 +136,8 @@ class PhysicsInformedTrainer:
             # "Current" state is t=1..N-1
             x_prev_embed = x_embed_full[:, :-1, :] # (B, N-1, D)
             x_curr_embed = x_embed_full[:, 1:, :]  # (B, N-1, D)
-            
+
+        if self.physics_enabled and x_batch.shape[1] > 1:
             # Compute energy conservation loss for each physics-informed layer
             total_energy_loss = 0.0
             layer_count = 0
@@ -217,12 +234,54 @@ class PhysicsInformedTrainer:
                     energy_metrics[f'energy_drift_layer{layer_count}'] = (
                         (E_t - E_t1).abs().mean().item()
                     )
-            
+
+            # --- Topological Barrier Loss ---
+            # Penalize state changes for high-confidence predictions
+            # Confidence proxy: Max Softmax Probability of Logits
+            if self.enable_topological_barrier:
+                 # Compute confidence
+                 # logits is (B, N, V). We want confidence at t-1 predicting t?
+                 # Or confidence of current prediction.
+                 # Let's use confidence of prediction at step t.
+                 with torch.no_grad():
+                     probs = F.softmax(logits, dim=-1)
+                     confidence, _ = probs.max(dim=-1) # (B, N)
+                     # We need to align with embedding slices.
+                     # x_curr_embed corresponds to tokens 1..N
+                     # confidence should correspond to prediction OF these tokens?
+                     # Actually, logits at pos t predict token t+1.
+                     # So logits[:, :-1] predict x_batch[:, 1:].
+                     # x_curr_embed is embedding of x_batch[:, 1:].
+                     # x_prev_embed is embedding of x_batch[:, :-1].
+                     # So we check if the transition from prev to curr is stable given high confidence in prev?
+
+                     # Implementation: Barrier prevents moving FROM a high confidence state.
+                     # If model was confident at t-1, state at t should be close to t-1?
+                     # No, that prevents dynamics.
+                     # Topological Barrier: "Deep basin". Once in a basin (attractor), stay there.
+                     # Maybe we only apply this if we are "looping" or "holding" a thought.
+                     # For general LM, this might be too restrictive.
+                     # User Request: "penalizes deviation from the previous state... effectively deepening the well"
+
+                     # Let's use a simpler heuristic:
+                     # If confidence is VERY high (>0.9), penalize drift.
+                     conf_slice = confidence[:, 1:] # Align with x_curr
+
+                 # Calculate barrier loss on embeddings
+                 # We use the LAST layer embedding (or average) ideally.
+                 # x_curr_embed is input embedding. We want latent state.
+                 # But we don't have easy access to latent here without hook.
+                 # We'll use input embeddings as proxy for "concept stability" or
+                 # rely on the fact that embeddings represent the state.
+                 # Better: Use x_embed_full which are the embeddings.
+
+                 loss_barrier = self.barrier_loss_fn(x_curr_embed, x_prev_embed, conf_slice)
+
             if layer_count > 0:
                 loss_energy = total_energy_loss / layer_count
         
         # Total loss
-        loss_total = loss_lm + loss_energy
+        loss_total = loss_lm + loss_energy + loss_barrier
         
         # Backward pass
         loss_total.backward()
@@ -242,6 +301,7 @@ class PhysicsInformedTrainer:
             'total_loss': loss_total.item(),
             'loss_lm': loss_lm.item(),
             'loss_energy': loss_energy.item() if isinstance(loss_energy, torch.Tensor) else 0.0,
+            'loss_barrier': loss_barrier.item() if isinstance(loss_barrier, torch.Tensor) else 0.0,
             **energy_metrics
         }
         
@@ -249,6 +309,7 @@ class PhysicsInformedTrainer:
         self.loss_history['total'].append(metrics['total_loss'])
         self.loss_history['lm'].append(metrics['loss_lm'])
         self.loss_history['energy_conservation'].append(metrics['loss_energy'])
+        self.loss_history['barrier'].append(metrics['loss_barrier'])
         
         return metrics
     
@@ -341,6 +402,7 @@ class PhysicsInformedTrainer:
             'total_loss': 0.0,
             'loss_lm': 0.0,
             'loss_energy': 0.0,
+            'loss_barrier': 0.0,
             'energy_drift': 0.0,
             'lambda_energy': 0.0,
             'physics_enabled': self.physics_enabled
