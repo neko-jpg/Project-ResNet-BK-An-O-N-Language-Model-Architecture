@@ -5,6 +5,7 @@ from typing import Optional, Tuple, Dict, Any
 from src.models.phase4.adscft_core.geodesic_search import fast_marching_method_cpu
 from src.models.phase4.memory_monitor import MemoryMonitor
 from src.models.phase4.stability import NumericalStability
+from src.models.phase4.adscft_core.holographic_memory import HolographicMemory
 
 class BulkSpaceGenerator(nn.Module):
     """
@@ -19,6 +20,7 @@ class BulkSpaceGenerator(nn.Module):
         d_model: Model dimension.
         bulk_dim: Size of extra dimension (default: log2(d_model)).
         ads_radius: Radius of curvature (L).
+        enable_compression: Whether to use holographic memory compression for long contexts.
     """
 
     def __init__(
@@ -26,7 +28,8 @@ class BulkSpaceGenerator(nn.Module):
         d_model: int,
         bulk_dim: Optional[int] = None,
         ads_radius: float = 1.0,
-        monitor: Optional[MemoryMonitor] = None
+        monitor: Optional[MemoryMonitor] = None,
+        enable_compression: bool = False
     ):
         super().__init__()
         self.d_model = d_model
@@ -34,6 +37,7 @@ class BulkSpaceGenerator(nn.Module):
         self.ads_radius = ads_radius
         self.monitor = monitor or MemoryMonitor()
         self.dynamic_adjustment = True
+        self.enable_compression = enable_compression
 
         # Boundary to Bulk Projection
         # We project to (bulk_dim, d_model) space
@@ -45,6 +49,12 @@ class BulkSpaceGenerator(nn.Module):
              nn.GELU(),
              nn.Linear(d_model, 1)
         )
+
+        # Holographic Memory Compression
+        if enable_compression:
+            self.holographic_memory = HolographicMemory(d_model)
+        else:
+            self.holographic_memory = None
 
     def forward(
         self,
@@ -87,6 +97,15 @@ class BulkSpaceGenerator(nn.Module):
         # 4. Project back to Boundary (Integrate or Mean)
         # We take the mean of the geodesic path as the "holographic dual" feature
         bulk_features = geodesics.mean(dim=2) # (B, N, D)
+
+        # 5. Holographic Compression (Optional)
+        # If enabled, enrich the features with compressed history from memory
+        if self.enable_compression and self.holographic_memory is not None:
+            # Treat the bulk features as both current state and history for self-enrichment
+            # Or use them to retrieve from a larger history if stateful.
+            # Here we demonstrate self-compression/refinement within the batch.
+            compressed_context = self.holographic_memory(bulk_features, bulk_features)
+            bulk_features = bulk_features + compressed_context # Residual
 
         # Energy Conservation Check (Task 9.2)
         energy_in = NumericalStability.compute_bulk_energy(boundary_tokens)
