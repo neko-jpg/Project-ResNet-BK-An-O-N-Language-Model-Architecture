@@ -159,7 +159,7 @@ class DatasetPreparator:
             }
         }
 
-    def _process_dataset(self, key: str, max_samples: Optional[int] = None) -> Optional[Dict[str, str]]:
+    def _process_dataset(self, key: str, max_samples: Optional[int] = None, val_ratio: float = 0.0) -> Optional[Dict[str, str]]:
         """Generic processing logic with streaming and batching."""
         config = self.dataset_configs[key]
         dataset_name = config['hf_name']
@@ -170,11 +170,20 @@ class DatasetPreparator:
         output_paths = {}
         
         try:
-            for split in config['splits']:
+            # Check if we need to artificially create a validation split
+            splits_to_process = config['splits']
+            artificial_val = False
+
+            if 'validation' not in splits_to_process and val_ratio > 0:
+                # We will split 'train' into train/val
+                artificial_val = True
+                # Ensure we only process 'train' from the list if it's there
+                if 'train' not in splits_to_process:
+                     logger.warning(f"Cannot create artificial validation split for {key} because 'train' split is missing.")
+                     artificial_val = False
+
+            for split in splits_to_process:
                 logger.info(f"  Split: {split}")
-                
-                # Setup Writer
-                writer = BinaryWriter(output_dir / split)
                 
                 # Load Dataset
                 kwargs = {'split': split}
@@ -195,15 +204,28 @@ class DatasetPreparator:
                     logger.warning(f"Failed to load {key}: {e}. Skipping.")
                     return None
 
+                # Setup Writers
+                writer = BinaryWriter(output_dir / split)
+                val_writer = None
+
+                if split == 'train' and artificial_val:
+                     val_writer = BinaryWriter(output_dir / 'validation')
+                     logger.info(f"    (Splitting 'train' into 'train' and 'validation' with ratio {val_ratio})")
+
                 # Processing Loop
                 batch_tokens = []
+                val_batch_tokens = []
                 batch_size = 1000
                 count = 0
+                val_count = 0
                 
                 iterator = ds
                 if not config.get('streaming'):
                     iterator = ds # list/arrow
                 
+                import random
+                rng = random.Random(42)
+
                 for item in iterator:
                     if max_samples and count >= max_samples:
                         break
@@ -243,21 +265,37 @@ class DatasetPreparator:
                     if text and text.strip():
                         # Tokenize
                         ids = self.tokenizer(text, truncation=False, padding=False, return_attention_mask=False)['input_ids']
-                        batch_tokens.append(ids)
-                        count += 1
 
-                    # Flush Batch
+                        # Decide split
+                        if val_writer and rng.random() < val_ratio:
+                            val_batch_tokens.append(ids)
+                            val_count += 1
+                        else:
+                            batch_tokens.append(ids)
+                            count += 1
+
+                    # Flush Batch (Train)
                     if len(batch_tokens) >= batch_size:
                         writer.append(batch_tokens)
                         batch_tokens = []
                         if count % 10000 == 0:
-                            logger.info(f"    Processed {count} samples...")
+                            logger.info(f"    Processed {count} training samples...")
+
+                    # Flush Batch (Val)
+                    if val_writer and len(val_batch_tokens) >= batch_size:
+                        val_writer.append(val_batch_tokens)
+                        val_batch_tokens = []
 
                 # Flush remaining
                 if batch_tokens:
                     writer.append(batch_tokens)
+                if val_batch_tokens and val_writer:
+                    val_writer.append(val_batch_tokens)
 
                 output_paths[f"{split}_bin"] = writer.close()
+                if val_writer:
+                    output_paths["validation_bin"] = val_writer.close()
+                    logger.info(f"    Created validation split with {val_count} samples.")
                 
         except Exception as e:
             logger.error(f"Failed to process {key}: {e}")
@@ -274,11 +312,11 @@ class DatasetPreparator:
 
         return output_paths
 
-    def prepare_all(self, max_samples: int = 10000):
+    def prepare_all(self, max_samples: int = 10000, val_ratio: float = 0.05):
         """Prepare all datasets."""
         results = {}
         for key in self.dataset_configs:
-            results[key] = self._process_dataset(key, max_samples)
+            results[key] = self._process_dataset(key, max_samples, val_ratio)
         
         with open(self.output_dir / 'summary.json', 'w') as f:
             json.dump(results, f, indent=2)
@@ -288,6 +326,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_dir', default='./data')
     parser.add_argument('--max_samples', type=int, default=5000)
+    parser.add_argument('--val_ratio', type=float, default=0.05, help='Ratio of training data to use for validation if no split exists')
     parser.add_argument('--tokenizer', default='gpt2')
     parser.add_argument('--datasets', nargs='+', help='Specific datasets to prepare')
     args = parser.parse_args()
@@ -297,11 +336,11 @@ def main():
     if args.datasets:
         for ds in args.datasets:
             if ds in prep.dataset_configs:
-                prep._process_dataset(ds, args.max_samples)
+                prep._process_dataset(ds, args.max_samples, args.val_ratio)
             else:
                 logger.warning(f"Dataset {ds} not found in config.")
     else:
-        prep.prepare_all(args.max_samples)
+        prep.prepare_all(args.max_samples, args.val_ratio)
 
 if __name__ == '__main__':
     main()

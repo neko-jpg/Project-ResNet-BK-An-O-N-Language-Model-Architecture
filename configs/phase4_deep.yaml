@@ -5,7 +5,7 @@
 model_type: resnet_bk
 d_model: 1024
 n_layers: 12
-n_seq: 1024  # Increased to 1024 as per plan (was 768 in verification)
+n_seq: 768  # Kept at 768 to ensure memory safety on 10GB/8GB, but can be scaled if successful
 num_experts: 4
 top_k: 1
 use_bitnet: true
@@ -18,10 +18,10 @@ use_mourre: true
 use_lap: true
 
 # Training
-batch_size: 4  # Start with 4, auto-scaler might adjust. 2 is safe for 10GB VRAM.
-epochs: 10     # Target 50M-100M tokens.
-learning_rate: 0.0005 # Slightly lower for deeper model
-grad_clip: 1.0        # Relaxed clipping as per plan (was 0.5)
+batch_size: 2  # Conservative for 12 layers
+epochs: 5      # Increased from 3 as per plan
+learning_rate: 0.001
+grad_clip: 0.5
 use_mixed_precision: true
 use_gradient_checkpointing: true
 use_custom_kernels: true
