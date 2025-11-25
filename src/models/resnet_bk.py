@@ -132,12 +132,16 @@ class MoEResNetBKLayer(nn.Module):
         Forward pass.
         
         Args:
-            x: (B, N, D) input tensor
+            x: (B, H, N, D_h) input tensor for the new architecture,
+               or (B, N, D) for legacy compatibility.
         
         Returns:
-            output: (B, N, D) combined FFN + BK features
+            output: (B, H, N, D_h) or (B, N, D) tensor, matching input layout.
         """
         if self.use_hybrid_attention:
+            # This path is native to the new layout and assumes hybrid_attn
+            # expects and returns (B, H, N, D_h).
+            # Note: This requires a corresponding refactor of HybridHyperbolicAttention.
             out_tuple = self.hybrid_attn(x, return_diagnostics=True)
             if isinstance(out_tuple, tuple):
                 output, diagnostics = out_tuple
@@ -146,9 +150,19 @@ class MoEResNetBKLayer(nn.Module):
             else:
                 return out_tuple
         else:
-            B, N, D = x.shape
+            # Legacy path with adapters for layout compatibility.
+            is_new_layout = x.dim() == 4
+            if is_new_layout:
+                B, H, N, D_h = x.shape
+                D = H * D_h
+                # Adapter: Reshape to (B, N, D) for legacy modules
+                x_for_legacy = x.transpose(1, 2).contiguous().view(B, N, D)
+            else:
+                B, N, D = x.shape
+                x_for_legacy = x
+
             assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
-            v_prelim = self.v_proj(x).squeeze(-1)
+            v_prelim = self.v_proj(x_for_legacy).squeeze(-1)
             v_prelim = torch.clamp(v_prelim, -self.v_max, self.v_max)
             gamma_val = self.gamma
             G_ii = None
@@ -179,7 +193,7 @@ class MoEResNetBKLayer(nn.Module):
                 experts_w2_t = torch.stack([expert[3].weight.t() for expert in self.moe_ffn.experts])
 
                 ffn_out = fused_moe_forward(
-                    x,
+                    x_for_legacy,
                     gate_w_t,
                     experts_w1_t,
                     experts_w2_t,
@@ -189,14 +203,21 @@ class MoEResNetBKLayer(nn.Module):
                 self.moe_ffn.last_routing_entropy = None
             else:
                 # --- Original SparseMoELayer Path ---
-                ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
+                ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x_for_legacy, G_ii=G_ii, epsilon=epsilon)
                 # The original moe_ffn.forward call sets the .last_routing_entropy attribute itself
 
             self.last_routing_diagnostics = routing_diagnostics
             if self.feature_clamp is not None:
                 features = torch.clamp(features, -self.feature_clamp, self.feature_clamp)
             spec_out = self.output_proj(features)
-            output = ffn_out + self.bk_scale * spec_out
+            output_legacy = ffn_out + self.bk_scale * spec_out
+
+            if is_new_layout:
+                # Adapter: Reshape back to (B, H, N, D_h)
+                output = output_legacy.view(B, N, H, D_h).transpose(1, 2)
+            else:
+                output = output_legacy
+
 
             # Restore the entropy assignment here to fix the regression
             if routing_entropy is not None:
@@ -206,8 +227,8 @@ class MoEResNetBKLayer(nn.Module):
                 self.last_routing_entropy = None
 
             with torch.no_grad():
-                norm_in = x.norm(p=2, dim=-1).mean()
-                norm_out = output.norm(p=2, dim=-1).mean()
+                norm_in = x_for_legacy.norm(p=2, dim=-1).mean()
+                norm_out = output_legacy.norm(p=2, dim=-1).mean()
                 self.last_unitarity_violation = (norm_out / (norm_in + 1e-9) - 1.0).abs()
                 if self.training:
                     diagnostics = {
@@ -255,7 +276,10 @@ class ResNetBKBlock(nn.Module):
         use_fused_moe_kernel: bool = False,
     ):
         super().__init__()
-        self.layer_norm = nn.LayerNorm(d_model)
+        # Adapt LayerNorm for the new data layout ([B, H, N, D_h]).
+        # It now normalizes over the last dimension (d_head), making it per-head.
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        self.layer_norm = nn.LayerNorm(d_model // num_heads)
         self.bk_layer = MoEResNetBKLayer(
             d_model,
             n_seq,
@@ -496,6 +520,8 @@ class LanguageModel(nn.Module):
         self.prime_bump_init = prime_bump_init
         self.use_symplectic = use_symplectic
         self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.use_hybrid_attention = use_hybrid_attention
+        self.num_heads = num_heads
 
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.position_embedding = nn.Embedding(n_seq, d_model)
@@ -615,7 +641,14 @@ class LanguageModel(nn.Module):
         pos = torch.arange(0, n_seq, dtype=torch.long, device=x.device).unsqueeze(0)
         pos_emb = self.position_embedding(pos)  # (1, N, D)
 
-        h = tok_emb + pos_emb
+        h = tok_emb + pos_emb # (B, N, D)
+
+        # --- Reshape to Project-Wide Layout for Triton Optimization ---
+        # Reshape from (B, N, D) to (B, H, N, D_h) to minimize permutations inside blocks.
+        # This is the primary entry point into the new memory layout.
+        if self.use_hybrid_attention:
+            d_head = self.d_model // self.num_heads
+            h = h.view(batch_size, n_seq, self.num_heads, d_head).transpose(1, 2)
 
         routing_entropies = []
         routing_diagnostics_list = []
@@ -648,6 +681,11 @@ class LanguageModel(nn.Module):
                     if diag is not None:
                         routing_diagnostics_list.append(diag)
         
+        # --- Reshape back to Standard Layout for Final Layers ---
+        # Reshape from (B, H, N, D_h) back to (B, N, D) for the final LayerNorm and LM head.
+        if self.use_hybrid_attention:
+            h = h.transpose(1, 2).contiguous().view(batch_size, n_seq, self.d_model)
+
         h = self.layer_norm_final(h)
         logits = self.lm_head(h)           # (B, N, vocab_size)
         

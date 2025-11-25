@@ -1,0 +1,30 @@
+# Phase 7 Optimized Configuration
+# For use with Hybrid Hyperbolic Attention and new memory layout.
+
+# Architecture
+model_type: phase7
+d_model: 1024
+n_layers: 12  # Note: In Phase 7, this is conceptual. The Hybrid model has its own structure.
+n_seq: 768
+num_heads: 8 # Important for hyperbolic attention
+use_hybrid_attention: true
+hyperbolic_window_size: 64
+
+# Training
+batch_size: 2
+epochs: 5
+learning_rate: 0.0005 # Reduced LR for finer tuning of hyperbolic models
+grad_clip: 0.5
+use_mixed_precision: true
+use_gradient_checkpointing: true
+
+# Curvature Scheduler
+curvature_scheduler:
+  enabled: true
+  type: 'linear'
+  warmup_steps: 5000
+  target_curvature: 1.0
+
+# Data
+dataset: configs/dataset_mixing.yaml
+data_limit: 100000000  # 100M tokens limit

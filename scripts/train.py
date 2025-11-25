@@ -31,6 +31,7 @@ from src.utils import (
     WandBLogger,
 )
 from src.training.curriculum import CurriculumScheduler
+from src.training.curvature_scheduler import create_curvature_scheduler
 from src.eval.skill_bench import SkillEvaluator
 from scripts.calibration import MuseCalibrator
 
@@ -270,6 +271,9 @@ def train():
         curriculum = CurriculumScheduler(mixed_loader, window_size=50, threshold=0.001)
         print("Enable Curriculum Optimizer: ON")
 
+    # Curvature Scheduler for Hyperbolic models
+    curvature_scheduler = create_curvature_scheduler(config.__dict__, model)
+
     # Setup logging
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -378,6 +382,10 @@ def train():
                 # Curriculum Step
                 if curriculum:
                     curriculum.step(loss.item())
+
+                # Curvature Scheduler Step
+                if curvature_scheduler:
+                    curvature_scheduler.step()
 
                 global_step += 1
 
