@@ -21,6 +21,7 @@ from .moe import SparseMoELayer
 from .birman_schwinger_core import BirmanSchwingerCore
 from .prime_bump_potential import PrimeBumpPotential
 from src.models.phase4.homeostasis import HomeostasisController
+from src.kernels.fused_moe_kernel import fused_moe_forward
 
 # === 追加 ===
 from src.models.phase7 import HybridHyperbolicAttention
@@ -74,11 +75,13 @@ class MoEResNetBKLayer(nn.Module):
         use_hybrid_attention: bool = False,
         hyperbolic_window_size: int = 64,
         num_heads: int = 4,
+        use_fused_moe_kernel: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
         self.use_hybrid_attention = use_hybrid_attention
+        self.use_fused_moe_kernel = use_fused_moe_kernel
 
         if self.use_hybrid_attention:
             self.hybrid_attn = HybridHyperbolicAttention(
@@ -166,13 +169,42 @@ class MoEResNetBKLayer(nn.Module):
                 if self.moe_ffn.use_scattering_router:
                     G_ii = torch.complex(features[..., 0], features[..., 1])
             epsilon = self.birman_schwinger_core.epsilon if self.use_birman_schwinger else 1.0
-            ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
+
+            routing_entropy = None # Initialize to a default
+
+            if self.use_fused_moe_kernel and not self.moe_ffn.use_scattering_router:
+                # --- Fused MoE Kernel Path ---
+                gate_w_t = self.moe_ffn.gating_network.weight.t()
+                experts_w1_t = torch.stack([expert[0].weight.t() for expert in self.moe_ffn.experts])
+                experts_w2_t = torch.stack([expert[3].weight.t() for expert in self.moe_ffn.experts])
+
+                ffn_out = fused_moe_forward(
+                    x,
+                    gate_w_t,
+                    experts_w1_t,
+                    experts_w2_t,
+                    self.moe_ffn.top_k
+                )
+                routing_diagnostics = None
+                self.moe_ffn.last_routing_entropy = None
+            else:
+                # --- Original SparseMoELayer Path ---
+                ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
+                # The original moe_ffn.forward call sets the .last_routing_entropy attribute itself
+
             self.last_routing_diagnostics = routing_diagnostics
             if self.feature_clamp is not None:
                 features = torch.clamp(features, -self.feature_clamp, self.feature_clamp)
             spec_out = self.output_proj(features)
             output = ffn_out + self.bk_scale * spec_out
-            self.last_routing_entropy = routing_entropy
+
+            # Restore the entropy assignment here to fix the regression
+            if routing_entropy is not None:
+                self.last_routing_entropy = routing_entropy.item()
+            else:
+                 # Ensure it's cleared if the path doesn't produce it (like the fused kernel)
+                self.last_routing_entropy = None
+
             with torch.no_grad():
                 norm_in = x.norm(p=2, dim=-1).mean()
                 norm_out = output.norm(p=2, dim=-1).mean()
@@ -220,6 +252,7 @@ class ResNetBKBlock(nn.Module):
         use_hybrid_attention: bool = False,
         hyperbolic_window_size: int = 64,
         num_heads: int = 4,
+        use_fused_moe_kernel: bool = False,
     ):
         super().__init__()
         self.layer_norm = nn.LayerNorm(d_model)
@@ -243,6 +276,7 @@ class ResNetBKBlock(nn.Module):
             use_hybrid_attention=use_hybrid_attention,
             hyperbolic_window_size=hyperbolic_window_size,
             num_heads=num_heads,
+            use_fused_moe_kernel=use_fused_moe_kernel,
         )
 
     def forward(self, x):
@@ -301,6 +335,7 @@ class SymplecticBKBlock(nn.Module):
         dt: float = 0.1, # Time step size
         enable_gradient_checkpointing: bool = False,
         integration_mode: str = 'verlet', # 'verlet' or 'euler'
+        use_fused_moe_kernel: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -331,6 +366,7 @@ class SymplecticBKBlock(nn.Module):
             precision_upgrade_threshold=precision_upgrade_threshold,
             use_bitnet=use_bitnet,
             enable_gradient_checkpointing=enable_gradient_checkpointing,
+            use_fused_moe_kernel=use_fused_moe_kernel,
         )
 
     def forward(self, x):
@@ -451,6 +487,7 @@ class LanguageModel(nn.Module):
         use_hybrid_attention: bool = False,
         hyperbolic_window_size: int = 64,
         num_heads: int = 4,
+        use_fused_moe_kernel: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
@@ -501,6 +538,7 @@ class LanguageModel(nn.Module):
                 use_hybrid_attention=use_hybrid_attention,
                 hyperbolic_window_size=hyperbolic_window_size,
                 num_heads=num_heads,
+                use_fused_moe_kernel=use_fused_moe_kernel,
                 **({'dt': symplectic_dt, 'integration_mode': symplectic_mode} if use_symplectic else {})
             )
             for _ in range(n_layers)
