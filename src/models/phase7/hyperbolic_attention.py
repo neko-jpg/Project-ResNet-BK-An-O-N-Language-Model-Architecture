@@ -146,13 +146,26 @@ class HyperbolicMultiHeadAttention(nn.Module):
     """
     Implements multi-head hyperbolic attention.
     """
-    def __init__(self, d_model: int, num_heads: int):
+    def __init__(self, d_model: int, num_heads: int, use_triton_kernel: bool = True):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
         self.d_model = d_model
         self.num_heads = num_heads
         self.d_head = d_model // num_heads
+        self.use_triton_kernel = use_triton_kernel
+
+        if self.use_triton_kernel:
+            try:
+                # Dynamically import the kernel to avoid a hard dependency on Triton
+                from src.kernels.hyperbolic_attention_kernel import hyperbolic_attention_triton
+                self.triton_kernel_function = hyperbolic_attention_triton
+            except (ImportError, ModuleNotFoundError) as e:
+                raise ImportError(
+                    "Triton kernel for hyperbolic attention is enabled but could not be imported. "
+                    "Please ensure Triton is installed and the kernel file exists. "
+                    "This model is not designed to run efficiently without the Triton kernel."
+                ) from e
 
         # Linear projections for Q, K, V. These project from Euclidean to the tangent space.
         self.W_q = nn.Linear(d_model, d_model, bias=False)
@@ -192,39 +205,70 @@ class HyperbolicMultiHeadAttention(nn.Module):
         k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
         v_tangent = v_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
 
-        q_hyp = exp_map_at_origin(q_tangent, c=c)
-        k_hyp = exp_map_at_origin(k_tangent, c=c)
-        v_hyp = exp_map_at_origin(v_tangent, c=c)
+        if self.use_triton_kernel and hasattr(self, 'triton_kernel_function'):
+            output_hyperbolic, (q_norms, k_norms, distances) = self.triton_kernel_function(
+                q_tangent,
+                k_tangent,
+                v_tangent,
+                c,
+                F.softplus(self.attention.beta),
+                self.attention.attention_bias
+            )
 
-        q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-        k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-        v_hyp_flat = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+            output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
+            output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+            final_output = self.W_o(output_tangent_concat)
 
-        output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_hyp_flat, c=c)
+            with torch.no_grad():
+                head_diagnostics = {
+                    'hyperbolic_dist_mean': distances.mean(),
+                    'hyperbolic_dist_max': distances.max(),
+                    'hyperbolic_dist_min': distances.min(),
+                }
+                # Store aggregated norms for the final diagnostics dictionary
+                self.triton_q_norms = q_norms
+                self.triton_k_norms = k_norms
 
-        output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
+            q_hyp = None  # Signal that diagnostics are handled separately
+        else:
+            # PyTorch implementation
+            q_hyp = exp_map_at_origin(q_tangent, c=c)
+            k_hyp = exp_map_at_origin(k_tangent, c=c)
+            v_hyp = exp_map_at_origin(v_tangent, c=c)
 
-        output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
+            q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+            k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+            v_hyp_flat = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
 
-        output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+            output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_hyp_flat, c=c)
 
-        final_output = self.W_o(output_tangent_concat)
+            output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
+            output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
+            output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+            final_output = self.W_o(output_tangent_concat)
 
         if return_diagnostics:
             with torch.no_grad():
-                # Boundary Collapse: Check norm of hyperbolic representations
-                # Norms should be < 1/sqrt(c)
-                q_norms = torch.norm(q_hyp, dim=-1)
-                k_norms = torch.norm(k_hyp, dim=-1)
+                diagnostics = { 'curvature': c.item() }
+                if q_hyp is not None:
+                    # PyTorch path: compute norms from q_hyp
+                    q_norms = torch.norm(q_hyp, dim=-1)
+                    k_norms = torch.norm(k_hyp, dim=-1)
+                    diagnostics.update({
+                        'boundary_collapse_q_mean_norm': q_norms.mean(),
+                        'boundary_collapse_k_mean_norm': k_norms.mean(),
+                        'boundary_collapse_q_max_norm': q_norms.max(),
+                        'boundary_collapse_k_max_norm': k_norms.max(),
+                    })
+                elif hasattr(self, 'triton_q_norms'):
+                    # Triton path: use pre-computed norms
+                    diagnostics.update({
+                        'boundary_collapse_q_mean_norm': self.triton_q_norms.mean(),
+                        'boundary_collapse_k_mean_norm': self.triton_k_norms.mean(),
+                        'boundary_collapse_q_max_norm': self.triton_q_norms.max(),
+                        'boundary_collapse_k_max_norm': self.triton_k_norms.max(),
+                    })
 
-                diagnostics = {
-                    'curvature': c.item(),
-                    'boundary_collapse_q_mean_norm': q_norms.mean(),
-                    'boundary_collapse_k_mean_norm': k_norms.mean(),
-                    'boundary_collapse_q_max_norm': q_norms.max(),
-                    'boundary_collapse_k_max_norm': k_norms.max(),
-                }
-                # Merge diagnostics from single head
                 diagnostics.update(head_diagnostics)
             return final_output, diagnostics
         else:
