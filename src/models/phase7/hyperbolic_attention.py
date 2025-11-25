@@ -193,59 +193,69 @@ class HyperbolicMultiHeadAttention(nn.Module):
             - Final output tensor in Euclidean space.
             - (Optional) Dictionary with diagnostic metrics.
         """
+        original_dtype = x.dtype
         batch_size, seq_len, _ = x.shape
 
-        c = F.softplus(self.log_c)
+        # --- Start of Numerical Stability Section ---
+        # All hyperbolic computations are wrapped in autocast(enabled=False) to enforce float32
+        # and prevent numerical instability issues common in mixed-precision training.
+        with torch.cuda.amp.autocast(enabled=False):
+            x_f32 = x.float()
 
-        q_tangent = self.W_q(x)
-        k_tangent = self.W_k(x)
-        v_tangent = self.W_v(x)
+            c = F.softplus(self.log_c.float())
 
-        q_tangent = q_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
-        k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
-        v_tangent = v_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
+            q_tangent = self.W_q(x_f32)
+            k_tangent = self.W_k(x_f32)
+            v_tangent = self.W_v(x_f32)
 
-        if self.use_triton_kernel and hasattr(self, 'triton_kernel_function'):
-            output_hyperbolic, (q_norms, k_norms, distances) = self.triton_kernel_function(
-                q_tangent,
-                k_tangent,
-                v_tangent,
-                c,
-                F.softplus(self.attention.beta),
-                self.attention.attention_bias
-            )
+            q_tangent = q_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
+            k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
+            v_tangent = v_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
 
-            output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
-            output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
-            final_output = self.W_o(output_tangent_concat)
+            if self.use_triton_kernel and hasattr(self, 'triton_kernel_function'):
+                output_hyperbolic, (q_norms, k_norms, distances) = self.triton_kernel_function(
+                    q_tangent,
+                    k_tangent,
+                    v_tangent,
+                    c,
+                    F.softplus(self.attention.beta.float()),
+                    self.attention.attention_bias.float()
+                )
 
-            with torch.no_grad():
-                head_diagnostics = {
-                    'hyperbolic_dist_mean': distances.mean(),
-                    'hyperbolic_dist_max': distances.max(),
-                    'hyperbolic_dist_min': distances.min(),
-                }
-                # Store aggregated norms for the final diagnostics dictionary
-                self.triton_q_norms = q_norms
-                self.triton_k_norms = k_norms
+                output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
+                output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+                final_output = self.W_o(output_tangent_concat)
 
-            q_hyp = None  # Signal that diagnostics are handled separately
-        else:
-            # PyTorch implementation
-            q_hyp = exp_map_at_origin(q_tangent, c=c)
-            k_hyp = exp_map_at_origin(k_tangent, c=c)
-            v_hyp = exp_map_at_origin(v_tangent, c=c)
+                with torch.no_grad():
+                    head_diagnostics = {
+                        'hyperbolic_dist_mean': distances.mean(),
+                        'hyperbolic_dist_max': distances.max(),
+                        'hyperbolic_dist_min': distances.min(),
+                    }
+                    # Store aggregated norms for the final diagnostics dictionary
+                    self.triton_q_norms = q_norms
+                    self.triton_k_norms = k_norms
 
-            q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-            k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-            v_hyp_flat = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+                q_hyp = None  # Signal that diagnostics are handled separately
+            else:
+                # PyTorch implementation
+                q_hyp = exp_map_at_origin(q_tangent, c=c)
+                k_hyp = exp_map_at_origin(k_tangent, c=c)
+                v_hyp = exp_map_at_origin(v_tangent, c=c)
 
-            output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_hyp_flat, c=c)
+                q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+                k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+                v_hyp_flat = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
 
-            output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
-            output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
-            output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
-            final_output = self.W_o(output_tangent_concat)
+                output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_hyp_flat, c=c)
+
+                output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
+                output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
+                output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+                final_output = self.W_o(output_tangent_concat)
+
+            final_output = final_output.to(original_dtype)
+        # --- End of Numerical Stability Section ---
 
         if return_diagnostics:
             with torch.no_grad():
