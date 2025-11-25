@@ -186,7 +186,43 @@ def train():
     
     # Create model
     print("\nCreating model...")
-    model = ConfigurableResNetBK(config).to(device)
+    model_type = getattr(config, 'model_type', 'phase3')
+
+    if model_type == 'phase7':
+        from src.models.phase7.hybrid_attention import HybridHyperbolicAttention
+
+        class Phase7Model(nn.Module):
+            def __init__(self, config):
+                super().__init__()
+                self.embedding = nn.Embedding(config.vocab_size, config.d_model)
+                self.core_model = HybridHyperbolicAttention(
+                    d_model=config.d_model,
+                    num_heads=config.num_heads,
+                    local_window_size=config.local_window_size
+                )
+                self.to_logits = nn.Linear(config.d_model, config.vocab_size)
+                self.config = config
+
+            def forward(self, x):
+                x = self.embedding(x)
+                # The hybrid model now returns diagnostics, which we can log
+                # For now, we ignore them in the main forward pass for loss calculation
+                x, diagnostics = self.core_model(x, return_diagnostics=True)
+                return self.to_logits(x)
+
+            def get_config_summary(self):
+                 return {
+                    "Model Type": "Phase 7 Hybrid Hyperbolic",
+                    "d_model": self.config.d_model,
+                    "n_layers": "N/A (Hybrid)",
+                    "num_heads": self.config.num_heads,
+                    "local_window_size": self.config.local_window_size,
+                }
+
+        model = Phase7Model(config).to(device)
+
+    else: # Phase 3
+        model = ConfigurableResNetBK(config).to(device)
     
     # Print model summary
     summary = model.get_config_summary()
@@ -206,7 +242,11 @@ def train():
         print(f"Loading checkpoint: {args.resume_from}")
         try:
             checkpoint = torch.load(args.resume_from, map_location=device)
-            model.model.load_state_dict(checkpoint['model_state_dict'])
+            # Handle both Phase 3 and Phase 7 model structures
+            if hasattr(model, 'model'): # Phase 3
+                model.model.load_state_dict(checkpoint['model_state_dict'])
+            else: # Phase 7 or other flat models
+                model.load_state_dict(checkpoint['model_state_dict'])
             if 'optimizer_state_dict' in checkpoint:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             print("✓ Resume successful")
@@ -351,7 +391,10 @@ def train():
 
                 # Log metrics
                 if global_step % args.log_interval == 0:
-                    routing_entropy = getattr(model.model, "last_routing_entropy", None)
+                    # Phase 7 model doesn't have routing entropy, so we handle this gracefully
+                    routing_entropy = None
+                    if hasattr(model, 'model') and hasattr(model.model, "last_routing_entropy"):
+                        routing_entropy = getattr(model.model, "last_routing_entropy", None)
 
                     metrics = TrainingMetrics(
                         step=global_step,
@@ -464,9 +507,10 @@ def train():
             print(f"  Val Loss: {val_metrics['val_loss']:.4f}")
             print(f"  Val PPL:  {val_metrics['val_perplexity']:.2f}")
         
-        # Print stability diagnostics if using Birman-Schwinger
-        if hasattr(model.model, 'get_stability_diagnostics'):
-            stability_diagnostics = model.model.get_stability_diagnostics()
+        # Print stability diagnostics if using Birman-Schwinger (Phase 3 only)
+        core_model = model.model if hasattr(model, 'model') else model
+        if hasattr(core_model, 'get_stability_diagnostics'):
+            stability_diagnostics = core_model.get_stability_diagnostics()
             if stability_diagnostics:
                 print(f"  Stability Diagnostics:")
                 print(f"    Mean Schatten S2: {stability_diagnostics.get('mean_schatten_s2', 0.0):.4f}")
@@ -476,19 +520,24 @@ def train():
                 if stability_diagnostics.get('precision_upgrades', 0) > 0:
                     print(f"    Precision Upgrades: {stability_diagnostics.get('precision_upgrades', 0)}")
         print()
-    
+
     # Save final metrics and model
     logger.save_json()
     logger.print_summary()
-    
+
     # Get final stability diagnostics
     final_stability_diagnostics = {}
-    if hasattr(model.model, 'get_stability_diagnostics'):
-        final_stability_diagnostics = model.model.get_stability_diagnostics()
-    
+    core_model = model.model if hasattr(model, 'model') else model
+    if hasattr(core_model, 'get_stability_diagnostics'):
+        final_stability_diagnostics = core_model.get_stability_diagnostics()
+
     checkpoint_path = save_dir / f"resnet_bk_{args.config_preset}_final.pt"
+
+    # Use the whole model state_dict for Phase 7, or the inner .model for Phase 3
+    model_state_dict = model.state_dict() if model_type == 'phase7' else model.model.state_dict()
+
     checkpoint = {
-        'model_state_dict': model.model.state_dict(),
+        'model_state_dict': model_state_dict,
         'optimizer_state_dict': optimizer.state_dict(),
         'config': config,
         'args': vars(args),

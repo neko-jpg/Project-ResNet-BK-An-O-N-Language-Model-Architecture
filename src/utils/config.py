@@ -131,30 +131,19 @@ def parse_args():
 
 def get_config_from_args(args):
     """
-    Create ResNetBKConfig from command-line arguments.
+    Create a configuration object from command-line arguments.
+    Dynamically returns a Phase 7 config if specified.
     
     Args:
         args: parsed arguments from parse_args()
     
     Returns:
-        config: ResNetBKConfig instance
+        config: A configuration object (ResNetBKConfig or Namespace)
     """
-    # Start with preset if not custom
-    if args.config_preset == 'baseline':
-        config = BASELINE_CONFIG
-    elif args.config_preset == 'step2':
-        config = STEP2_CONFIG
-    elif args.config_preset == 'step4':
-        config = STEP4_CONFIG
-    elif args.config_preset == 'step5':
-        config = STEP5_CONFIG
-    elif args.config_preset == 'step6':
-        config = STEP6_CONFIG
-    elif args.config_preset == 'full':
-        config = FULL_CONFIG
-    else:  # custom
-        config = ResNetBKConfig()
-    
+    # Default to a standard config object unless overridden by YAML
+    config = ResNetBKConfig()
+    yaml_config = {}
+
     # ---------------------------------------------------------
     # Apply Configuration File (if provided)
     # ---------------------------------------------------------
@@ -162,28 +151,48 @@ def get_config_from_args(args):
         try:
             with open(args.config, 'r') as f:
                 yaml_config = yaml.safe_load(f)
-
             print(f"Loading configuration from {args.config}")
-
-            # Helper to recursively update config
-            def update_config_from_dict(cfg_obj, cfg_dict):
-                for k, v in cfg_dict.items():
-                    if isinstance(v, dict):
-                        # If nested dict (like 'model': {...}), flatten it for ResNetBKConfig
-                        # ResNetBKConfig is flat, so we try to find matching keys in the dict
-                        update_config_from_dict(cfg_obj, v)
-                    else:
-                        if hasattr(cfg_obj, k):
-                            setattr(cfg_obj, k, v)
-
-                        # Also update args so it reflects in logs and usage in train.py
-                        if hasattr(args, k):
-                            setattr(args, k, v)
-
-            update_config_from_dict(config, yaml_config)
-
         except Exception as e:
             print(f"Warning: Failed to load config file {args.config}: {e}")
+
+    # ---------------------------------------------------------
+    # Decide Model Type and create appropriate config object
+    # ---------------------------------------------------------
+    model_type = yaml_config.get('model_type', 'phase3')
+
+    if model_type == 'phase7':
+        # For Phase 7, we use a flexible Namespace object that can hold any parameter.
+        config = argparse.Namespace()
+        config.model_type = 'phase7'
+    else: # phase3 or default
+        if args.config_preset == 'baseline':
+            config = BASELINE_CONFIG
+        elif args.config_preset == 'step2':
+            config = STEP2_CONFIG
+        elif args.config_preset == 'step4':
+            config = STEP4_CONFIG
+        elif args.config_preset == 'step5':
+            config = STEP5_CONFIG
+        elif args.config_preset == 'step6':
+            config = STEP6_CONFIG
+        elif args.config_preset == 'full':
+            config = FULL_CONFIG
+        else:  # custom
+            config = ResNetBKConfig()
+
+    # ---------------------------------------------------------
+    # Update config from YAML and args
+    # ---------------------------------------------------------
+    def update_config_from_dict(cfg_obj, cfg_dict):
+        for k, v in cfg_dict.items():
+            # Set attribute on the config object (Namespace or ResNetBKConfig)
+            setattr(cfg_obj, k, v)
+            # Also update args so it reflects in logs and usage in train.py
+            if hasattr(args, k):
+                setattr(args, k, v)
+
+    if yaml_config:
+        update_config_from_dict(config, yaml_config)
 
     # ---------------------------------------------------------
     # Override with CLI arguments (Explicitly provided)
