@@ -10,79 +10,78 @@ import math
 # # HYPERBOLIC UTILITY FUNCTIONS
 # ##############################################################################
 
-# Epsilon for numerical stability
-EPS = 1e-8
+# Epsilon for numerical stability, widened for mixed precision
+EPS = 1e-5
 
-def poincare_distance(x, y, dim=-1):
+def poincare_distance(x, y, c, dim=-1):
     """
-    Computes pairwise Poincaré distance between two tensors x and y.
-    Optimized for multi-head attention using batch matrix multiplication (bmm).
-
-    Args:
-        x (torch.Tensor): shape (batch, heads, seq_len, dim)
-        y (torch.Tensor): shape (batch, heads, seq_len, dim)
-        dim (int): The feature dimension.
-
-    Returns:
-        torch.Tensor: Pairwise distance matrix, shape (batch, heads, seq_len, seq_len)
+    Computes pairwise Poincaré distance with curvature c.
+    d(x,y) = (1/sqrt(c)) * acosh(1 + 2*c*||x-y||^2 / ((1-c*||x||^2)(1-c*||y||^2)))
     """
-    # Using bmm for efficiency: (B, H, N, D) @ (B, H, D, M) -> (B, H, N, M)
-    # where N is query_len and M is key_len
-    x_norm_sq = (x * x).sum(dim=dim, keepdim=True)
-    y_norm_sq = (y * y).sum(dim=dim, keepdim=True)
+    with torch.cuda.amp.autocast(enabled=False):
+        x = x.float()
+        y = y.float()
+        c = c.float()
 
-    # For pairwise distances, we need to compute ||x_i - y_j||^2
-    # This can be expanded as ||x_i||^2 - 2<x_i, y_j> + ||y_j||^2
+        sqrt_c = torch.sqrt(c)
+        x_norm_sq = (x * x).sum(dim=dim, keepdim=True)
+        y_norm_sq = (y * y).sum(dim=dim, keepdim=True)
 
-    # Let x be (B, H, N, D) and y be (B, H, M, D)
-    # We want to compute the distance matrix of size (B, H, N, M)
+        y_t = y.transpose(-2, -1)
+        xy_dot = torch.matmul(x, y_t)
 
-    y_t = y.transpose(-2, -1) # (B, H, D, M)
-    xy_dot = torch.matmul(x, y_t) # (B, H, N, M)
+        x_norm_sq_broadcast = x_norm_sq.expand(-1, -1, -1, y.shape[-2])
+        y_norm_sq_broadcast = y_norm_sq.transpose(-2, -1).expand(-1, -1, x.shape[-2], -1)
+        diff_norm_sq = x_norm_sq_broadcast - 2 * xy_dot + y_norm_sq_broadcast
 
-    # x_norm_sq is (B, H, N, 1), y_norm_sq is (B, H, M, 1)
-    # We need to broadcast them to (B, H, N, M)
-    x_norm_sq_broadcast = x_norm_sq.expand(-1, -1, -1, y.shape[-2])
-    y_norm_sq_broadcast = y_norm_sq.transpose(-2, -1).expand(-1, -1, x.shape[-2], -1)
+        # Denominator term: (1 - c*||x_i||^2)(1 - c*||y_j||^2)
+        denom = (1 - c * x_norm_sq_broadcast) * (1 - c * y_norm_sq_broadcast)
 
-    diff_norm_sq = x_norm_sq_broadcast - 2 * xy_dot + y_norm_sq_broadcast
+        # Argument of acosh
+        numerator = 2 * c * diff_norm_sq
+        arg = 1 + numerator / denom.clamp_min(EPS)
 
-    # Denominator term: (1 - ||x_i||^2)(1 - ||y_j||^2)
-    denom = (1 - x_norm_sq_broadcast) * (1 - y_norm_sq_broadcast)
+        dist = (1. / sqrt_c) * torch.acosh(arg.clamp_min(1.0 + EPS))
 
-    # Argument of acosh
-    arg = 1 + 2 * diff_norm_sq / denom.clamp_min(EPS)
-
-    # The distance can sometimes be slightly < 1 due to floating point errors,
-    # which results in NaN for acosh. Clamp to ensure stability.
-    return torch.acosh(arg.clamp_min(1.0 + EPS))
+    return dist.to(x.dtype)
 
 
-def exp_map_at_origin(v, dim=-1):
+def exp_map_at_origin(v, c, dim=-1):
     """
-    Exponential map at the origin of the Poincaré ball.
-    Maps a vector `v` from the tangent space at the origin to the manifold.
-    Formula: tanh(||v||/2) * (v / ||v||)
+    Exponential map with curvature c.
+    Formula: (1/sqrt(c)) * tanh(sqrt(c) * ||v||) * (v / ||v||)
     """
-    v_norm = v.norm(dim=dim, keepdim=True).clamp_min(EPS)
+    with torch.cuda.amp.autocast(enabled=False):
+        v = v.float()
+        c = c.float()
+        sqrt_c = torch.sqrt(c)
+        v_norm = v.norm(dim=dim, keepdim=True).clamp_min(EPS)
 
-    # The formula can be simplified for c=1 curvature.
-    # We assume standard curvature for now.
-    mapped_v = F.tanh(v_norm) * (v / v_norm)
-    return mapped_v
+        mapped_v = (1. / sqrt_c) * F.tanh(sqrt_c * v_norm) * (v / v_norm)
 
-def log_map_at_origin(y, dim=-1):
+    return mapped_v.to(v.dtype)
+
+def log_map_at_origin(y, c, dim=-1):
     """
-    Logarithmic map at the origin of the Poincaré ball.
-    Maps a point `y` from the manifold to the tangent space at the origin.
-    Formula: atanh(||y||) * (y / ||y||)
+    Logarithmic map with curvature c.
+    Formula: (1/sqrt(c)) * atanh(sqrt(c) * ||y||) * (y / ||y||)
     """
-    y_norm = y.norm(dim=dim, keepdim=True).clamp_min(EPS)
+    with torch.cuda.amp.autocast(enabled=False):
+        y = y.float()
+        c = c.float()
+        sqrt_c = torch.sqrt(c)
+        y_norm = y.norm(dim=dim, keepdim=True).clamp_min(EPS)
 
-    # Clamp y_norm to be slightly less than 1 to avoid infinity in atanh
-    y_norm_clamped = y_norm.clamp_max(1.0 - EPS)
+        # Clamp arg of atanh to be < 1.0
+        # sqrt(c) * ||y|| < 1  => ||y|| < 1/sqrt(c)
+        max_norm = (1. / sqrt_c) - EPS
+        y_norm_clamped = y_norm.clamp_max(max_norm)
 
-    return torch.atanh(y_norm_clamped) * (y / y_norm)
+        arg = sqrt_c * y_norm_clamped
+
+        result = (1. / sqrt_c) * torch.atanh(arg) * (y / y_norm)
+
+    return result.to(y.dtype)
 
 
 # ##############################################################################
@@ -101,42 +100,42 @@ class SingleHeadHyperbolicAttention(nn.Module):
         self.beta = nn.Parameter(torch.tensor(0.0)) # softplus(0) is approx 0.69
 
         # Learnable bias parameter
-        self.c = nn.Parameter(torch.tensor(0.0))
+        self.attention_bias = nn.Parameter(torch.tensor(0.0))
 
-    def forward(self, q, k, v):
+    def forward(self, q, k, v, c):
         """
         Args:
             q (torch.Tensor): Queries in the Poincaré ball. Shape: (batch, seq_len, dim)
             k (torch.Tensor): Keys in the Poincaré ball. Shape: (batch, seq_len, dim)
             v (torch.Tensor): Values in the Poincaré ball. Shape: (batch, seq_len, dim)
+            c (torch.Tensor): Curvature tensor.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: The aggregated value vector in the Poincaré ball and the attention weights.
+            Tuple[torch.Tensor, torch.Tensor, dict]: Aggregated value, attention weights, and diagnostics.
         """
         # 1. Compute pairwise hyperbolic distances
-        # Unsqueeze for the 'heads' dimension to use the optimized distance function
-        dist_qk = poincare_distance(q.unsqueeze(1), k.unsqueeze(1)) # (batch, 1, seq_len, seq_len)
-        dist_qk = dist_qk.squeeze(1) # (batch, seq_len, seq_len)
+        dist_qk_unsqueezed = poincare_distance(q.unsqueeze(1), k.unsqueeze(1), c=c)
+        dist_qk = dist_qk_unsqueezed.squeeze(1)
 
         # 2. Calculate attention scores
-        # The negative sign is crucial: smaller distance means higher attention
         beta_positive = F.softplus(self.beta)
-        attention_scores = -beta_positive * dist_qk - self.c
+        attention_scores = -beta_positive * dist_qk - self.attention_bias
         attention_weights = F.softmax(attention_scores, dim=-1)
 
         # 3. Aggregate values in the tangent space
-        # 3.1 Map v from manifold to tangent space at origin
-        v_tangent = log_map_at_origin(v) # (batch, seq_len, dim)
-
-        # 3.2 Perform weighted sum in tangent space
-        # attention_weights: (batch, seq_len, seq_len), v_tangent: (batch, seq_len, dim)
-        # output_tangent: (batch, seq_len, dim)
+        v_tangent = log_map_at_origin(v, c=c)
         output_tangent = torch.bmm(attention_weights, v_tangent)
+        output_hyperbolic = exp_map_at_origin(output_tangent, c=c)
 
-        # 3.3 Map the result back to the manifold
-        output_hyperbolic = exp_map_at_origin(output_tangent)
+        # 4. Create diagnostics
+        with torch.no_grad():
+            diagnostics = {
+                'hyperbolic_dist_mean': dist_qk.mean(),
+                'hyperbolic_dist_max': dist_qk.max(),
+                'hyperbolic_dist_min': dist_qk.min(),
+            }
 
-        return output_hyperbolic, attention_weights
+        return output_hyperbolic, attention_weights, diagnostics
 
 
 # ##############################################################################
@@ -164,54 +163,69 @@ class HyperbolicMultiHeadAttention(nn.Module):
         # We can reuse the single-head implementation across all heads.
         self.attention = SingleHeadHyperbolicAttention(self.d_head)
 
+        # Learnable curvature parameter, must be positive.
+        self.log_c = nn.Parameter(torch.tensor(0.0))
+
         # Final output projection
         self.W_o = nn.Linear(d_model, d_model, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, return_diagnostics: bool = True):
         """
         Args:
             x (torch.Tensor): Input tensor in Euclidean space. Shape: (batch, seq_len, d_model)
+            return_diagnostics (bool): If True, returns a dictionary of monitoring metrics.
 
         Returns:
-            torch.Tensor: Final output tensor in Euclidean space.
+            torch.Tensor or Tuple[torch.Tensor, dict]:
+            - Final output tensor in Euclidean space.
+            - (Optional) Dictionary with diagnostic metrics.
         """
         batch_size, seq_len, _ = x.shape
 
-        # 1. Project to tangent space and then map to hyperbolic space
+        c = F.softplus(self.log_c)
+
         q_tangent = self.W_q(x)
         k_tangent = self.W_k(x)
         v_tangent = self.W_v(x)
 
-        q_hyp = exp_map_at_origin(q_tangent)
-        k_hyp = exp_map_at_origin(k_tangent)
-        v_hyp = exp_map_at_origin(v_tangent)
+        q_tangent = q_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
+        k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
+        v_tangent = v_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
 
-        # 2. Reshape for multi-head processing
-        # (batch, seq_len, d_model) -> (batch, seq_len, num_heads, d_head) -> (batch * num_heads, seq_len, d_head)
-        q_hyp = q_hyp.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
-        k_hyp = k_hyp.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
-        v_hyp = v_hyp.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
+        q_hyp = exp_map_at_origin(q_tangent, c=c)
+        k_hyp = exp_map_at_origin(k_tangent, c=c)
+        v_hyp = exp_map_at_origin(v_tangent, c=c)
 
-        # Reshape for batch processing by SingleHeadHyperbolicAttention
-        q_hyp = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-        k_hyp = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-        v_hyp = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+        q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+        k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+        v_hyp_flat = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
 
-        # 3. Apply attention mechanism
-        # Note: The 'poincare_distance' is already expecting a 'heads' dimension,
-        # so a more optimized version could avoid this reshape.
-        # However, for clean modularity, we use the single-head module as is.
-        output_hyperbolic, _ = self.attention(q_hyp, k_hyp, v_hyp)
+        output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_hyp_flat, c=c)
 
-        # 4. Concatenate heads and map back to tangent space
-        # (batch * num_heads, seq_len, d_head) -> (batch, num_heads, seq_len, d_head)
-        output_hyperbolic = output_hyperbolic.view(batch_size, self.num_heads, seq_len, self.d_head)
-        # (batch, num_heads, seq_len, d_head) -> (batch, seq_len, num_heads, d_head) -> (batch, seq_len, d_model)
-        output_hyperbolic_concat = output_hyperbolic.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+        output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
 
-        output_tangent = log_map_at_origin(output_hyperbolic_concat)
+        output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
 
-        # 5. Final linear projection
-        final_output = self.W_o(output_tangent)
+        output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
 
-        return final_output
+        final_output = self.W_o(output_tangent_concat)
+
+        if return_diagnostics:
+            with torch.no_grad():
+                # Boundary Collapse: Check norm of hyperbolic representations
+                # Norms should be < 1/sqrt(c)
+                q_norms = torch.norm(q_hyp, dim=-1)
+                k_norms = torch.norm(k_hyp, dim=-1)
+
+                diagnostics = {
+                    'curvature': c.item(),
+                    'boundary_collapse_q_mean_norm': q_norms.mean(),
+                    'boundary_collapse_k_mean_norm': k_norms.mean(),
+                    'boundary_collapse_q_max_norm': q_norms.max(),
+                    'boundary_collapse_k_max_norm': k_norms.max(),
+                }
+                # Merge diagnostics from single head
+                diagnostics.update(head_diagnostics)
+            return final_output, diagnostics
+        else:
+            return final_output

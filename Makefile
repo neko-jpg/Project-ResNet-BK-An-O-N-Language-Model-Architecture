@@ -35,7 +35,7 @@ help:
 		echo "make install    - 依存関係のみインストール"; \
 		echo "make doctor     - システム診断とトラブルシューティング"; \
 		echo "make import     - 独自データのインポート (data/import/ から)"; \
-		echo "make recipe     - 学習データの配合設定"; \
+		echo "make recipe     - 学習データの配合設定 (Phase 3/7 モデル選択)"; \
 		echo "make phase4     - Phase 4最強設定(BitNet/Symplectic)を現在の設定に適用"; \
 		echo "make train-user - 設定したレシピで学習開始"; \
 		echo "make train-resume - 学習の再開 (Usage: make train-resume CHECKPOINT=...)"; \
@@ -62,7 +62,7 @@ help:
 		echo "make install    - Install dependencies only"; \
 		echo "make doctor     - Run system diagnostics"; \
 		echo "make import     - Import user data from data/import/"; \
-		echo "make recipe     - Configure dataset mixing recipe"; \
+		echo "make recipe     - Configure dataset mixing recipe (select Phase 3/7 model)"; \
 		echo "make phase4     - Merge Phase 4 Config into current recipe"; \
 		echo "make train-user - Start training with user recipe"; \
 		echo "make train-resume - Resume training (Usage: make train-resume CHECKPOINT=...)"; \
