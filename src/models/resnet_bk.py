@@ -22,6 +22,10 @@ from .birman_schwinger_core import BirmanSchwingerCore
 from .prime_bump_potential import PrimeBumpPotential
 from src.models.phase4.homeostasis import HomeostasisController
 
+# === 追加 ===
+from src.models.phase7 import HybridHyperbolicAttention
+# ===========
+
 
 class MoEResNetBKLayer(nn.Module):
     """
@@ -67,59 +71,58 @@ class MoEResNetBKLayer(nn.Module):
         precision_upgrade_threshold: float = 1e6,
         use_bitnet: bool = False,
         enable_gradient_checkpointing: bool = False,
+        use_hybrid_attention: bool = False,
+        hyperbolic_window_size: int = 64,
+        num_heads: int = 4,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
-        self.use_birman_schwinger = use_birman_schwinger
+        self.use_hybrid_attention = use_hybrid_attention
 
-        self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale, scattering_scale_warmup_steps=scattering_scale_warmup_steps)
-        self.v_proj = nn.Linear(d_model, 1)
-
-        # BK-Core output (real, imag) -> d_model
-        self.output_proj = nn.Linear(2, d_model)
-
-        # Learnable scale for BK branch contribution (per-channel scaling)
-        self.bk_scale = nn.Parameter(torch.ones(d_model, dtype=torch.float32))
-
-        # Non-Hermitian Physics: Learnable decay rate gamma (init 0.0)
-        # H_eff = H - i*gamma
-        self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
-
-        # Dynamic Criticality Control (Homeostasis)
-        self.homeostasis = HomeostasisController()
-
-        # Initialize BK-Core (either Birman-Schwinger or original)
-        if use_birman_schwinger:
-            self.birman_schwinger_core = BirmanSchwingerCore(
-                n_seq=n_seq,
-                epsilon=epsilon,
-                use_mourre=use_mourre,
-                use_lap=use_lap,
-                schatten_threshold=schatten_threshold,
-                precision_upgrade_threshold=precision_upgrade_threshold,
-                enable_gradient_checkpointing=enable_gradient_checkpointing,
-                use_bitnet=use_bitnet,
+        if self.use_hybrid_attention:
+            self.hybrid_attn = HybridHyperbolicAttention(
+                d_model=d_model,
+                num_heads=num_heads,
+                local_window_size=hyperbolic_window_size
             )
-            # Store diagnostics
-            self.last_bs_diagnostics = {}
+            self.moe_ffn = None
+            self.birman_schwinger_core = None
+            self.v_proj = None
+            self.output_proj = None
+            self.bk_scale = None
+            self.gamma = None
+            self.homeostasis = None
+            self.bk_core = None
         else:
-            # Original BK-Core setup
-            # H0 (discrete Laplacian) as buffers
-            self.register_buffer("h0_diag_base", torch.full((1, n_seq), -2.0, dtype=torch.float32))
-            self.register_buffer("h0_sub_base",  torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
-            self.register_buffer("h0_super_base",torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
+            self.use_birman_schwinger = use_birman_schwinger
+            self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale, scattering_scale_warmup_steps=scattering_scale_warmup_steps)
+            self.v_proj = nn.Linear(d_model, 1)
+            self.output_proj = nn.Linear(2, d_model)
+            self.bk_scale = nn.Parameter(torch.ones(d_model, dtype=torch.float32))
+            self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
+            self.homeostasis = HomeostasisController()
+            if use_birman_schwinger:
+                self.birman_schwinger_core = BirmanSchwingerCore(
+                    n_seq=n_seq,
+                    epsilon=epsilon,
+                    use_mourre=use_mourre,
+                    use_lap=use_lap,
+                    schatten_threshold=schatten_threshold,
+                    precision_upgrade_threshold=precision_upgrade_threshold,
+                    enable_gradient_checkpointing=enable_gradient_checkpointing,
+                    use_bitnet=use_bitnet,
+                )
+                self.last_bs_diagnostics = {}
+            else:
+                self.register_buffer("h0_diag_base", torch.full((1, n_seq), -2.0, dtype=torch.float32))
+                self.register_buffer("h0_sub_base",  torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
+                self.register_buffer("h0_super_base",torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
+                self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+                self.bk_core = BKCoreFunction.apply
 
-            # Zeta Regularization: Learnable imaginary shift (epsilon)
-            # z = i * epsilon. epsilon > 0 to avoid singularities on real axis.
-            # Initial value 1.0 corresponds to previous fixed z=1.0j
-            self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
-
-            self.bk_core = BKCoreFunction.apply
-
-        # --- Numerical stability parameters ---
-        self.v_max = 3.0          # Potential v_i clipping range
-        self.feature_clamp = 10.0 # BK features (ReG, ImG) clipping range
+        self.v_max = 3.0
+        self.feature_clamp = 10.0
 
     def forward(self, x):
         """
@@ -131,97 +134,57 @@ class MoEResNetBKLayer(nn.Module):
         Returns:
             output: (B, N, D) combined FFN + BK features
         """
-        B, N, D = x.shape
-        assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
-
-        # First, compute potential v_i from input (needed for BK-Core)
-        # Use a preliminary projection to get potential
-        v_prelim = self.v_proj(x).squeeze(-1)  # (B, N)
-        v_prelim = torch.clamp(v_prelim, -self.v_max, self.v_max)
-
-        # Get gamma decay rate
-        gamma_val = self.gamma
-
-        # Compute BK features using either Birman-Schwinger or original core
-        # This gives us G_ii for scattering router
-        G_ii = None
-        if self.use_birman_schwinger:
-            # Use Birman-Schwinger core with LAP stability and Non-Hermitian gamma
-            # Pass gamma explicitly
-            features, diagnostics = self.birman_schwinger_core(v_prelim, z=1.0j, gamma=gamma_val)  # (B, N, 2)
-            self.last_bs_diagnostics = diagnostics
-            
-            # Extract G_ii for scattering router
-            # features is (B, N, 2) with [real, imag]
-            G_ii = torch.complex(features[..., 0], features[..., 1])  # (B, N) complex
+        if self.use_hybrid_attention:
+            out_tuple = self.hybrid_attn(x, return_diagnostics=True)
+            if isinstance(out_tuple, tuple):
+                output, diagnostics = out_tuple
+                self.last_hybrid_diagnostics = diagnostics
+                return output
+            else:
+                return out_tuple
         else:
-            # Original BK-Core
-            # Expand H0 for batch
-            h0_diag  = self.h0_diag_base.expand(B, -1)   # (B, N)
-            h0_sub   = self.h0_sub_base.expand(B, -1)    # (B, N-1)
-            h0_super = self.h0_super_base.expand(B, -1)  # (B, N-1)
-
-            he_diag = h0_diag + v_prelim                # (B, N)
-
-            # Construct dynamic z with Zeta Regularization
-            # epsilon = softplus(param) to ensure positivity
-            epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-6
-            z = 1.0j * epsilon
-
-            # Add Non-Hermitian decay gamma to z
-            z = z + 1j * gamma_val
-
-            z = z.to(dtype=torch.complex64, device=he_diag.device)
-
-            # BK-Core + hybrid analytic gradient
-            features = self.bk_core(he_diag, h0_super, h0_sub, z)  # (B, N, 2)
-            
-            # For original BK-Core, also extract G_ii if using scattering router
-            if self.moe_ffn.use_scattering_router:
-                G_ii = torch.complex(features[..., 0], features[..., 1])  # (B, N) complex
-
-        # MoE-FFN with optional scattering-based routing
-        epsilon = self.birman_schwinger_core.epsilon if self.use_birman_schwinger else 1.0
-        ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(
-            x, G_ii=G_ii, epsilon=epsilon
-        )  # (B, N, D), scalar, dict
-
-        # Store routing diagnostics
-        self.last_routing_diagnostics = routing_diagnostics
-
-        # Clip BK features (prevent explosion with MoE + residual)
-        if self.feature_clamp is not None:
-            features = torch.clamp(features, -self.feature_clamp, self.feature_clamp)
-
-        spec_out = self.output_proj(features)       # (B, N, D)
-
-        # Mix BK branch with learnable scale
-        output = ffn_out + self.bk_scale * spec_out
-        # stash routing entropy for logging
-        self.last_routing_entropy = routing_entropy
-
-        # Task 5: Check Unitarity Violation (Information Loss)
-        # Physics: S = I + K. Unitarity implies S†S = I.
-        # In non-Hermitian system, this is violated.
-        # We approximate violation by norm change ratio: | ||y||/||x|| - 1 |
-        with torch.no_grad():
-            norm_in = x.norm(p=2, dim=-1).mean()
-            norm_out = output.norm(p=2, dim=-1).mean()
-            self.last_unitarity_violation = (norm_out / (norm_in + 1e-9) - 1.0).abs()
-
-            # --- Dynamic Criticality Control ---
-            # Update gamma based on homeostasis
-            if self.training:
-                diagnostics = {
-                    'unitarity_violation': self.last_unitarity_violation.item(),
-                    'growth_ratio': (norm_out / (norm_in + 1e-9)).item()
-                }
-                # Update gamma parameter
-                # Note: We update the data directly to act as a state variable
-                new_gamma = self.homeostasis(self.gamma, diagnostics)
-                self.gamma.data.copy_(new_gamma)
-
-        return output
+            B, N, D = x.shape
+            assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
+            v_prelim = self.v_proj(x).squeeze(-1)
+            v_prelim = torch.clamp(v_prelim, -self.v_max, self.v_max)
+            gamma_val = self.gamma
+            G_ii = None
+            if self.use_birman_schwinger:
+                features, diagnostics = self.birman_schwinger_core(v_prelim, z=1.0j, gamma=gamma_val)
+                self.last_bs_diagnostics = diagnostics
+                G_ii = torch.complex(features[..., 0], features[..., 1])
+            else:
+                h0_diag  = self.h0_diag_base.expand(B, -1)
+                h0_sub   = self.h0_sub_base.expand(B, -1)
+                h0_super = self.h0_super_base.expand(B, -1)
+                he_diag = h0_diag + v_prelim
+                epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-6
+                z = 1.0j * epsilon
+                z = z + 1j * gamma_val
+                z = z.to(dtype=torch.complex64, device=he_diag.device)
+                features = self.bk_core(he_diag, h0_super, h0_sub, z)
+                if self.moe_ffn.use_scattering_router:
+                    G_ii = torch.complex(features[..., 0], features[..., 1])
+            epsilon = self.birman_schwinger_core.epsilon if self.use_birman_schwinger else 1.0
+            ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
+            self.last_routing_diagnostics = routing_diagnostics
+            if self.feature_clamp is not None:
+                features = torch.clamp(features, -self.feature_clamp, self.feature_clamp)
+            spec_out = self.output_proj(features)
+            output = ffn_out + self.bk_scale * spec_out
+            self.last_routing_entropy = routing_entropy
+            with torch.no_grad():
+                norm_in = x.norm(p=2, dim=-1).mean()
+                norm_out = output.norm(p=2, dim=-1).mean()
+                self.last_unitarity_violation = (norm_out / (norm_in + 1e-9) - 1.0).abs()
+                if self.training:
+                    diagnostics = {
+                        'unitarity_violation': self.last_unitarity_violation.item(),
+                        'growth_ratio': (norm_out / (norm_in + 1e-9)).item()
+                    }
+                    new_gamma = self.homeostasis(self.gamma, diagnostics)
+                    self.gamma.data.copy_(new_gamma)
+            return output
 
     def check_unitarity_violation(self):
         """Return the last recorded unitarity violation metric."""
@@ -254,6 +217,9 @@ class ResNetBKBlock(nn.Module):
         precision_upgrade_threshold: float = 1e6,
         use_bitnet: bool = False,
         enable_gradient_checkpointing: bool = False,
+        use_hybrid_attention: bool = False,
+        hyperbolic_window_size: int = 64,
+        num_heads: int = 4,
     ):
         super().__init__()
         self.layer_norm = nn.LayerNorm(d_model)
@@ -274,6 +240,9 @@ class ResNetBKBlock(nn.Module):
             precision_upgrade_threshold=precision_upgrade_threshold,
             use_bitnet=use_bitnet,
             enable_gradient_checkpointing=enable_gradient_checkpointing,
+            use_hybrid_attention=use_hybrid_attention,
+            hyperbolic_window_size=hyperbolic_window_size,
+            num_heads=num_heads,
         )
 
     def forward(self, x):
@@ -479,6 +448,9 @@ class LanguageModel(nn.Module):
         symplectic_dt: float = 0.1,
         symplectic_mode: str = 'verlet', # 'verlet' or 'euler'
         use_gradient_checkpointing: bool = False,
+        use_hybrid_attention: bool = False,
+        hyperbolic_window_size: int = 64,
+        num_heads: int = 4,
     ):
         super().__init__()
         self.d_model = d_model
@@ -526,6 +498,9 @@ class LanguageModel(nn.Module):
                 precision_upgrade_threshold=precision_upgrade_threshold,
                 use_bitnet=use_bitnet,
                 enable_gradient_checkpointing=use_gradient_checkpointing,
+                use_hybrid_attention=use_hybrid_attention,
+                hyperbolic_window_size=hyperbolic_window_size,
+                num_heads=num_heads,
                 **({'dt': symplectic_dt, 'integration_mode': symplectic_mode} if use_symplectic else {})
             )
             for _ in range(n_layers)
