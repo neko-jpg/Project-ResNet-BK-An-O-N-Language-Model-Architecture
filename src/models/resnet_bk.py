@@ -287,17 +287,21 @@ class SymplecticBKBlock(nn.Module):
     Symplectic Integrator Block (The "Time Machine").
 
     Replaces standard residual connection with a physical Hamiltonian time evolution
-    using Velocity Verlet integration.
+    using Velocity Verlet integration (Order 2) or Symplectic Euler (Order 1).
 
     State:
         x -> separated into (q, p)
         q: Position (canonical coordinate)
         p: Momentum (conjugate momentum)
 
-    Dynamics (Velocity Verlet):
+    Dynamics (Velocity Verlet, Order 2):
         1. p_{t+0.5} = p_t - 0.5 * eps * dV/dq(q_t)
         2. q_{t+1}   = q_t + eps * p_{t+0.5}
         3. p_{t+1}   = p_{t+0.5} - 0.5 * eps * dV/dq(q_{t+1})
+
+    Dynamics (Symplectic Euler, Order 1):
+        1. p_{t+1} = p_t - dt * dV/dq(q_t)
+        2. q_{t+1} = q_t + dt * p_{t+1}
 
     Force term:
         F(q) = -dV/dq ≈ MoEResNetBKLayer(q)
@@ -327,33 +331,12 @@ class SymplecticBKBlock(nn.Module):
         use_bitnet: bool = False,
         dt: float = 0.1, # Time step size
         enable_gradient_checkpointing: bool = False,
+        integration_mode: str = 'verlet', # 'verlet' or 'euler'
     ):
         super().__init__()
         self.d_model = d_model
         self.dt = dt
-
-        # Ensure d_model is even for q, p splitting if we were splitting.
-        # However, to be compatible with ResNetBKBlock interface where x is (B, N, D),
-        # we will treat input x as q, and maintain p as a persistent state or duplicate dimensions?
-        # A common ResNet replacement strategy is:
-        # Input x is treated as [q, p] concatenated or we augment it.
-        # But standard Transformer blocks keep D constant.
-        #
-        # Better approach for "Block" replacement:
-        # Input x is q. We need p.
-        # If we want to replace ResNet, we must maintain state across layers.
-        # But layers are independent modules.
-        #
-        # The user said: "State split into (q, p)".
-        # This implies the model backbone must carry (q, p).
-        # But for this Block class to be a drop-in, it might be tricky.
-        #
-        # ADAPTATION:
-        # We assume the input `x` to this block is actually a tuple (q, p) OR
-        # we assume `x` has shape (B, N, 2*D_half).
-        # Given the instruction "Split state into (q, p)", let's assume d_model covers both.
-        # Or simpler: The "state" of the network is (q, p).
-        # We will assume input x is concatenated [q, p] along last dim.
+        self.integration_mode = integration_mode
 
         self.d_q = d_model // 2
         assert d_model % 2 == 0, "d_model must be even for Symplectic Block (q, p split)"
@@ -399,36 +382,44 @@ class SymplecticBKBlock(nn.Module):
         # Velocity Verlet Integration
         dt = self.dt
 
-        # 1. First half-step for momentum
-        # p_{t+0.5} = p_t + 0.5 * dt * F(q_t)
-        # Note: Force = -dV/dq.
-        # BK Layer returns "features" which we interpret as Force.
-        # Apply LayerNorm to q before Force calculation for stability
-        q_norm = self.layer_norm_q(q)
-        force_t = self.force_field(q_norm)
+        if self.integration_mode == 'euler':
+            # Symplectic Euler (1st Order, 1 Force Eval)
+            # p_{t+1} = p_t + dt * F(q_t)
+            q_norm = self.layer_norm_q(q)
+            force_t = self.force_field(q_norm)
 
-        # Ensure dimensionality matches
-        assert force_t.shape == p.shape, f"Force shape {force_t.shape} mismatch with p shape {p.shape}"
+            p_next = p + dt * force_t
 
-        p_half = p + 0.5 * dt * force_t
+            # q_{t+1} = q_t + dt * p_{t+1}
+            q_next = q + dt * p_next
 
-        # 2. Full step for position
-        # q_{t+1} = q_t + dt * p_{t+0.5}
-        q_next = q + dt * p_half
+        else: # Default: 'verlet'
+            # Velocity Verlet (2nd Order, 2 Force Evals)
 
-        # 3. Second half-step for momentum
-        # p_{t+1} = p_{t+0.5} + 0.5 * dt * F(q_{t+1})
-        q_next_norm = self.layer_norm_q(q_next)
-        force_next = self.force_field(q_next_norm)
+            # 1. First half-step for momentum
+            # p_{t+0.5} = p_t + 0.5 * dt * F(q_t)
+            q_norm = self.layer_norm_q(q)
+            force_t = self.force_field(q_norm)
 
-        p_next = p_half + 0.5 * dt * force_next
+            assert force_t.shape == p.shape, f"Force shape {force_t.shape} mismatch with p shape {p.shape}"
+
+            p_half = p + 0.5 * dt * force_t
+
+            # 2. Full step for position
+            # q_{t+1} = q_t + dt * p_{t+0.5}
+            q_next = q + dt * p_half
+
+            # 3. Second half-step for momentum
+            # p_{t+1} = p_{t+0.5} + 0.5 * dt * F(q_{t+1})
+            q_next_norm = self.layer_norm_q(q_next)
+            force_next = self.force_field(q_next_norm)
+
+            p_next = p_half + 0.5 * dt * force_next
 
         # Re-assemble state
         next_state = torch.cat([q_next, p_next], dim=-1)
 
         # Diagnostic: Energy Conservation Check
-        # H = |p|^2/2. (Potential energy V is implicit, hard to measure directly from Force)
-        # We can check Kinetic Energy change
         with torch.no_grad():
             ke_prev = 0.5 * p.norm(p=2, dim=-1).mean()
             ke_next = 0.5 * p_next.norm(p=2, dim=-1).mean()
@@ -486,6 +477,7 @@ class LanguageModel(nn.Module):
         use_bitnet: bool = False,
         use_symplectic: bool = False, # New Flag
         symplectic_dt: float = 0.1,
+        symplectic_mode: str = 'verlet', # 'verlet' or 'euler'
         use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
@@ -534,7 +526,7 @@ class LanguageModel(nn.Module):
                 precision_upgrade_threshold=precision_upgrade_threshold,
                 use_bitnet=use_bitnet,
                 enable_gradient_checkpointing=use_gradient_checkpointing,
-                **({'dt': symplectic_dt} if use_symplectic else {})
+                **({'dt': symplectic_dt, 'integration_mode': symplectic_mode} if use_symplectic else {})
             )
             for _ in range(n_layers)
         ])
