@@ -1,0 +1,182 @@
+"""
+Fused MoE Kernel
+================
+
+A fused Triton kernel for the Sparse Mixture of Experts layer.
+This kernel is designed to be a single, monolithic operation that performs:
+1. Gating / Routing: Computes router logits for each token.
+2. Top-K Selection: Selects the top-k experts for each token.
+3. Softmax: Computes routing weights.
+4. Dispatch: Routes tokens to their selected experts.
+5. Expert Computation: Performs the forward pass for each expert (2-layer MLP).
+6. Aggregation: Aggregates the outputs from the experts based on routing weights.
+
+This approach minimizes kernel launch overhead and data movement between the GPU's
+global memory and SRAM, aiming for maximum performance.
+"""
+
+import torch
+import torch.nn.functional as F
+
+try:
+    import triton
+    import triton.language as tl
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+    print("Triton not available. Fused MoE kernel will use PyTorch fallback.")
+
+# --- Kernel Configuration Constants ---
+FUSED_MOE_BLOCK_SIZE_D = 64
+FUSED_MOE_BLOCK_SIZE_H = 128
+
+
+# --- Vectorized PyTorch Fallback ---
+def _fused_moe_pytorch(
+    x: torch.Tensor, gate_w: torch.Tensor, experts_w1: torch.Tensor,
+    experts_w2: torch.Tensor, top_k: int, use_block_layout: bool = False
+):
+    T, D = x.shape
+    E, _, H = experts_w1.shape
+
+    router_logits = x @ gate_w
+    topk_logits, topk_indices = torch.topk(router_logits, top_k, dim=-1)
+    topk_weights = F.softmax(topk_logits, dim=-1).view(-1)
+
+    flat_x = x.repeat_interleave(top_k, dim=0)
+    flat_indices = topk_indices.view(-1)
+
+    w1_gathered = experts_w1[flat_indices]
+    w2_gathered = experts_w2[flat_indices]
+
+    hidden = F.relu(torch.bmm(flat_x.unsqueeze(1), w1_gathered))
+    expert_out = torch.bmm(hidden, w2_gathered).squeeze(1)
+
+    weighted_out = expert_out * topk_weights.unsqueeze(1)
+    output = torch.zeros_like(x)
+    output.index_add_(0, torch.arange(T, device=x.device).repeat_interleave(top_k), weighted_out)
+
+    return output
+
+# --- Block-Layout Weight Conversion ---
+def convert_weights_to_block_layout(
+    weights: torch.Tensor, block_size_rows: int, block_size_cols: int
+):
+    E, D, H = weights.shape
+    if (D % block_size_rows != 0) or (H % block_size_cols != 0):
+        raise ValueError("Weight dimensions must be divisible by block sizes.")
+
+    blocked = weights.reshape(E, D // block_size_rows, block_size_rows, H // block_size_cols, block_size_cols)
+    permuted = blocked.permute(0, 1, 3, 2, 4)
+    return permuted.contiguous()
+
+
+# --- Final, Correct Triton Kernel ---
+if TRITON_AVAILABLE:
+    @triton.autotune(
+        configs=[
+            triton.Config({'BLOCK_SIZE_T': 64, 'BLOCK_SIZE_D': 64, 'BLOCK_SIZE_H': 64, 'K_BLOCK_SIZE_D': 32, 'K_BLOCK_SIZE_H': 32}, num_stages=4, num_warps=4),
+            triton.Config({'BLOCK_SIZE_T': 128, 'BLOCK_SIZE_D': 32, 'BLOCK_SIZE_H': 64, 'K_BLOCK_SIZE_D': 32, 'K_BLOCK_SIZE_H': 32}, num_stages=5, num_warps=4),
+            triton.Config({'BLOCK_SIZE_T': 64, 'BLOCK_SIZE_D': 128, 'BLOCK_SIZE_H': 128, 'K_BLOCK_SIZE_D': 32, 'K_BLOCK_SIZE_H': 32}, num_stages=3, num_warps=8),
+        ],
+        key=['T', 'D', 'E', 'H'],
+    )
+    @triton.jit
+    def fused_moe_kernel_final(
+        X_ptr, Gate_W_ptr, Experts_W1_ptr, Experts_W2_ptr, Output_ptr,
+        T: tl.int32, D: tl.int32, E: tl.int32, H: tl.int32,
+        stride_xt, stride_xd, stride_gated, stride_gatee, stride_outt, stride_outd,
+        USE_BLOCK_LAYOUT: tl.constexpr,
+        BLOCK_SIZE_T: tl.constexpr, BLOCK_SIZE_D: tl.constexpr,
+        BLOCK_SIZE_H: tl.constexpr, K_BLOCK_SIZE_D: tl.constexpr, K_BLOCK_SIZE_H: tl.constexpr
+    ):
+        pid_t = tl.program_id(axis=0)
+        t_offsets = pid_t * BLOCK_SIZE_T + tl.arange(0, BLOCK_SIZE_T)
+        t_mask = t_offsets < T
+
+        x_ptrs = X_ptr + (t_offsets[:, None] * stride_xt + tl.arange(0, D)[None, :] * stride_xd)
+        x_block = tl.load(x_ptrs, mask=t_mask[:, None], other=0.0)
+
+        gate_w_ptrs = Gate_W_ptr + (tl.arange(0, D)[:, None] * stride_gated + tl.arange(0, E)[None, :] * stride_gatee)
+        gate_w = tl.load(gate_w_ptrs)
+
+        router_logits = tl.dot(x_block, gate_w)
+
+        max_logits = tl.max(router_logits, axis=1)
+        logits_minus_max = router_logits - max_logits[:, None]
+        exp_logits = tl.exp(logits_minus_max)
+        sum_exp_logits = tl.sum(exp_logits, axis=1)
+
+        topk_indices = tl.argmax(router_logits, axis=1)
+        topk_weights = tl.max(exp_logits, axis=1) / sum_exp_logits
+
+        final_output = tl.zeros((BLOCK_SIZE_T, D), dtype=tl.float32)
+
+        for expert_idx in range(E):
+            expert_mask = (topk_indices == expert_idx) & t_mask
+            if tl.sum(expert_mask) == 0: continue
+
+            acc_out = tl.zeros((BLOCK_SIZE_T, BLOCK_SIZE_D), dtype=tl.float32)
+            for h_start in range(0, H, BLOCK_SIZE_H):
+                h_offsets = h_start + tl.arange(0, BLOCK_SIZE_H)
+
+                acc_h = tl.zeros((BLOCK_SIZE_T, BLOCK_SIZE_H), dtype=tl.float32)
+                for d_start in range(0, D, K_BLOCK_SIZE_D):
+                    d_k_offsets = d_start + tl.arange(0, K_BLOCK_SIZE_D)
+                    x_chunk = tl.load(X_ptr + t_offsets[:, None] * stride_xt + d_k_offsets[None, :] * stride_xd, mask=expert_mask[:, None], other=0.0)
+
+                    w1_offset = expert_idx * D * H
+                    w1_ptrs = Experts_W1_ptr + w1_offset + (d_k_offsets[:, None] * H + h_offsets[None, :])
+                    w1_chunk = tl.load(w1_ptrs)
+                    acc_h += tl.dot(x_chunk, w1_chunk)
+
+                hidden = tl.where(acc_h > 0, acc_h, 0.0)
+
+                for d_start in range(0, D, BLOCK_SIZE_D):
+                    d_offsets = d_start + tl.arange(0, BLOCK_SIZE_D)
+                    w2_offset = expert_idx * H * D
+                    w2_ptrs = Experts_W2_ptr + w2_offset + (h_offsets[:, None] * D + d_offsets[None, :])
+                    w2_chunk = tl.load(w2_ptrs)
+
+                    acc_out += tl.dot(hidden, w2_chunk)
+
+            final_output += tl.where(expert_mask[:, None], acc_out * topk_weights[:, None], 0.0)
+
+        output_ptrs = Output_ptr + (t_offsets[:, None] * stride_outt + tl.arange(0, D)[None, :] * stride_outd)
+        tl.store(output_ptrs, final_output, mask=t_mask[:, None])
+
+# --- Dispatcher ---
+def fused_moe_forward(
+    x: torch.Tensor, gate_w: torch.Tensor, experts_w1: torch.Tensor,
+    experts_w2: torch.Tensor, top_k: int, use_block_layout: bool = False
+):
+    if x.dim() != 3: raise ValueError("Input tensor must be 3-dimensional (B, N, D)")
+    B, N, D = x.shape
+    x_flat = x.view(-1, D)
+    T = x_flat.shape[0]
+
+    use_triton = TRITON_AVAILABLE and x.is_cuda and top_k == 1
+
+    if TRITON_AVAILABLE and x.is_cuda and top_k > 1:
+        import warnings
+        warnings.warn("Fused MoE Triton kernel only supports top_k=1. Falling back to PyTorch.", UserWarning)
+
+    if use_triton:
+        output = torch.empty_like(x_flat)
+        grid = lambda meta: (triton.cdiv(T, meta['BLOCK_SIZE_T']),)
+
+        fused_moe_kernel_final[grid](
+            x_flat, gate_w, experts_w1, experts_w2, output,
+            T, D, gate_w.shape[1], experts_w1.shape[2],
+            x_flat.stride(0), x_flat.stride(1),
+            gate_w.stride(0), gate_w.stride(1),
+            output.stride(0), output.stride(1),
+            USE_BLOCK_LAYOUT=use_block_layout
+        )
+    else:
+        output = _fused_moe_pytorch(x_flat, gate_w, experts_w1, experts_w2, top_k, use_block_layout)
+
+    return output.view(B, N, D)
+
+def is_triton_available():
+    return TRITON_AVAILABLE

@@ -21,6 +21,12 @@ from .moe import SparseMoELayer
 from .birman_schwinger_core import BirmanSchwingerCore
 from .prime_bump_potential import PrimeBumpPotential
 from src.models.phase4.homeostasis import HomeostasisController
+from src.kernels.fused_moe_kernel import (
+    fused_moe_forward,
+    convert_weights_to_block_layout,
+    FUSED_MOE_BLOCK_SIZE_D,
+    FUSED_MOE_BLOCK_SIZE_H
+)
 
 # === 追加 ===
 from src.models.phase7 import HybridHyperbolicAttention
@@ -74,11 +80,13 @@ class MoEResNetBKLayer(nn.Module):
         use_hybrid_attention: bool = False,
         hyperbolic_window_size: int = 64,
         num_heads: int = 4,
+        use_fused_moe_kernel: bool = False,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_seq = n_seq
         self.use_hybrid_attention = use_hybrid_attention
+        self.use_fused_moe_kernel = use_fused_moe_kernel
 
         if self.use_hybrid_attention:
             self.hybrid_attn = HybridHyperbolicAttention(
@@ -97,6 +105,10 @@ class MoEResNetBKLayer(nn.Module):
         else:
             self.use_birman_schwinger = use_birman_schwinger
             self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale, scattering_scale_warmup_steps=scattering_scale_warmup_steps)
+
+            if self.use_fused_moe_kernel and not self.use_scattering_router:
+                self._convert_and_register_expert_weights()
+
             self.v_proj = nn.Linear(d_model, 1)
             self.output_proj = nn.Linear(2, d_model)
             self.bk_scale = nn.Parameter(torch.ones(d_model, dtype=torch.float32))
@@ -123,6 +135,29 @@ class MoEResNetBKLayer(nn.Module):
 
         self.v_max = 3.0
         self.feature_clamp = 10.0
+
+    def _convert_and_register_expert_weights(self):
+        H = self.d_model * 2
+
+        if self.d_model % FUSED_MOE_BLOCK_SIZE_D != 0 or H % FUSED_MOE_BLOCK_SIZE_H != 0:
+            import warnings
+            warnings.warn("Disabling fused kernel for this layer due to incompatible dimensions.")
+            self.use_fused_moe_kernel = False
+            return
+
+        with torch.no_grad():
+            w1_stacked = torch.stack([expert[0].weight for expert in self.moe_ffn.experts]).detach()
+            w2_stacked = torch.stack([expert[3].weight for expert in self.moe_ffn.experts]).detach()
+
+            w1_for_kernel = w1_stacked.permute(0, 2, 1).contiguous()
+            w2_for_kernel = w2_stacked.permute(0, 2, 1).contiguous()
+
+            w1_block_layout = convert_weights_to_block_layout(w1_for_kernel, FUSED_MOE_BLOCK_SIZE_D, FUSED_MOE_BLOCK_SIZE_H)
+            w2_block_layout = convert_weights_to_block_layout(w2_for_kernel, FUSED_MOE_BLOCK_SIZE_H, FUSED_MOE_BLOCK_SIZE_D)
+
+            self.register_buffer("w1_bl", w1_block_layout)
+            self.register_buffer("w2_bl", w2_block_layout)
+            self.register_buffer("gate_w_t", self.moe_ffn.gating_network.weight.t().detach().contiguous())
 
     def forward(self, x):
         """
@@ -166,8 +201,19 @@ class MoEResNetBKLayer(nn.Module):
                 if self.moe_ffn.use_scattering_router:
                     G_ii = torch.complex(features[..., 0], features[..., 1])
             epsilon = self.birman_schwinger_core.epsilon if self.use_birman_schwinger else 1.0
-            ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
+
+            routing_entropy = None
+            if self.use_fused_moe_kernel and not self.moe_ffn.use_scattering_router:
+                ffn_out = fused_moe_forward(
+                    x, self.gate_w_t, self.w1_bl, self.w2_bl, self.moe_ffn.top_k, use_block_layout=True
+                )
+                routing_diagnostics = None
+            else:
+                ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
+
             self.last_routing_diagnostics = routing_diagnostics
+            self.last_routing_entropy = routing_entropy.item() if routing_entropy is not None else None
+
             if self.feature_clamp is not None:
                 features = torch.clamp(features, -self.feature_clamp, self.feature_clamp)
             spec_out = self.output_proj(features)
