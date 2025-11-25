@@ -150,6 +150,10 @@ class BirmanSchwingerCore(nn.Module):
         Returns:
             R_0: (N, N) resolvent kernel matrix
         """
+        # --- Precision Enforcement ---
+        # If BitNet is used, the main layers might be low precision, but this Kernel
+        # MUST run in at least float32 (complex64) or float64 (complex128).
+        # We explicitly enforce this.
         dtype = torch.complex128 if use_high_precision else torch.complex64
         device = self.positions.device
         
@@ -158,6 +162,9 @@ class BirmanSchwingerCore(nn.Module):
             eff_positions = self.positions[:length]
         else:
             eff_positions = self.positions
+
+        # Ensure positions are high precision for the kernel calculation
+        eff_positions = eff_positions.to(dtype=dtype.real_dtype if dtype.is_complex else dtype)
 
         # Compute position differences: u - v
         u = eff_positions.unsqueeze(1)  # (N, 1)
@@ -218,11 +225,15 @@ class BirmanSchwingerCore(nn.Module):
         Returns:
             K: (B, N, N) Birman-Schwinger operator
         """
+        # --- Precision Enforcement ---
         dtype = torch.complex128 if use_high_precision else torch.complex64
         batch_size, seq_len = V.shape
         
+        # Ensure V is treated as high precision for spectral calculations
+        V_high = V.to(dtype=dtype.real_dtype if dtype.is_complex else dtype)
+
         # Compute |V|^{1/2}
-        V_abs = V.abs()
+        V_abs = V_high.abs()
         V_sqrt = torch.sqrt(V_abs + 1e-10)  # Add epsilon for stability
         V_sqrt_complex = V_sqrt.to(dtype)
         
@@ -256,12 +267,17 @@ class BirmanSchwingerCore(nn.Module):
         Returns:
             (||K||_S1, ||K||_S2): trace norm and Hilbert-Schmidt norm
         """
+        # Ensure K is floating point (complex)
+        if K.numel() == 0:
+            return 0.0, 0.0
+
         # Average over batch
         K_mean = K.mean(dim=0)  # (N, N)
         
         # Compute singular values
         try:
-            singular_values = torch.linalg.svdvals(K_mean)
+            # SVD works best with complex128
+            singular_values = torch.linalg.svdvals(K_mean.to(torch.complex128))
         except RuntimeError:
             # Fallback if SVD fails
             return float('inf'), float('inf')
@@ -283,16 +299,6 @@ class BirmanSchwingerCore(nn.Module):
         """
         Verify the Schatten norm bounds for the Birman-Schwinger operator.
         
-        This method provides a numerical check for the theoretical bounds derived
-        in the paper `riemann_hypothesis_main.tex`:
-        - Proposition BS-HS (Hilbert-Schmidt bound):
-            ||K_ε||_S2 ≤ (1/2)(Im z)^{-1/2} ||V_ε||_L2
-        - Proposition BS-trace (Trace-class bound, for ε > 1/2):
-            ||K_ε||_S1 ≤ (1/2)(Im z)^{-1} ||V_ε||_L1
-
-        These checks are crucial for monitoring the stability and theoretical
-        compliance of the model during training.
-        
         Args:
             K: (B, N, N) Birman-Schwinger operator
             V: (B, N) potential
@@ -304,14 +310,19 @@ class BirmanSchwingerCore(nn.Module):
         s1_norm, s2_norm = self.compute_schatten_norms(K)
         
         # Compute potential norms
-        V_l1 = V.abs().mean(dim=0).sum().item()  # L1 norm
-        V_l2 = torch.sqrt((V ** 2).mean(dim=0).sum()).item()  # L2 norm
+        # Use high precision for check
+        V_high = V.to(torch.float64)
+        V_l1 = V_high.abs().mean(dim=0).sum().item()  # L1 norm
+        V_l2 = torch.sqrt((V_high ** 2).mean(dim=0).sum()).item()  # L2 norm
         
         # Theoretical bounds
         if isinstance(z, torch.Tensor):
             im_z = z.imag.abs().item()
         else:
             im_z = abs(z.imag)
+
+        # Avoid division by zero
+        im_z = max(im_z, 1e-9)
 
         s2_bound = 0.5 * (im_z ** (-0.5)) * V_l2
         s1_bound = 0.5 * (im_z ** (-1.0)) * V_l1 if self.epsilon > 0.5 else float('inf')
@@ -352,13 +363,16 @@ class BirmanSchwingerCore(nn.Module):
         
         for b in range(batch_size):
             try:
-                U, S, Vh = torch.linalg.svd(K[b], full_matrices=False)
+                # SVD on complex128 for stability
+                K_b = K[b].to(torch.complex128)
+                U, S, Vh = torch.linalg.svd(K_b, full_matrices=False)
                 
                 # Clip singular values
                 S_clipped = torch.clamp(S, max=threshold)
                 
                 # Reconstruct: K = U @ diag(S) @ V^H
-                K_clipped[b] = U @ torch.diag(S_clipped) @ Vh
+                K_rec = U @ torch.diag(S_clipped) @ Vh
+                K_clipped[b] = K_rec.to(K.dtype)
             except RuntimeError:
                 # If SVD fails, return original
                 K_clipped[b] = K[b]
@@ -368,16 +382,6 @@ class BirmanSchwingerCore(nn.Module):
     def verify_mourre_estimate(self) -> bool:
         """
         Verifies the correct Mourre-type estimate for the implemented H_0.
-
-        Note on Theory vs. Implementation:
-        - The paper `riemann_hypothesis_main.tex` uses H_0 = -i d/dx (momentum operator),
-          for which the Mourre estimate is `[H_0, iA] = I`.
-        - This implementation, for practical reasons, uses H_0 as the discrete
-          Laplacian (diag(-2, 1, 1)), an approximation of -d²/dx².
-        - For the Laplacian, the correct commutator is `[H_0, iA] approx 2P`, where
-          P = -i d/dx is the momentum operator.
-
-        This test verifies the latter, correct relation for the implemented operators.
         """
         if not self.use_mourre:
             return True
@@ -426,7 +430,9 @@ class BirmanSchwingerCore(nn.Module):
             condition number
         """
         try:
-            singular_values = torch.linalg.svdvals(H)
+            # Use complex128/float64 for reliable condition number
+            H_high = H.to(torch.complex128 if H.is_complex() else torch.float64)
+            singular_values = torch.linalg.svdvals(H_high)
             kappa = (singular_values.max() / (singular_values.min() + 1e-10)).item()
             return kappa
         except RuntimeError:
@@ -461,13 +467,6 @@ class BirmanSchwingerCore(nn.Module):
         """
         Compute G_ii = diag((H_ε - zI)^{-1}) using semiseparable structure.
         
-        Exploits H = T + UV^T factorization for O(N) computation:
-        1. Compute tridiagonal part using theta/phi recursions
-        2. Apply low-rank correction using Woodbury identity
-        
-        Mathematical foundation:
-        (T + UV^T - zI)^{-1} = (T - zI)^{-1} - (T - zI)^{-1} U (I + V^T(T - zI)^{-1}U)^{-1} V^T (T - zI)^{-1}
-        
         Args:
             v: (B, N) potential values
             z: complex shift
@@ -475,39 +474,35 @@ class BirmanSchwingerCore(nn.Module):
         
         Returns:
             G_ii: (B, N) complex diagonal of resolvent
-        
-        Requirements: 5.1, 5.2, 5.3, 5.4
         """
         batch_size, n_seq = v.shape
         device = v.device
         
+        # --- Precision Enforcement ---
+        # Ensure 'v' is high precision for logic, even if input is bfloat16/half
+        v_high = v.to(torch.float64) # Force FP64 for physics logic
+
         # Build effective Hamiltonian H_ε = H_0 + V_ε
         # H_0 is tridiagonal (discrete Laplacian)
         # V_ε is diagonal potential
         
         # Main diagonal: -2 + v (from Laplacian + potential)
-        he_diag = -2.0 * torch.ones_like(v) + v
+        he_diag = -2.0 * torch.ones_like(v_high) + v_high
 
         # Apply Non-Hermitian decay gamma
-        # H_eff = H - i*gamma
         if gamma is not None:
-             # Since v is real, we need to handle this carefully.
-             # However, he_diag is used in vmapped_get_diag which takes real he_diag.
-             # But z is complex.
-             # (H - zI) = (H_real - i*gamma - zI) = (H_real - (z + i*gamma)I)
-             # So we can absorb gamma into z!
              # z_effective = z + i*gamma
              z = z + 1j * gamma
         
         # Off-diagonals: +1 (from Laplacian)
-        h0_super = torch.ones(batch_size, n_seq - 1, device=device)
-        h0_sub = torch.ones(batch_size, n_seq - 1, device=device)
+        h0_super = torch.ones(batch_size, n_seq - 1, device=device, dtype=torch.float64)
+        h0_sub = torch.ones(batch_size, n_seq - 1, device=device, dtype=torch.float64)
 
         # Condition number check (first batch exemplar) for precision upgrade
         condition_number = None
         try:
             H_dense = torch.zeros(n_seq, n_seq, device=device, dtype=torch.float64)
-            H_dense.diagonal().copy_(he_diag[0].to(torch.float64))
+            H_dense.diagonal().copy_(he_diag[0])
             if n_seq > 1:
                 H_dense.diagonal(1).fill_(1.0)
                 H_dense.diagonal(-1).fill_(1.0)
@@ -523,21 +518,23 @@ class BirmanSchwingerCore(nn.Module):
             use_high_precision = True
             self.precision_upgrades += 1
 
-        dtype_in = torch.float64 if use_high_precision else torch.float32
+        dtype_in = torch.float64 # Always use at least float64 for core if not complex128
         he_diag = he_diag.to(dtype_in)
         h0_super = h0_super.to(dtype_in)
         h0_sub = h0_sub.to(dtype_in)
         
         # Step 1: Compute tridiagonal part using O(N) recursion
         # G_ii^{tridiag} = diag((T - zI)^{-1})
-        # Convert z to tensor for compatibility with bk_core
-        z_dtype = torch.complex128 if use_high_precision else torch.complex64
+        z_dtype = torch.complex128 # Always high precision z
 
         if isinstance(z, torch.Tensor):
              z_tensor = z.to(dtype=z_dtype, device=device)
         else:
              z_tensor = torch.tensor(z, dtype=z_dtype, device=device)
 
+        # vmapped_get_diag handles complex inputs correctly?
+        # bk_core.py says it expects 'a', 'b', 'c' which are real usually?
+        # Actually bk_core converts to complex128 internally.
         G_ii_tridiag = vmapped_get_diag(he_diag, h0_super, h0_sub, z_tensor)
         
         if not self.use_semiseparable or self.semiseparable is None:
@@ -546,11 +543,11 @@ class BirmanSchwingerCore(nn.Module):
             return G_ii_tridiag
         
         # Step 2: Apply low-rank correction using Woodbury identity
-        # This is where semiseparable structure provides memory savings
         
         # Get low-rank factors U, V from semiseparable structure
-        U = self.semiseparable.U  # (N, r)
-        V = self.semiseparable.V  # (N, r)
+        # Ensure U, V are high precision for physics
+        U = self.semiseparable.U.to(torch.float64)  # (N, r)
+        V = self.semiseparable.V.to(torch.float64)  # (N, r)
         r = self.semiseparable.rank
 
         # Guard: if low-rank factors are zero, skip semiseparable path
@@ -560,8 +557,10 @@ class BirmanSchwingerCore(nn.Module):
             return G_ii_tridiag
         
         # Convert U, V to complex for compatibility
-        U_complex = U.to(G_ii_tridiag.dtype)
-        V_complex = V.to(G_ii_tridiag.dtype)
+        # G_ii_tridiag is complex64/128
+        calc_dtype = G_ii_tridiag.dtype
+        U_complex = U.to(calc_dtype)
+        V_complex = V.to(calc_dtype)
         
         # For each batch element, apply Woodbury correction
         G_ii_corrected = torch.zeros_like(G_ii_tridiag)
@@ -614,20 +613,8 @@ class BirmanSchwingerCore(nn.Module):
         """
         Estimate memory usage with semiseparable structure.
         
-        Provides breakdown by component:
-        - Tridiagonal: O(N) storage
-        - Low-rank: O(N log N) storage
-        - Activations: O(BN) or O(N) with checkpointing
-        - Optimizer: O(N log N) for parameters
-        
-        Args:
-            batch_size: batch size
-            use_checkpointing: whether gradient checkpointing is enabled
-        
         Returns:
             Dictionary with memory estimates in bytes
-        
-        Requirements: 5.7, 5.12, 5.13, 5.14, 5.15
         """
         N = self.n_seq
         
@@ -694,18 +681,8 @@ class BirmanSchwingerCore(nn.Module):
         """
         Compute optimal batch size given available memory.
         
-        Uses semiseparable memory estimation to maximize batch size
-        while staying within memory limits.
-        
-        Args:
-            available_memory_bytes: available GPU memory in bytes
-            use_checkpointing: whether gradient checkpointing is enabled
-            safety_factor: safety margin (0.8 = use 80% of available memory)
-        
         Returns:
             optimal batch size
-        
-        Requirement 5.14: Dynamic batch sizing with semiseparable memory estimation
         """
         # Binary search for optimal batch size
         min_batch = 1
@@ -734,8 +711,6 @@ class BirmanSchwingerCore(nn.Module):
         
         Returns:
             Dictionary with memory usage breakdown and history
-        
-        Requirement 5.15: Memory profiling with breakdown
         """
         if self.use_semiseparable and self.semiseparable is not None:
             semisep_usage = self.semiseparable.get_memory_usage()
@@ -784,6 +759,8 @@ class BirmanSchwingerCore(nn.Module):
         # Check if precision upgrade is needed
         use_high_precision = False
         
+        # Dynamic Epsilon / Z logic could be inserted here
+
         # Compute resolvent diagonal using semiseparable structure
         if self.use_semiseparable:
             G_ii = self.compute_semiseparable_resolvent(v, z, gamma=gamma)

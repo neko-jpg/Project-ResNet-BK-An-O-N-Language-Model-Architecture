@@ -206,7 +206,7 @@ class BKCoreFunction(torch.autograd.Function):
                         pass # logger.info("BK-Core: Triton acceleration enabled")
                 except Exception:
                     BKCoreFunction.USE_TRITON = False
-            use_triton = BKCoreFunction.USE_TRITON
+            use_triton = False
         
         # Strict Triton implementation (No Fallback)
         if use_triton:
