@@ -134,6 +134,11 @@ class ResNetBKConfig:
     schatten_threshold: float = 100.0
     precision_upgrade_threshold: float = 1e6
 
+    # Phase 7 - Hybrid Attention
+    use_hybrid_attention: bool = False
+    hyperbolic_window_size: int = 64
+    num_heads: int = 4  # Attention用にデフォルト値を追加推奨
+
     def __post_init__(self):
         """Validate configuration."""
         assert self.d_model > 0, "d_model must be positive"
@@ -351,6 +356,11 @@ class ConfigurableResNetBK(nn.Module):
                 use_symplectic=config.use_symplectic,
                 symplectic_dt=config.symplectic_dt,
                 use_gradient_checkpointing=config.use_gradient_checkpointing,
+
+                # === 追加部分 ===
+                use_hybrid_attention=config.use_hybrid_attention,
+                hyperbolic_window_size=config.hyperbolic_window_size,
+                num_heads=config.num_heads,
             )
             self.model = KoopmanBKModel(k_config)
         else:
@@ -378,6 +388,9 @@ class ConfigurableResNetBK(nn.Module):
                 use_symplectic=config.use_symplectic,
                 symplectic_dt=config.symplectic_dt,
                 use_gradient_checkpointing=config.use_gradient_checkpointing,
+                use_hybrid_attention=config.use_hybrid_attention,
+                hyperbolic_window_size=config.hyperbolic_window_size,
+                num_heads=config.num_heads,
             )
         
         # Apply configuration to model components
