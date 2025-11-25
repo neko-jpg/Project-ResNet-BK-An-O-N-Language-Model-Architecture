@@ -79,7 +79,7 @@ class HyperbolicInitializer(nn.Module):
 
     def initialize_embeddings(self, embedding_layer: nn.Embedding):
         """
-        In-place initialization of an embedding layer.
+        In-place initialization of an embedding layer and marks the weight as hyperbolic.
         """
         n_vocab, d_model = embedding_layer.weight.shape
         assert d_model == self.d_model
@@ -88,11 +88,5 @@ class HyperbolicInitializer(nn.Module):
             coords = self.generate_tiling_coordinates(n_vocab)
             embedding_layer.weight.copy_(coords)
 
-            # Scale to match typical variance if needed, or keep as is for Poincaré
-            # Standard embeddings are often N(0, 1).
-            # Poincaré coordinates are bounded < 1. This might be too small for dot products.
-            # We project them to tangent space (log map) at origin if the model expects Euclidean vectors?
-            # OR we rely on the model to learn the metric.
-            # MUSE's BK-Core expects a Potential V.
-            # Let's assume these are raw vectors that will be projected to scalar potential V.
-            pass
+            # Mark the parameter as hyperbolic for the optimizer
+            embedding_layer.weight.is_hyperbolic = True
