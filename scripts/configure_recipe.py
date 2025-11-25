@@ -188,6 +188,14 @@ def main():
 
     goal_choice = IntPrompt.ask("Choice", choices=["1", "2", "3"], default="1")
 
+    # 1.5 Model Architecture
+    console.print(t("\nWhich model architecture to use?", "\n使用するモデルアーキテクチャを選択してください。"))
+    console.print(t("1. Phase 3 (Standard ResNet-BK)", "1. Phase 3 (標準 ResNet-BK)"))
+    console.print(t("2. Phase 7 (Hybrid Hyperbolic Attention)", "2. Phase 7 (ハイブリッド双曲アテンション)"))
+    arch_choice = IntPrompt.ask("Choice", choices=["1", "2"], default="2")
+    model_type = "phase3" if arch_choice == "1" else "phase7"
+
+
     # 2. Calibration
     cal = MuseCalibrator()
     if cal:
@@ -267,7 +275,7 @@ def main():
     # Initial Auto-Tune
     if cal and cal.memory_coeffs['base'] > 0:
         with console.status(t("Auto-tuning...", "自動最適化中...")):
-            config, _ = tuner.tune(config, locked_params, target_vram_ratio)
+            config, _ = tuner.tune(config, locked_params, target_vram_ratio, model_type=model_type)
 
     # 5. Cascading Manual Loop
     while True:
@@ -277,7 +285,7 @@ def main():
         if cal and cal.memory_coeffs['base'] > 0:
             with contextlib.redirect_stderr(io.StringIO()):
                 est_mem, est_time = cal.predict(
-                    config['batch_size'], config['n_seq'], config['d_model'], config['n_layers']
+                    config['batch_size'], config['n_seq'], config['d_model'], config['n_layers'], model_type=model_type
                 )
 
         usage_pct = (est_mem / (cal.vram_total if cal.vram_total > 0 else 8192)) * 100
@@ -373,11 +381,19 @@ def main():
         yaml.dump({'datasets': datasets_cfg}, f)
 
     train_config = {
+        'model_type': model_type,
         'd_model': config['d_model'], 'n_layers': config['n_layers'],
         'batch_size': config['batch_size'],
         'n_seq': config['n_seq'], 'epochs': config.get('epochs', 1),
         'learning_rate': 1e-4 if goal_choice == "3" else 1e-3
     }
+
+    if model_type == 'phase7':
+        # Add Phase 7 specific parameters
+        # Sensible defaults, can be exposed to user later if needed
+        train_config['num_heads'] = max(1, config['d_model'] // 128) # Keep head dim reasonable
+        train_config['local_window_size'] = 128
+
     with open(config_dir / "user_train_config.yaml", 'w') as f:
         yaml.dump(train_config, f)
 

@@ -186,7 +186,43 @@ def train():
     
     # Create model
     print("\nCreating model...")
-    model = ConfigurableResNetBK(config).to(device)
+    model_type = getattr(config, 'model_type', 'phase3')
+
+    if model_type == 'phase7':
+        from src.models.phase7.hybrid_attention import HybridHyperbolicAttention
+
+        class Phase7Model(nn.Module):
+            def __init__(self, config):
+                super().__init__()
+                self.embedding = nn.Embedding(config.vocab_size, config.d_model)
+                self.core_model = HybridHyperbolicAttention(
+                    d_model=config.d_model,
+                    num_heads=config.num_heads,
+                    local_window_size=config.local_window_size
+                )
+                self.to_logits = nn.Linear(config.d_model, config.vocab_size)
+                self.config = config
+
+            def forward(self, x):
+                x = self.embedding(x)
+                # The hybrid model now returns diagnostics, which we can log
+                # For now, we ignore them in the main forward pass for loss calculation
+                x, diagnostics = self.core_model(x, return_diagnostics=True)
+                return self.to_logits(x)
+
+            def get_config_summary(self):
+                 return {
+                    "Model Type": "Phase 7 Hybrid Hyperbolic",
+                    "d_model": self.config.d_model,
+                    "n_layers": "N/A (Hybrid)",
+                    "num_heads": self.config.num_heads,
+                    "local_window_size": self.config.local_window_size,
+                }
+
+        model = Phase7Model(config).to(device)
+
+    else: # Phase 3
+        model = ConfigurableResNetBK(config).to(device)
     
     # Print model summary
     summary = model.get_config_summary()
