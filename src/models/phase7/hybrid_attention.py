@@ -19,30 +19,31 @@ class HybridHyperbolicAttention(nn.Module):
     - Global Context: Processed by AdaptiveRankSemiseparableLayer (SSM).
                       Efficiently propagates information across the entire sequence.
     """
-    def __init__(self, d_model: int, num_heads: int, local_window_size: int = 64):
+    def __init__(self, d_model: int, num_heads: int, local_window_size: int = 64, use_triton_kernel: bool = True):
         super().__init__()
         self.d_model = d_model
         self.num_heads = num_heads
         self.local_window_size = local_window_size
 
         # 1. Local hyperbolic attention module
-        self.local_attn = HyperbolicMultiHeadAttention(d_model, num_heads)
+        self.local_attn = HyperbolicMultiHeadAttention(d_model, num_heads, use_triton_kernel=use_triton_kernel)
 
         # 2. Global SSM module
         # We can initialize it with default parameters for now.
         # A more robust implementation might pass a config object.
         self.global_attn = AdaptiveRankSemiseparableLayer(d_model)
 
-        # 3. Learnable gate to combine local and global outputs
-        self.gate = nn.Parameter(torch.randn(d_model))
+        # 3. Dynamic gating based on scattering phase
+        self.gate_sensitivity = nn.Parameter(torch.tensor(1.0))
 
         # 4. Final layer normalization for stability
         self.layer_norm = nn.LayerNorm(d_model)
 
-    def forward(self, x, return_diagnostics: bool = True):
+    def forward(self, x, g_ii: torch.Tensor, return_diagnostics: bool = True):
         """
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, d_model)
+            g_ii (torch.Tensor): Green's function diagonal from BK-Core. Shape: (batch, seq_len, d_model)
             return_diagnostics (bool): If True, returns a dictionary of monitoring metrics.
 
         Returns:
@@ -55,6 +56,8 @@ class HybridHyperbolicAttention(nn.Module):
 
         # --- 1. Global Attention Path (SSM) ---
         global_out, ssm_diagnostics = self.global_attn(x)
+
+
         if return_diagnostics:
             diagnostics['ssm_effective_rank'] = ssm_diagnostics.get('effective_rank', torch.tensor(0.0))
 
@@ -77,11 +80,17 @@ class HybridHyperbolicAttention(nn.Module):
         local_out = local_out_padded[:, :seq_len, :]
 
         # --- 3. Combination ---
-        g = torch.sigmoid(self.gate)
+        # Dynamic gating based on scattering phase energy.
+        # g_ii now has shape (B, N, 1), so we just take the absolute imaginary part.
+        energy = g_ii.imag.abs()
+        g = torch.sigmoid(energy * self.gate_sensitivity)
+
         if return_diagnostics:
             diagnostics['hybrid_gate_mean'] = g.mean()
+            diagnostics['scattering_energy_mean'] = energy.mean()
 
-        combined_out = g * global_out + (1 - g) * local_out
+        # Route high-energy tokens to local (hyperbolic) attention
+        combined_out = g * local_out + (1 - g) * global_out
         output = self.layer_norm(combined_out)
 
         if return_diagnostics:

@@ -182,6 +182,15 @@ class HyperbolicMultiHeadAttention(nn.Module):
         # Final output projection
         self.W_o = nn.Linear(d_model, d_model, bias=False)
 
+        self._init_weights()
+
+    def _init_weights(self):
+        from src.utils.prime_init import prime_bump_init_
+        prime_bump_init_(self.W_q.weight)
+        prime_bump_init_(self.W_k.weight)
+        prime_bump_init_(self.W_v.weight)
+        prime_bump_init_(self.W_o.weight)
+
     def forward(self, x, return_diagnostics: bool = True):
         """
         Args:

@@ -171,28 +171,28 @@ class AdaptiveRankSemiseparableLayer(nn.Module):
     
     def _init_weights(self):
         """
-        Initialize layer weights with appropriate scaling.
-        
-        Uses Xavier/Glorot initialization for linear layers and
-        small random initialization for convolution.
+        Initialize layer weights with Prime-Bump Initialization.
         """
-        # Complexity gate: Xavier uniform
+        from src.utils.prime_init import prime_bump_init_
+
+        # Apply Prime-Bump to linear layers
+        prime_bump_init_(self.U_proj.weight)
+        prime_bump_init_(self.V_proj.weight)
+        prime_bump_init_(self.output_proj.weight)
+
+        # For the complexity gate, which is a small MLP, standard init is fine.
         for module in self.complexity_gate:
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight, gain=1.0)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
         
-        # U, V projections: Xavier uniform with small scale
-        # Small scale (0.02) for stability during early training
-        nn.init.xavier_uniform_(self.U_proj.weight, gain=0.02)
-        nn.init.xavier_uniform_(self.V_proj.weight, gain=0.02)
-        
-        # T convolution: Small random initialization
-        nn.init.normal_(self.T_conv.weight, mean=0.0, std=0.02)
-        
-        # Output projection: Xavier uniform
-        nn.init.xavier_uniform_(self.output_proj.weight, gain=1.0)
+        # For the convolution layer, reshape weight to be 2D and apply Prime-Bump
+        conv_weight = self.T_conv.weight.squeeze()
+        if conv_weight.dim() == 2: # (d_model, kernel_size)
+             prime_bump_init_(conv_weight)
+             self.T_conv.weight.data = conv_weight.unsqueeze(1) # Add back the group dimension
+
         if self.output_proj.bias is not None:
             nn.init.zeros_(self.output_proj.bias)
     
@@ -561,7 +561,7 @@ class AdaptiveRankSemiseparableLayer(nn.Module):
                     f"AR-SSM stability issue: condition_number={condition_number:.2e}, "
                     f"is_singular={is_singular}"
                 )
-        
+
         return y, diagnostics
     
     def forward_with_checkpointing(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:

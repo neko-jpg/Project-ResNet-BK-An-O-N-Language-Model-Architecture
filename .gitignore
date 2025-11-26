@@ -172,6 +172,8 @@ huggingface/
 *.ptx
 
 # Benchmark results (keep summaries, ignore raw data)
+results/*.json
+results/*.png
 benchmark_results/**/*.raw
 benchmark_results/**/*.dat
 
