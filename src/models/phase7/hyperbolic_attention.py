@@ -91,7 +91,7 @@ def log_map_at_origin(y, c, dim=-1):
 class SingleHeadHyperbolicAttention(nn.Module):
     """
     Implements a single head of hyperbolic attention.
-    Assumes q, k, and v are already in the Poincaré ball.
+    Assumes q, k are in the Poincaré ball, and v_tangent is in the tangent space.
     """
     def __init__(self, d_model: int):
         super().__init__()
@@ -102,13 +102,14 @@ class SingleHeadHyperbolicAttention(nn.Module):
         # Learnable bias parameter
         self.attention_bias = nn.Parameter(torch.tensor(0.0))
 
-    def forward(self, q, k, v, c):
+    def forward(self, q, k, v_tangent, c, mask=None):
         """
         Args:
             q (torch.Tensor): Queries in the Poincaré ball. Shape: (batch, seq_len, dim)
             k (torch.Tensor): Keys in the Poincaré ball. Shape: (batch, seq_len, dim)
-            v (torch.Tensor): Values in the Poincaré ball. Shape: (batch, seq_len, dim)
+            v_tangent (torch.Tensor): Values in the tangent space. Shape: (batch, seq_len, dim)
             c (torch.Tensor): Curvature tensor.
+            mask (torch.Tensor, optional): Attention mask. Shape: (batch, seq_len, seq_len).
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, dict]: Aggregated value, attention weights, and diagnostics.
@@ -120,10 +121,14 @@ class SingleHeadHyperbolicAttention(nn.Module):
         # 2. Calculate attention scores
         beta_positive = F.softplus(self.beta)
         attention_scores = -beta_positive * dist_qk - self.attention_bias
+
+        # Apply causal mask
+        if mask is not None:
+            attention_scores = attention_scores.masked_fill(mask == 0, -torch.finfo(attention_scores.dtype).max)
+
         attention_weights = F.softmax(attention_scores, dim=-1)
 
-        # 3. Aggregate values in the tangent space
-        v_tangent = log_map_at_origin(v, c=c)
+        # 3. Aggregate values, which are already in the tangent space
         output_tangent = torch.bmm(attention_weights, v_tangent)
         output_hyperbolic = exp_map_at_origin(output_tangent, c=c)
 
@@ -160,12 +165,14 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 # Dynamically import the kernel to avoid a hard dependency on Triton
                 from src.kernels.hyperbolic_attention_kernel import hyperbolic_attention_triton
                 self.triton_kernel_function = hyperbolic_attention_triton
-            except (ImportError, ModuleNotFoundError) as e:
-                raise ImportError(
+            except (ImportError, ModuleNotFoundError):
+                import warnings
+                warnings.warn(
                     "Triton kernel for hyperbolic attention is enabled but could not be imported. "
-                    "Please ensure Triton is installed and the kernel file exists. "
-                    "This model is not designed to run efficiently without the Triton kernel."
-                ) from e
+                    "Falling back to PyTorch implementation. Please ensure Triton is installed "
+                    "for optimal performance."
+                )
+                self.triton_kernel_function = None
 
         # Linear projections for Q, K, V. These project from Euclidean to the tangent space.
         self.W_q = nn.Linear(d_model, d_model, bias=False)
@@ -191,10 +198,11 @@ class HyperbolicMultiHeadAttention(nn.Module):
         prime_bump_init_(self.W_v.weight)
         prime_bump_init_(self.W_o.weight)
 
-    def forward(self, x, return_diagnostics: bool = True):
+    def forward(self, x, mask=None, return_diagnostics: bool = True):
         """
         Args:
             x (torch.Tensor): Input tensor in Euclidean space. Shape: (batch, seq_len, d_model)
+            mask (torch.Tensor, optional): Attention mask. Shape: (batch, 1, 1, seq_len).
             return_diagnostics (bool): If True, returns a dictionary of monitoring metrics.
 
         Returns:
@@ -221,7 +229,13 @@ class HyperbolicMultiHeadAttention(nn.Module):
             k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
             v_tangent = v_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
 
-            if self.use_triton_kernel and hasattr(self, 'triton_kernel_function'):
+            # Determine if we can use the Triton kernel
+            can_use_triton = self.use_triton_kernel and hasattr(self, 'triton_kernel_function')
+            if can_use_triton and mask is not None:
+                # Fallback to PyTorch implementation if masking is required, as Triton kernel does not support it
+                can_use_triton = False
+
+            if can_use_triton:
                 output_hyperbolic, (q_norms, k_norms, distances) = self.triton_kernel_function(
                     q_tangent,
                     k_tangent,
@@ -250,13 +264,21 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 # PyTorch implementation
                 q_hyp = exp_map_at_origin(q_tangent, c=c)
                 k_hyp = exp_map_at_origin(k_tangent, c=c)
-                v_hyp = exp_map_at_origin(v_tangent, c=c)
+                # v_tangent remains in the tangent space, no exp_map needed
 
                 q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
                 k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
-                v_hyp_flat = v_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+                v_tangent_flat = v_tangent.reshape(batch_size * self.num_heads, seq_len, self.d_head)
 
-                output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_hyp_flat, c=c)
+                # Reshape mask for multi-head attention
+                if mask is not None:
+                    # Original mask shape: (B, 1, N, N)
+                    # Expand for heads and reshape for flattened batch
+                    mask_flat = mask.expand(batch_size, self.num_heads, seq_len, seq_len).reshape(batch_size * self.num_heads, seq_len, seq_len)
+                else:
+                    mask_flat = None
+
+                output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_tangent_flat, c=c, mask=mask_flat)
 
                 output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
                 output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)

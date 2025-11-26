@@ -16,74 +16,56 @@ from src.kernels.fused_moe_kernel import fused_moe_forward
 from src.models.phase7.hybrid_attention import HybridHyperbolicAttention
 
 
+from .config import ResNetBKConfig
+
 class MoEResNetBKLayer(nn.Module):
-    def __init__(
-        self,
-        d_model,
-        n_seq,
-        num_experts=4,
-        top_k=1,
-        dropout_p=0.1,
-        use_scattering_router: bool = False,
-        scattering_scale: float = 0.1,
-        scattering_scale_warmup_steps: int = 0,
-        use_birman_schwinger: bool = False,
-        epsilon: float = 1.0,
-        use_mourre: bool = True,
-        use_lap: bool = True,
-        schatten_threshold: float = 100.0,
-        precision_upgrade_threshold: float = 1e6,
-        use_bitnet: bool = False,
-        enable_gradient_checkpointing: bool = False,
-        use_hybrid_attention: bool = False,
-        hyperbolic_window_size: int = 64,
-        num_heads: int = 4,
-        use_fused_moe_kernel: bool = False,
-        use_triton_kernel: bool = True,
-    ):
+    def __init__(self, config: ResNetBKConfig):
         super().__init__()
-        self.d_model = d_model
-        self.n_seq = n_seq
-        self.use_hybrid_attention = use_hybrid_attention
-        self.use_fused_moe_kernel = use_fused_moe_kernel
+        self.d_model = config.d_model
+        self.n_seq = config.n_seq
+        self.use_hybrid_attention = config.use_hybrid_attention
+        self.use_fused_moe_kernel = config.use_fused_moe_kernel
 
         if self.use_hybrid_attention:
-            self.hybrid_attn = HybridHyperbolicAttention(
-                d_model=d_model,
-                num_heads=num_heads,
-                local_window_size=hyperbolic_window_size,
-                use_triton_kernel=use_triton_kernel,
-            )
+            self.hybrid_attn = HybridHyperbolicAttention(config)
             self.moe_ffn = None
         else:
             self.hybrid_attn = None
-            self.moe_ffn = SparseMoELayer(d_model, num_experts, top_k, dropout_p, use_scattering_router=use_scattering_router, scattering_scale=scattering_scale, scattering_scale_warmup_steps=scattering_scale_warmup_steps)
+            self.moe_ffn = SparseMoELayer(
+                config.d_model,
+                config.num_experts,
+                config.top_k,
+                config.dropout_p,
+                use_scattering_router=config.use_scattering_router,
+                scattering_scale=config.scattering_scale,
+                scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
+            )
 
-        self.v_proj = nn.Linear(d_model, 1)
-        self.output_proj = nn.Linear(2, d_model)
-        self.bk_scale = nn.Parameter(torch.ones(d_model, dtype=torch.float32))
+        self.v_proj = nn.Linear(config.d_model, 1)
+        self.output_proj = nn.Linear(2, config.d_model)
+        self.bk_scale = nn.Parameter(torch.ones(config.d_model, dtype=torch.float32))
         self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
         self.homeostasis = HomeostasisController()
 
-        self.use_birman_schwinger = use_birman_schwinger
-        if use_birman_schwinger:
+        self.use_birman_schwinger = config.use_birman_schwinger
+        if config.use_birman_schwinger:
             self.birman_schwinger_core = BirmanSchwingerCore(
-                n_seq=n_seq,
-                epsilon=epsilon,
-                use_mourre=use_mourre,
-                use_lap=use_lap,
-                schatten_threshold=schatten_threshold,
-                precision_upgrade_threshold=precision_upgrade_threshold,
-                enable_gradient_checkpointing=enable_gradient_checkpointing,
-                use_bitnet=use_bitnet,
+                n_seq=config.n_seq,
+                epsilon=config.epsilon,
+                use_mourre=config.use_mourre,
+                use_lap=config.use_lap,
+                schatten_threshold=config.schatten_threshold,
+                precision_upgrade_threshold=config.precision_upgrade_threshold,
+                enable_gradient_checkpointing=config.use_gradient_checkpointing,
+                use_bitnet=config.use_bitnet,
             )
             self.last_bs_diagnostics = {}
             self.bk_core = None
         else:
             self.birman_schwinger_core = None
-            self.register_buffer("h0_diag_base", torch.full((1, n_seq), -2.0, dtype=torch.float32))
-            self.register_buffer("h0_sub_base",  torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
-            self.register_buffer("h0_super_base",torch.full((1, n_seq - 1), 1.0, dtype=torch.float32))
+            self.register_buffer("h0_diag_base", torch.full((1, config.n_seq), -2.0, dtype=torch.float32))
+            self.register_buffer("h0_sub_base",  torch.full((1, config.n_seq - 1), 1.0, dtype=torch.float32))
+            self.register_buffer("h0_super_base",torch.full((1, config.n_seq - 1), 1.0, dtype=torch.float32))
             self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
             self.bk_core = BKCoreFunction.apply
 
@@ -136,55 +118,10 @@ class ResNetBKBlock(nn.Module):
     """
     ResNet-BK Block with LayerNorm and residual connection.
     """
-    def __init__(
-        self,
-        d_model,
-        n_seq,
-        num_experts=4,
-        top_k=1,
-        dropout_p=0.1,
-        use_scattering_router: bool = False,
-        scattering_scale: float = 0.1,
-        scattering_scale_warmup_steps: int = 0,
-        use_birman_schwinger: bool = False,
-        epsilon: float = 1.0,
-        use_mourre: bool = True,
-        use_lap: bool = True,
-        schatten_threshold: float = 100.0,
-        precision_upgrade_threshold: float = 1e6,
-        use_bitnet: bool = False,
-        enable_gradient_checkpointing: bool = False,
-        use_hybrid_attention: bool = False,
-        hyperbolic_window_size: int = 64,
-        num_heads: int = 4,
-        use_fused_moe_kernel: bool = False,
-        use_triton_kernel: bool = True,
-    ):
+    def __init__(self, config: ResNetBKConfig):
         super().__init__()
-        self.layer_norm = nn.LayerNorm(d_model)
-        self.bk_layer = MoEResNetBKLayer(
-            d_model,
-            n_seq,
-            num_experts,
-            top_k,
-            dropout_p,
-            use_scattering_router=use_scattering_router,
-            scattering_scale=scattering_scale,
-            scattering_scale_warmup_steps=scattering_scale_warmup_steps,
-            use_birman_schwinger=use_birman_schwinger,
-            epsilon=epsilon,
-            use_mourre=use_mourre,
-            use_lap=use_lap,
-            schatten_threshold=schatten_threshold,
-            precision_upgrade_threshold=precision_upgrade_threshold,
-            use_bitnet=use_bitnet,
-            enable_gradient_checkpointing=enable_gradient_checkpointing,
-            use_hybrid_attention=use_hybrid_attention,
-            hyperbolic_window_size=hyperbolic_window_size,
-            num_heads=num_heads,
-            use_fused_moe_kernel=use_fused_moe_kernel,
-            use_triton_kernel=use_triton_kernel,
-        )
+        self.layer_norm = nn.LayerNorm(config.d_model)
+        self.bk_layer = MoEResNetBKLayer(config)
 
     def forward(self, x):
         """Pre-Norm residual structure."""
@@ -319,33 +256,21 @@ class LanguageModel(nn.Module):
         if config.use_symplectic and config.d_model % 2 != 0:
             raise ValueError("d_model must be even when use_symplectic=True")
 
-        self.blocks = nn.ModuleList([
-            block_class(
-                d_model=config.d_model,
-                n_seq=config.n_seq,
-                num_experts=config.num_experts,
-                top_k=config.top_k,
-                dropout_p=config.dropout_p,
-                use_scattering_router=config.use_scattering_router,
-                scattering_scale=config.scattering_scale,
-                scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
-                use_birman_schwinger=config.use_birman_schwinger,
-                epsilon=config.epsilon,
-                use_mourre=config.use_mourre,
-                use_lap=config.use_lap,
-                schatten_threshold=config.schatten_threshold,
-                precision_upgrade_threshold=config.precision_upgrade_threshold,
-                use_bitnet=config.use_bitnet,
-                enable_gradient_checkpointing=config.use_gradient_checkpointing,
-                use_hybrid_attention=config.use_hybrid_attention,
-                hyperbolic_window_size=config.hyperbolic_window_size,
-                num_heads=config.num_heads,
-                use_fused_moe_kernel=config.use_fused_moe_kernel,
-                use_triton_kernel=config.use_triton_kernel,
-                **({'dt': config.symplectic_dt, 'integration_mode': config.symplectic_mode} if config.use_symplectic else {})
-            )
-            for _ in range(config.n_layers)
-        ])
+        # Create a dictionary of arguments for the block class, excluding those not in its __init__
+        block_args = config.__dict__.copy()
+        if config.use_symplectic:
+            # SymplecticBKBlock does not take all ResNetBKConfig args
+            valid_args = SymplecticBKBlock.__init__.__code__.co_varnames
+            block_args = {k: v for k, v in block_args.items() if k in valid_args}
+            block_args['dt'] = config.symplectic_dt
+            block_args['integration_mode'] = config.symplectic_mode
+            self.blocks = nn.ModuleList([
+                SymplecticBKBlock(**block_args) for _ in range(config.n_layers)
+            ])
+        else:
+            self.blocks = nn.ModuleList([
+                ResNetBKBlock(config=config) for _ in range(config.n_layers)
+            ])
 
         self.layer_norm_final = nn.LayerNorm(config.d_model)
         self.lm_head = nn.Linear(config.d_model, config.vocab_size)

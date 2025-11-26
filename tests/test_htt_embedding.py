@@ -21,6 +21,7 @@ import torch.nn as nn
 
 from src.models.phase1.htt_embedding import (
     HolographicTTEmbedding,
+    HTTDecoder,
     create_htt_embedding,
     replace_embedding_with_htt,
     verify_compression_ratio,
@@ -393,3 +394,55 @@ class TestHTTIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
+
+
+class TestHTTDecoder:
+    """Test suite for HTTDecoder"""
+
+    @pytest.fixture
+    def setup(self):
+        vocab_size = 500
+        d_model = 64
+        rank = 8
+        embedding = HolographicTTEmbedding(
+            vocab_size=vocab_size, d_model=d_model, rank=rank
+        )
+        decoder = HTTDecoder(embedding)
+        return embedding, decoder, vocab_size, d_model
+
+    def test_decoder_output_shape(self, setup):
+        embedding, decoder, vocab_size, d_model = setup
+        batch_size, seq_len = 4, 16
+        hidden_states = torch.randn(batch_size, seq_len, d_model)
+        logits = decoder(hidden_states)
+        assert logits.shape == (batch_size, seq_len, vocab_size)
+
+    def test_weight_tying(self, setup):
+        embedding, decoder, vocab_size, d_model = setup
+        batch_size, seq_len = 2, 8
+        hidden_states = torch.randn(batch_size, seq_len, d_model)
+
+        logits1 = decoder(hidden_states)
+
+        with torch.no_grad():
+            embedding.core1.data += 0.1
+
+        logits2 = decoder(hidden_states)
+
+        assert not torch.allclose(logits1, logits2)
+        assert logits1.shape == logits2.shape
+
+    def test_d_model_edge_case(self, setup):
+        _, _, vocab_size, _ = setup
+        d_model_odd = 60
+        rank = 8
+        embedding = HolographicTTEmbedding(
+            vocab_size=vocab_size, d_model=d_model_odd, rank=rank
+        )
+        decoder = HTTDecoder(embedding)
+
+        batch_size, seq_len = 4, 16
+        hidden_states = torch.randn(batch_size, seq_len, d_model_odd)
+        logits = decoder(hidden_states)
+
+        assert logits.shape == (batch_size, seq_len, vocab_size)

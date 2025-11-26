@@ -194,6 +194,12 @@ def main():
     console.print(t("2. Phase 7 (Hybrid Hyperbolic Attention)", "2. Phase 7 (ハイブリッド双曲アテンション)"))
     arch_choice = IntPrompt.ask("Choice", choices=["1", "2"], default="2")
     model_type = "phase3" if arch_choice == "1" else "phase7"
+    predict_kwargs = {}
+    if model_type == 'phase7':
+        predict_kwargs['use_hybrid_attention'] = True
+    else:
+        # Default for Phase 3/4 MoE
+        predict_kwargs['num_experts'] = 4
 
 
     # 2. Calibration
@@ -275,7 +281,7 @@ def main():
     # Initial Auto-Tune
     if cal and cal.memory_coeffs['base'] > 0:
         with console.status(t("Auto-tuning...", "自動最適化中...")):
-            config, _ = tuner.tune(config, locked_params, target_vram_ratio, model_type=model_type)
+            config, _ = tuner.tune(config, locked_params, target_vram_ratio, **predict_kwargs)
 
     # 5. Cascading Manual Loop
     while True:
@@ -285,7 +291,7 @@ def main():
         if cal and cal.memory_coeffs['base'] > 0:
             with contextlib.redirect_stderr(io.StringIO()):
                 est_mem, est_time = cal.predict(
-                    config['batch_size'], config['n_seq'], config['d_model'], config['n_layers'], model_type=model_type
+                    config['batch_size'], config['n_seq'], config['d_model'], config['n_layers'], **predict_kwargs
                 )
 
         usage_pct = (est_mem / (cal.vram_total if cal.vram_total > 0 else 8192)) * 100
@@ -330,7 +336,7 @@ def main():
                 else:
                      console.print(t("Optimizing usage...", "使用率を最適化します..."))
 
-                config, _ = tuner.tune(config, locked_params, target_vram_ratio)
+                config, _ = tuner.tune(config, locked_params, target_vram_ratio, **predict_kwargs)
                 continue # Re-show table
             else:
                 break # Go to save
@@ -358,7 +364,7 @@ def main():
 
                     # Trigger Auto-Tune for others
                     with console.status(t("Re-calculating...", "再計算中...")):
-                        config, _ = tuner.tune(config, locked_params, target_vram_ratio)
+                        config, _ = tuner.tune(config, locked_params, target_vram_ratio, **predict_kwargs)
                 else:
                     console.print(f"[red]Unknown parameter: {k}[/red]")
             except ValueError:
