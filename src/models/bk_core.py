@@ -223,7 +223,7 @@ class BKCoreFunction(torch.autograd.Function):
             [G_ii.real, G_ii.imag], dim=-1
         ).to(torch.float32)  # (B, N, 2)
 
-        return output_features
+        return output_features, G_ii
 
     @staticmethod
     def backward(ctx, grad_output_features):
