@@ -165,12 +165,14 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 # Dynamically import the kernel to avoid a hard dependency on Triton
                 from src.kernels.hyperbolic_attention_kernel import hyperbolic_attention_triton
                 self.triton_kernel_function = hyperbolic_attention_triton
-            except (ImportError, ModuleNotFoundError) as e:
-                raise ImportError(
+            except (ImportError, ModuleNotFoundError):
+                import warnings
+                warnings.warn(
                     "Triton kernel for hyperbolic attention is enabled but could not be imported. "
-                    "Please ensure Triton is installed and the kernel file exists. "
-                    "This model is not designed to run efficiently without the Triton kernel."
-                ) from e
+                    "Falling back to PyTorch implementation. Please ensure Triton is installed "
+                    "for optimal performance."
+                )
+                self.triton_kernel_function = None
 
         # Linear projections for Q, K, V. These project from Euclidean to the tangent space.
         self.W_q = nn.Linear(d_model, d_model, bias=False)

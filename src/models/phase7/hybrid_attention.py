@@ -8,6 +8,7 @@ import math
 
 from .hyperbolic_attention import HyperbolicMultiHeadAttention
 from ..phase1.ar_ssm_layer import AdaptiveRankSemiseparableLayer
+from ..config import ResNetBKConfig
 
 class HybridHyperbolicAttention(nn.Module):
     """
@@ -19,25 +20,31 @@ class HybridHyperbolicAttention(nn.Module):
     - Global Context: Processed by AdaptiveRankSemiseparableLayer (SSM).
                       Efficiently propagates information across the entire sequence.
     """
-    def __init__(self, d_model: int, num_heads: int, local_window_size: int = 64, use_triton_kernel: bool = True):
+    def __init__(self, config: ResNetBKConfig):
         super().__init__()
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.local_window_size = local_window_size
+        self.d_model = config.d_model
+        self.num_heads = config.num_heads
+        self.local_window_size = config.hyperbolic_window_size
 
         # 1. Local hyperbolic attention module
-        self.local_attn = HyperbolicMultiHeadAttention(d_model, num_heads, use_triton_kernel=use_triton_kernel)
+        self.local_attn = HyperbolicMultiHeadAttention(
+            d_model=config.d_model,
+            num_heads=config.num_heads,
+            use_triton_kernel=config.use_triton_kernel
+        )
 
-        # 2. Global SSM module
-        # We can initialize it with default parameters for now.
-        # A more robust implementation might pass a config object.
-        self.global_attn = AdaptiveRankSemiseparableLayer(d_model)
+        # 2. Global SSM module, configured from the main config object
+        self.global_attn = AdaptiveRankSemiseparableLayer(
+            d_model=config.d_model,
+            max_rank=config.ar_ssm_max_rank,
+            min_rank=config.ar_ssm_min_rank
+        )
 
         # 3. Dynamic gating based on scattering phase
         self.gate_sensitivity = nn.Parameter(torch.tensor(1.0))
 
         # 4. Final layer normalization for stability
-        self.layer_norm = nn.LayerNorm(d_model)
+        self.layer_norm = nn.LayerNorm(self.d_model)
 
     def forward(self, x, g_ii: torch.Tensor, return_diagnostics: bool = True):
         """

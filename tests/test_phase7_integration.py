@@ -80,3 +80,37 @@ def test_parameter_reduction(model):
     reduction_ratio = htt_params / standard_params
     print(f"Parameter reduction ratio: {reduction_ratio:.4f}")
     assert reduction_ratio < 0.2 # Expecting >80% reduction for these params
+
+
+def test_triton_fallback_with_mask():
+    """
+    Verify that the model falls back to the PyTorch implementation when a mask is
+    used with the Triton kernel enabled, instead of crashing.
+    """
+    # This test can only run if Triton is installed, but the fallback logic
+    # should work correctly (i.e., not crash) even if the kernel isn't found.
+    config = Phase7Config(
+        vocab_size=VOCAB_SIZE,
+        d_model=D_MODEL,
+        n_layers=N_LAYERS,
+        n_seq=SEQ_LENGTH,
+        htt_rank=HTT_RANK,
+        use_hybrid_attention=True,
+        use_triton_kernel=True  # Explicitly enable the Triton path
+    )
+    model = Phase7IntegratedModel(config)
+    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LENGTH))
+
+    # This forward pass will automatically trigger a causal mask to be created
+    # internally. If the fallback logic is correct, it should execute without raising
+    # a NotImplementedError, even though the Triton kernel itself doesn't
+    # support masking.
+    try:
+        output = model(input_ids)
+        assert output.shape == (BATCH_SIZE, SEQ_LENGTH, VOCAB_SIZE)
+        print("Triton fallback test passed: Model ran without error.")
+    except NotImplementedError:
+        pytest.fail(
+            "Model raised NotImplementedError instead of falling back to PyTorch "
+            "implementation when a mask was used with the Triton kernel enabled."
+        )
