@@ -383,6 +383,49 @@ class HolographicTTEmbedding(nn.Module):
         )
 
 
+class HTTDecoder(nn.Module):
+    """
+    Decodes hidden states to vocabulary logits using shared HTT weights.
+    This module performs the inverse operation of the HTT embedding.
+    """
+    def __init__(self, embedding: HolographicTTEmbedding):
+        super().__init__()
+        self.embedding = embedding
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            hidden_states (torch.Tensor): The final hidden states from the model.
+                                          Shape: (batch_size, seq_len, d_model)
+        Returns:
+            torch.Tensor: The output logits. Shape: (batch_size, seq_len, vocab_size)
+        """
+        B, L, D = hidden_states.shape
+        emb = self.embedding
+
+        # 1. Prepare hidden states and cores for contraction
+        h_padded = F.pad(hidden_states, (0, emb.d1 * emb.d2 - D))
+        h_reshaped = h_padded.view(B, L, emb.d1, emb.d2)
+
+        c1 = emb.core1.squeeze(1)  # Shape: (v1, rank, d1)
+        c2 = emb.core2.squeeze(2)  # Shape: (v2, rank, d2)
+
+        # 2. Apply inverse phase modulation
+        if emb.phase_encoding:
+            phase_mod = torch.cos(emb.phase_shift) # Shape: (rank,)
+            c1 = c1 * phase_mod.view(1, -1, 1)
+
+        # 3. Perform tensor contraction
+        # einsum('bldf,ird,urf->bliu', h, c1, c2)
+        # h: (B, L, d1, d2), c1: (v1, rank, d1), c2: (v2, rank, d2)
+        # -> logits_decomposed: (B, L, v1, v2)
+        logits_decomposed = torch.einsum('bldf,ird,urf->bliu', h_reshaped, c1, c2)
+
+        # 4. Reshape to final logits and crop
+        logits = logits_decomposed.reshape(B, L, -1)
+        return logits[:, :, :emb.vocab_size]
+
+
 def create_htt_embedding(
     vocab_size: int,
     d_model: int,

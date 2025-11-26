@@ -43,7 +43,7 @@ class HybridHyperbolicAttention(nn.Module):
         """
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, d_model)
-            g_ii (torch.Tensor): Green's function diagonal from BK-Core. Shape: (batch, seq_len, d_model)
+            g_ii (torch.Tensor): Green's function diagonal from BK-Core. Shape: (batch, seq_len, 1)
             return_diagnostics (bool): If True, returns a dictionary of monitoring metrics.
 
         Returns:
@@ -55,8 +55,8 @@ class HybridHyperbolicAttention(nn.Module):
         diagnostics = {}
 
         # --- 1. Global Attention Path (SSM) ---
+        # NOTE: SSMs are causal by nature, no explicit mask needed here.
         global_out, ssm_diagnostics = self.global_attn(x)
-
 
         if return_diagnostics:
             diagnostics['ssm_effective_rank'] = ssm_diagnostics.get('effective_rank', torch.tensor(0.0))
@@ -71,8 +71,11 @@ class HybridHyperbolicAttention(nn.Module):
         num_windows = x_padded.shape[1] // self.local_window_size
         x_windowed = x_padded.reshape(batch_size * num_windows, self.local_window_size, self.d_model)
 
+        # Create a causal mask for the window size
+        local_mask = torch.tril(torch.ones(self.local_window_size, self.local_window_size, device=x.device)).view(1, 1, self.local_window_size, self.local_window_size)
+
         # Apply local attention within each window
-        local_out_windowed, local_diagnostics = self.local_attn(x_windowed, return_diagnostics=True)
+        local_out_windowed, local_diagnostics = self.local_attn(x_windowed, mask=local_mask, return_diagnostics=True)
         if return_diagnostics:
             diagnostics.update(local_diagnostics)
 

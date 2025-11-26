@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from src.models.phase1.htt_embedding import HolographicTTEmbedding
+from src.models.phase1.htt_embedding import HolographicTTEmbedding, HTTDecoder
 from src.models.resnet_bk import LanguageModel, ResNetBKConfig
 
 @dataclass
@@ -53,6 +53,9 @@ class Phase7IntegratedModel(nn.Module):
 
         # 3. Replace the standard embedding layer with our HTT embedding
         self.model.token_embedding = self.htt_embedding
+
+        # 4. Replace the standard lm_head with the HTT decoder
+        self.model.lm_head = HTTDecoder(self.htt_embedding)
 
     def forward(self, input_ids: torch.Tensor, return_diagnostics: bool = False) -> torch.Tensor:
         """
