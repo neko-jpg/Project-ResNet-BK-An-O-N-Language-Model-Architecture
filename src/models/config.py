@@ -38,3 +38,7 @@ class ResNetBKConfig:
     num_heads: int = 4
     use_fused_moe_kernel: bool = False
     use_triton_kernel: bool = True # For Hyperbolic Attention
+
+    # AR-SSM specific parameters
+    ar_ssm_max_rank: int = 32
+    ar_ssm_min_rank: int = 4

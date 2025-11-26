@@ -164,7 +164,8 @@ class BirmanSchwingerCore(nn.Module):
             eff_positions = self.positions
 
         # Ensure positions are high precision for the kernel calculation
-        eff_positions = eff_positions.to(dtype=dtype.real_dtype if dtype.is_complex else dtype)
+        real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
+        eff_positions = eff_positions.to(dtype=real_dtype)
 
         # Compute position differences: u - v
         u = eff_positions.unsqueeze(1)  # (N, 1)
@@ -230,7 +231,8 @@ class BirmanSchwingerCore(nn.Module):
         batch_size, seq_len = V.shape
         
         # Ensure V is treated as high precision for spectral calculations
-        V_high = V.to(dtype=dtype.real_dtype if dtype.is_complex else dtype)
+        real_dtype = torch.float64 if dtype == torch.complex128 else torch.float32
+        V_high = V.to(dtype=real_dtype)
 
         # Compute |V|^{1/2}
         V_abs = V_high.abs()

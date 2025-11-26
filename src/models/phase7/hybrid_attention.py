@@ -8,6 +8,7 @@ import math
 
 from .hyperbolic_attention import HyperbolicMultiHeadAttention
 from ..phase1.ar_ssm_layer import AdaptiveRankSemiseparableLayer
+from ..config import ResNetBKConfig
 
 class HybridHyperbolicAttention(nn.Module):
     """
@@ -19,31 +20,37 @@ class HybridHyperbolicAttention(nn.Module):
     - Global Context: Processed by AdaptiveRankSemiseparableLayer (SSM).
                       Efficiently propagates information across the entire sequence.
     """
-    def __init__(self, d_model: int, num_heads: int, local_window_size: int = 64, use_triton_kernel: bool = True):
+    def __init__(self, config: ResNetBKConfig):
         super().__init__()
-        self.d_model = d_model
-        self.num_heads = num_heads
-        self.local_window_size = local_window_size
+        self.d_model = config.d_model
+        self.num_heads = config.num_heads
+        self.local_window_size = config.hyperbolic_window_size
 
         # 1. Local hyperbolic attention module
-        self.local_attn = HyperbolicMultiHeadAttention(d_model, num_heads, use_triton_kernel=use_triton_kernel)
+        self.local_attn = HyperbolicMultiHeadAttention(
+            d_model=config.d_model,
+            num_heads=config.num_heads,
+            use_triton_kernel=config.use_triton_kernel
+        )
 
-        # 2. Global SSM module
-        # We can initialize it with default parameters for now.
-        # A more robust implementation might pass a config object.
-        self.global_attn = AdaptiveRankSemiseparableLayer(d_model)
+        # 2. Global SSM module, configured from the main config object
+        self.global_attn = AdaptiveRankSemiseparableLayer(
+            d_model=config.d_model,
+            max_rank=config.ar_ssm_max_rank,
+            min_rank=config.ar_ssm_min_rank
+        )
 
         # 3. Dynamic gating based on scattering phase
         self.gate_sensitivity = nn.Parameter(torch.tensor(1.0))
 
         # 4. Final layer normalization for stability
-        self.layer_norm = nn.LayerNorm(d_model)
+        self.layer_norm = nn.LayerNorm(self.d_model)
 
     def forward(self, x, g_ii: torch.Tensor, return_diagnostics: bool = True):
         """
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, d_model)
-            g_ii (torch.Tensor): Green's function diagonal from BK-Core. Shape: (batch, seq_len, d_model)
+            g_ii (torch.Tensor): Green's function diagonal from BK-Core. Shape: (batch, seq_len, 1)
             return_diagnostics (bool): If True, returns a dictionary of monitoring metrics.
 
         Returns:
@@ -55,8 +62,8 @@ class HybridHyperbolicAttention(nn.Module):
         diagnostics = {}
 
         # --- 1. Global Attention Path (SSM) ---
+        # NOTE: SSMs are causal by nature, no explicit mask needed here.
         global_out, ssm_diagnostics = self.global_attn(x)
-
 
         if return_diagnostics:
             diagnostics['ssm_effective_rank'] = ssm_diagnostics.get('effective_rank', torch.tensor(0.0))
@@ -71,8 +78,11 @@ class HybridHyperbolicAttention(nn.Module):
         num_windows = x_padded.shape[1] // self.local_window_size
         x_windowed = x_padded.reshape(batch_size * num_windows, self.local_window_size, self.d_model)
 
+        # Create a causal mask for the window size
+        local_mask = torch.tril(torch.ones(self.local_window_size, self.local_window_size, device=x.device)).view(1, 1, self.local_window_size, self.local_window_size)
+
         # Apply local attention within each window
-        local_out_windowed, local_diagnostics = self.local_attn(x_windowed, return_diagnostics=True)
+        local_out_windowed, local_diagnostics = self.local_attn(x_windowed, mask=local_mask, return_diagnostics=True)
         if return_diagnostics:
             diagnostics.update(local_diagnostics)
 
