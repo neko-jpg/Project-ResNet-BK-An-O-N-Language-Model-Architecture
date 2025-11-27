@@ -1,4 +1,4 @@
-.PHONY: help setup install data data-lite test demo clean up down doctor import recipe train-user phase4
+.PHONY: help setup install data data-lite data-ja data-ja-lite test demo clean up down doctor import recipe train-user phase4
 
 # Default shell
 SHELL := /bin/bash
@@ -96,6 +96,12 @@ install:
 
 data-lite:
 	$(PYTHON) scripts/prepare_datasets.py --datasets cosmopedia --max_samples 1000
+
+data-ja-lite:
+	$(PYTHON) scripts/prepare_datasets.py --datasets mc4_ja --max_samples 1000
+
+data-ja:
+	$(PYTHON) scripts/prepare_datasets.py --datasets mc4_ja
 
 data:
 	$(PYTHON) scripts/prepare_datasets.py

@@ -105,6 +105,14 @@ class DatasetPreparator:
         
         # Configuration
         self.dataset_configs = {
+            # --- Phase 7: Japanese Foundation ---
+            'mc4_ja': {
+                'hf_name': 'izumi-lab/mc4-ja-filter-ja-normal',
+                'splits': ['train'],
+                'streaming': True,
+                'text_col': 'text'
+            },
+
             # --- Teppei's "High-Density" Curriculum (OSS Safe) ---
             
             # 1. The "Brain" (Textbook Quality Logic)

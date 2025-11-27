@@ -45,10 +45,12 @@ if [ "$LANG_CHOICE" -eq 2 ]; then
     MSG_DEPS_FAIL="Error: 依存関係のインストールに失敗しました。"
     MSG_INSTALL_PROJ="プロジェクトをEditableモードでインストール中..."
     MSG_STEP4="[Step 4] データセットの準備"
-    MSG_DATA_ASK="1) Lite (テスト用: Cosmopedia 1000件) - 推奨 (数秒)\n2) Full (本番用: 全データ) - (時間がかかります)\n3) Skip (後で行う)\n選択してください (1/2/3) [1]: "
-    MSG_DATA_LITE="Liteモードでダウンロード中..."
-    MSG_DATA_FULL="Fullモードでダウンロード中..."
-    MSG_DATA_SKIP="スキップしました。後で 'make data' または 'make data-lite' で実行できます。"
+    MSG_DATA_ASK="1) Lite (EN) - 英語テスト用 (推奨)\n2) Lite (JA) - 日本語テスト用\n3) Full (EN) - 英語 全データ\n4) Full (JA) - 日本語 全データ\n5) Skip - 後で実行\n選択してください [1]: "
+    MSG_DATA_LITE_JA="日本語Liteモードでダウンロード中..."
+    MSG_DATA_LITE="英語Liteモードでダウンロード中..."
+    MSG_DATA_FULL_JA="日本語Fullモードでダウンロード中..."
+    MSG_DATA_FULL="英語Fullモードでダウンロード中..."
+    MSG_DATA_SKIP="スキップしました。後で 'make data-ja' 等で実行できます。"
     MSG_COMPLETE="セットアップ完了！ (MUSE Setup Complete)"
     MSG_NEXT_DEMO="以下のコマンドでデモを起動してみましょう："
     MSG_NEXT_DEV="開発を始めるには："
@@ -76,10 +78,12 @@ else
     MSG_DEPS_FAIL="Error: Failed to install dependencies."
     MSG_INSTALL_PROJ="Installing project in Editable mode..."
     MSG_STEP4="[Step 4] Dataset Preparation"
-    MSG_DATA_ASK="1) Lite (Test: Cosmopedia 1k samples) - Recommended\n2) Full (Production: All data)\n3) Skip\nChoice (1/2/3) [1]: "
-    MSG_DATA_LITE="Downloading Lite dataset..."
-    MSG_DATA_FULL="Downloading Full dataset..."
-    MSG_DATA_SKIP="Skipped. You can run 'make data' or 'make data-lite' later."
+    MSG_DATA_ASK="1) Lite (EN) - For English testing (Recommended)\n2) Lite (JA) - For Japanese testing\n3) Full (EN) - All English data\n4) Full (JA) - All Japanese data\n5) Skip\nChoice [1]: "
+    MSG_DATA_LITE_JA="Downloading Lite (JA) dataset..."
+    MSG_DATA_LITE="Downloading Lite (EN) dataset..."
+    MSG_DATA_FULL_JA="Downloading Full (JA) dataset..."
+    MSG_DATA_FULL="Downloading Full (EN) dataset..."
+    MSG_DATA_SKIP="Skipped. You can run 'make data-ja' etc. later."
     MSG_COMPLETE="Setup Complete!"
     MSG_NEXT_DEMO="Run the demo with:"
     MSG_NEXT_DEV="To start developing:"
@@ -188,17 +192,25 @@ pip install -e .
 echo -e "\n${YELLOW}$MSG_STEP4${NC}"
 echo -e "$MSG_DATA_ASK"
 
-read -p "" DATA_CHOICE
+read -p " " DATA_CHOICE
 DATA_CHOICE=${DATA_CHOICE:-1}
 
 case $DATA_CHOICE in
     1)
         echo -e "${BLUE}$MSG_DATA_LITE${NC}"
-        python scripts/prepare_datasets.py --datasets cosmopedia --max_samples 1000
+        make data-lite
         ;;
     2)
+        echo -e "${BLUE}$MSG_DATA_LITE_JA${NC}"
+        make data-ja-lite
+        ;;
+    3)
         echo -e "${BLUE}$MSG_DATA_FULL${NC}"
-        python scripts/prepare_datasets.py
+        make data
+        ;;
+    4)
+        echo -e "${BLUE}$MSG_DATA_FULL_JA${NC}"
+        make data-ja
         ;;
     *)
         echo -e "$MSG_DATA_SKIP"

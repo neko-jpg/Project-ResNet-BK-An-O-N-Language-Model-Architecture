@@ -263,34 +263,49 @@ class MuseCalibrator:
 
         return True
 
-    def predict(self, batch, seq_len, d_model, layers, **kwargs):
+    def predict(self, batch, seq_len, d_model, layers, num_experts=4, **kwargs):
         """
-        Predict VRAM usage.
+        Predict VRAM usage for different model configurations.
 
         Kwargs:
-            use_symplectic (bool): If True, doubles dynamic memory estimation (2.0x).
+            use_symplectic (bool): Multiplier for Phase 4 symplectic state.
+            use_hybrid_attention (bool): Switches to Phase 7 parameter calculation.
         """
         complexity = batch * seq_len * d_model * layers
 
-        # Model Weights (Static Memory) - explicit calculation
-        param_count = 12 * layers * (d_model**2) + (50000 * d_model)
-        # Optimizer (AdamW) keeps two fp32 states per parameter (8 bytes) + weights.
-        weight_bytes = 4  # keep conservative even with BitNet to avoid underestimation
-        static_mem_mb = (param_count * (weight_bytes + 8)) / (1024**2)
+        # --- Static Memory (Model Weights & Optimizer States) ---
+        param_count = 0
+        vocab_size = kwargs.get('vocab_size', 50257) # Default to GPT2 vocab size
 
-        # Dynamic Memory (Activations)
+        if kwargs.get('use_hybrid_attention', False):
+            # Phase 7: Hybrid Hyperbolic Attention (MoE is replaced)
+            # Rough approximation: 2 for main proj + 4 for hyperbolic (Q,K,V,O) + 2 for SSM
+            params_per_layer = (2 + 4 + 2) * (d_model**2)
+            param_count = layers * params_per_layer + (vocab_size * d_model)
+        else:
+            # Phase 3/4: Standard ResNet-BK with MoE
+            # Base layer (in/out proj) + MoE experts + router
+            params_per_layer = 4 * (d_model**2) + num_experts * 8 * (d_model**2)
+            param_count = layers * params_per_layer + (vocab_size * d_model)
+
+        # Optimizer (AdamW) keeps two fp32 states (8 bytes) per parameter.
+        # Add 4 bytes for the fp32 master weights (even with BitNet).
+        bytes_per_param = 8 + 4
+        static_mem_mb = (param_count * bytes_per_param) / (1024**2)
+
+        # --- Dynamic Memory (Activations) ---
         dynamic_mem_mb = self.memory_coeffs['per_complex'] * complexity
 
-        # --- Phase 4 Multipliers ---
+        # --- Architecture-Specific Multipliers ---
         if kwargs.get('use_symplectic', False):
-            # Symplectic integrator splits state into (q, p), effectively increasing activation memory
+            # Symplectic integrator splits state into (q, p), increasing activation memory.
             dynamic_mem_mb *= 2.5
 
-        # Gradient checkpointing reduces saved activations
         if kwargs.get('use_gradient_checkpointing', False):
+            # Gradient checkpointing reduces the number of saved activations.
             dynamic_mem_mb *= 0.65
 
-        # Total
+        # --- Total Memory ---
         mem_mb = self.memory_coeffs['base'] + static_mem_mb + dynamic_mem_mb
 
         # Add safety margin
@@ -321,14 +336,21 @@ if __name__ == "__main__":
     cal = MuseCalibrator()
     if cal.device.type == 'cuda':
         cal.calibrate()
-        # Test Prediction
-        m, t = cal.predict(4, 1024, 512, 6)
-        console.print(f"Prediction for B=4, N=1024, D=512, L=6:")
+        # --- Test Predictions ---
+        console.print("\n[bold u]Test Predictions:[/bold u]")
+        # Base Case (MoE)
+        m, t = cal.predict(4, 1024, 512, 6, num_experts=4)
+        console.print(f"Prediction (MoE) for B=4, N=1024, D=512, L=6:")
         console.print(f"  Memory: {m:.1f} MB (Limit: {cal.vram_total:.1f} MB)")
 
-        # Test Symplectic Prediction
-        m_sym, t_sym = cal.predict(4, 1024, 512, 6, use_symplectic=True)
-        console.print(f"Prediction (Symplectic) for B=4, N=1024, D=512, L=6:")
+        # Phase 4 Case (Symplectic)
+        m_sym, t_sym = cal.predict(4, 1024, 512, 6, num_experts=4, use_symplectic=True)
+        console.print(f"Prediction (MoE + Symplectic) for B=4, N=1024, D=512, L=6:")
         console.print(f"  Memory: {m_sym:.1f} MB (Factor: {m_sym/m:.2f}x)")
+
+        # Phase 7 Case (Hyperbolic)
+        m_hyp, t_hyp = cal.predict(4, 1024, 512, 6, use_hybrid_attention=True)
+        console.print(f"Prediction (Phase 7 Hyperbolic) for B=4, N=1024, D=512, L=6:")
+        console.print(f"  Memory: {m_hyp:.1f} MB (vs MoE: {m_hyp/m:.2f}x)")
     else:
         console.print("Skipping calibration (CPU mode)")
