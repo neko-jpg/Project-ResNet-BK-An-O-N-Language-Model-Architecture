@@ -19,8 +19,22 @@ class Phase7Config(ResNetBKConfig):
     """
     Configuration for the Phase 7 Integrated Model.
     Inherits from ResNetBKConfig and adds Phase 7 specific parameters.
+    
+    Phase 7 combines:
+    - HTT Embedding for extreme parameter compression
+    - Hybrid Hyperbolic Attention for hierarchical relationships
+    - AR-SSM for efficient global context
     """
-    htt_rank: int = 16 # Rank for the HolographicTTEmbedding
+    htt_rank: int = 16  # Rank for the HolographicTTEmbedding
+    
+    # Override defaults for Phase 7
+    use_hybrid_attention: bool = True
+    hyperbolic_window_size: int = 64
+    num_heads: int = 8
+    use_triton_kernel: bool = True
+    triton_kernel_version: str = 'fast'
+    use_gradient_checkpointing: bool = True
+    use_mixed_precision: bool = True
 
 class Phase7IntegratedModel(nn.Module):
     """
@@ -60,11 +74,27 @@ class Phase7IntegratedModel(nn.Module):
     def forward(self, input_ids: torch.Tensor, return_diagnostics: bool = False) -> torch.Tensor:
         """
         Forward pass of the model. Delegates to the core LanguageModel.
+        
+        Args:
+            input_ids: Input token IDs. Shape: (batch, seq_len)
+            return_diagnostics: If True, returns diagnostics dict (not yet implemented)
+        
+        Returns:
+            logits: Output logits. Shape: (batch, seq_len, vocab_size)
         """
-        # The base LanguageModel does not have a `return_diagnostics` flag in its forward
-        # but diagnostics can be fetched from layers after the forward pass.
-        # This wrapper can be extended to provide that functionality if needed.
-        return self.model(input_ids)
+        # The base LanguageModel handles the forward pass
+        # Diagnostics can be fetched from layers after the forward pass if needed
+        logits = self.model(input_ids)
+        
+        if return_diagnostics:
+            # Collect diagnostics from hybrid attention layers if available
+            diagnostics = {}
+            for i, block in enumerate(self.model.blocks):
+                if hasattr(block, 'bk_layer') and hasattr(block.bk_layer, 'last_hybrid_diagnostics'):
+                    diagnostics[f'block_{i}'] = block.bk_layer.last_hybrid_diagnostics
+            return logits, diagnostics
+        
+        return logits
 
     def get_total_parameter_count(self):
         """

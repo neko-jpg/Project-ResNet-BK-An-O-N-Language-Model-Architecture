@@ -82,13 +82,15 @@ def test_parameter_reduction(model):
     assert reduction_ratio < 0.2 # Expecting >80% reduction for these params
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for Triton test")
 def test_triton_fallback_with_mask():
     """
     Verify that the model falls back to the PyTorch implementation when a mask is
     used with the Triton kernel enabled, instead of crashing.
+    
+    Note: This test requires CUDA as Triton kernels only work on GPU.
     """
-    # This test can only run if Triton is installed, but the fallback logic
-    # should work correctly (i.e., not crash) even if the kernel isn't found.
+    # This test can only run if Triton is installed and CUDA is available
     config = Phase7Config(
         vocab_size=VOCAB_SIZE,
         d_model=D_MODEL,
@@ -99,7 +101,11 @@ def test_triton_fallback_with_mask():
         use_triton_kernel=True  # Explicitly enable the Triton path
     )
     model = Phase7IntegratedModel(config)
-    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LENGTH))
+    
+    # Move to CUDA for Triton test
+    device = torch.device('cuda')
+    model = model.to(device)
+    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LENGTH), device=device)
 
     # This forward pass will automatically trigger a causal mask to be created
     # internally. If the fallback logic is correct, it should execute without raising
@@ -114,3 +120,61 @@ def test_triton_fallback_with_mask():
             "Model raised NotImplementedError instead of falling back to PyTorch "
             "implementation when a mask was used with the Triton kernel enabled."
         )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for Phase 7 training")
+def test_phase7_cuda_training_ready():
+    """
+    Phase 7のトレーニング準備が整っているかを確認するテスト。
+    CUDA + Tritonが必須。
+    """
+    # Check Triton is available
+    try:
+        import triton
+        triton_available = True
+    except ImportError:
+        triton_available = False
+    
+    assert triton_available, "Triton is required for Phase 7 training"
+    
+    # Check Triton kernel can be loaded
+    try:
+        from src.kernels.hyperbolic_attention_fast import fast_hyperbolic_attention
+        kernel_loaded = True
+    except Exception:
+        kernel_loaded = False
+    
+    assert kernel_loaded, "Hyperbolic attention Triton kernel must be loadable"
+    
+    # Create model on CUDA
+    config = Phase7Config(
+        vocab_size=VOCAB_SIZE,
+        d_model=D_MODEL,
+        n_layers=N_LAYERS,
+        n_seq=SEQ_LENGTH,
+        htt_rank=HTT_RANK,
+        use_hybrid_attention=True,
+        use_triton_kernel=True,
+    )
+    
+    device = torch.device('cuda')
+    model = Phase7IntegratedModel(config).to(device)
+    
+    # Test forward pass with Triton
+    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LENGTH), device=device)
+    output = model(input_ids)
+    
+    assert output.shape == (BATCH_SIZE, SEQ_LENGTH, VOCAB_SIZE)
+    print(f"✓ Phase 7 CUDA training ready: {torch.cuda.get_device_name(0)}")
+
+
+def test_forward_with_diagnostics(model):
+    """
+    Tests that the forward pass with diagnostics returns both output and diagnostics dict.
+    """
+    input_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LENGTH))
+    output, diagnostics = model(input_ids, return_diagnostics=True)
+    
+    assert output.shape == (BATCH_SIZE, SEQ_LENGTH, VOCAB_SIZE)
+    assert isinstance(diagnostics, dict)
+    print(f"Diagnostics keys: {list(diagnostics.keys())}")

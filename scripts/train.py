@@ -190,37 +190,49 @@ def train():
     model_type = getattr(config, 'model_type', 'phase3')
 
     if model_type == 'phase7':
-        from src.models.phase7.hybrid_attention import HybridHyperbolicAttention
-
-        class Phase7Model(nn.Module):
-            def __init__(self, config):
+        # Phase 7: Use the integrated model with HTT embedding and hybrid attention
+        from src.models.phase7.integrated_model import Phase7IntegratedModel, Phase7Config
+        
+        # Build Phase7Config from the loaded config
+        phase7_config = Phase7Config(
+            vocab_size=config.vocab_size,
+            d_model=config.d_model,
+            n_layers=config.n_layers,
+            n_seq=config.n_seq,
+            num_heads=getattr(config, 'num_heads', 8),
+            htt_rank=getattr(config, 'htt_rank', 16),
+            hyperbolic_window_size=getattr(config, 'hyperbolic_window_size', 64),
+            ar_ssm_max_rank=getattr(config, 'ar_ssm_max_rank', 32),
+            ar_ssm_min_rank=getattr(config, 'ar_ssm_min_rank', 4),
+            use_hybrid_attention=True,
+            use_triton_kernel=getattr(config, 'use_triton_kernel', True),
+            triton_kernel_version=getattr(config, 'triton_kernel_version', 'fast'),
+            use_gradient_checkpointing=getattr(config, 'use_gradient_checkpointing', True),
+        )
+        
+        # Wrapper class to provide consistent interface
+        class Phase7ModelWrapper(nn.Module):
+            def __init__(self, phase7_config):
                 super().__init__()
-                self.embedding = nn.Embedding(config.vocab_size, config.d_model)
-                self.core_model = HybridHyperbolicAttention(
-                    d_model=config.d_model,
-                    num_heads=config.num_heads,
-                    local_window_size=config.local_window_size
-                )
-                self.to_logits = nn.Linear(config.d_model, config.vocab_size)
-                self.config = config
-
+                self.model = Phase7IntegratedModel(phase7_config)
+                self.config = phase7_config
+            
             def forward(self, x):
-                x = self.embedding(x)
-                # The hybrid model now returns diagnostics, which we can log
-                # For now, we ignore them in the main forward pass for loss calculation
-                x, diagnostics = self.core_model(x, return_diagnostics=True)
-                return self.to_logits(x)
-
+                return self.model(x)
+            
             def get_config_summary(self):
-                 return {
+                return {
                     "Model Type": "Phase 7 Hybrid Hyperbolic",
                     "d_model": self.config.d_model,
-                    "n_layers": "N/A (Hybrid)",
+                    "n_layers": self.config.n_layers,
                     "num_heads": self.config.num_heads,
-                    "local_window_size": self.config.local_window_size,
+                    "htt_rank": self.config.htt_rank,
+                    "hyperbolic_window_size": self.config.hyperbolic_window_size,
+                    "Parameters": f"{sum(p.numel() for p in self.parameters()) / 1e6:.2f}M",
+                    "HTT Embedding Params": f"{self.model.get_embedding_parameter_count() / 1e6:.4f}M",
                 }
-
-        model = Phase7Model(config).to(device)
+        
+        model = Phase7ModelWrapper(phase7_config).to(device)
 
     else: # Phase 3
         model = ConfigurableResNetBK(config).to(device)

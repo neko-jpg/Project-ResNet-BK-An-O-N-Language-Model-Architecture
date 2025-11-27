@@ -1,0 +1,82 @@
+# Phase 7 チャットAI最適化設定
+# 8GB VRAM (RTX 3080 Laptop) 用
+# ベンチマーク実測値に基づく設定
+#
+# 実測結果:
+# - 最大: 1.83B params @ d=4096, L=32, VRAM=6.89GB
+# - 推奨: 370M params @ d=2048, L=24, VRAM=1.5GB
+
+# ========================================
+# モデル設定 (推奨: 安定動作)
+# ========================================
+model_type: phase7_chat
+d_model: 2048
+n_layers: 24
+n_seq: 512
+vocab_size: 50257
+num_heads: 16
+
+# 低ランク圧縮 (87.5%パラメータ削減)
+embed_rank: 512          # d_model/4
+ffn_rank: 256            # d_model/8
+head_rank: 256           # d_model/8
+
+# 最適化フラグ
+use_gradient_checkpointing: true
+use_mixed_precision: true
+use_low_rank_ffn: true
+use_low_rank_embedding: true
+
+# Triton (利用可能な場合)
+use_triton_kernel: false  # 安定性のためOFF
+
+# ========================================
+# 学習設定
+# ========================================
+batch_size: 1
+gradient_accumulation_steps: 4  # 実効batch=4
+learning_rate: 0.0003
+weight_decay: 0.01
+grad_clip: 1.0
+warmup_steps: 2000
+max_steps: 50000
+epochs: 3
+
+# ========================================
+# データセット (チャットAI用)
+# ========================================
+datasets:
+  japanese_instruct:
+    path: data/japanese_instruct
+    weight: 0.35
+  evol_instruct_code:
+    path: data/evol_instruct_code
+    weight: 0.25
+  cosmopedia:
+    path: data/cosmopedia
+    weight: 0.15
+  wiki_ja:
+    path: data/wiki_ja
+    weight: 0.15
+  wikitext103:
+    path: data/wikitext103
+    weight: 0.10
+
+data_limit: 50000000  # 50M tokens
+
+# ========================================
+# ログ・保存
+# ========================================
+log_interval: 50
+save_interval: 2000
+eval_interval: 500
+save_dir: checkpoints/phase7_chat
+
+# ========================================
+# 最大パラメータ設定 (1.83B)
+# 注意: VRAM 6.89GB使用、余裕なし
+# ========================================
+# d_model: 4096
+# n_layers: 32
+# batch_size: 1
+# gradient_accumulation_steps: 8

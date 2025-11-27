@@ -43,3 +43,6 @@ class ResNetBKConfig:
     # AR-SSM specific parameters
     ar_ssm_max_rank: int = 32
     ar_ssm_min_rank: int = 4
+    
+    # Mixed Precision Training
+    use_mixed_precision: bool = False

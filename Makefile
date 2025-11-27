@@ -55,6 +55,12 @@ help:
 		echo "make restore    - 現在の状態をバックアップ"; \
 		echo "make up         - Docker環境の起動"; \
 		echo "make down       - Docker環境の停止"; \
+		echo ""; \
+		echo "Phase 7 (ハイブリッド双曲アテンション):"; \
+		echo "make train-phase7       - Phase 7モデルの学習 (CUDA+Triton必須)"; \
+		echo "make train-phase7-small - テスト用小規模設定で学習"; \
+		echo "make test-phase7        - Phase 7統合テスト実行"; \
+		echo "make triton-attn        - Tritonカーネル動作確認"; \
 	else \
 		echo "MUSE (ResNet-BK) Development Commands"; \
 		echo "======================================"; \
@@ -82,6 +88,12 @@ help:
 		echo "make restore    - Backup current state"; \
 		echo "make up         - Start Docker environment"; \
 		echo "make down       - Stop Docker environment"; \
+		echo ""; \
+		echo "Phase 7 (Hybrid Hyperbolic Attention):"; \
+		echo "make train-phase7       - Train Phase 7 model (CUDA+Triton required)"; \
+		echo "make train-phase7-small - Train with small config for testing"; \
+		echo "make test-phase7        - Run Phase 7 integration tests"; \
+		echo "make triton-attn        - Verify Triton kernel"; \
 	fi'
 
 setup:
@@ -216,3 +228,120 @@ triton-bench:
 # Phase 7 Hyperbolic Attention - fast kernel only
 triton-fast:
 	$(PYTHON) scripts/check_hyperbolic_triton.py --use-triton --use-mask --kernel fast --seq-len 512 --d-model 256 --heads 8 --json results/triton_attention_check.json
+
+# ============================================================================
+# Phase 7 Training Commands
+# ============================================================================
+
+# Phase 7 Training - Default configuration (RTX 3080 optimized)
+train-phase7:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Error: Recipe not found. Please run 'make recipe' first."; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase7.py --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+# Phase 7 Training - Small configuration for testing
+train-phase7-small:
+	$(PYTHON) scripts/train_phase7.py --d-model 256 --n-layers 4 --n-seq 256 --batch-size 8 --epochs 1 $(TRAIN_OVERRIDES)
+
+# Phase 7 Training - Large configuration (requires 24GB+ VRAM)
+train-phase7-large:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Error: Recipe not found. Please run 'make recipe' first."; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase7.py --d-model 768 --n-layers 12 --n-seq 1024 --batch-size 2 --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+# Phase 7 Training - Resume from checkpoint
+train-phase7-resume:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase7.py --resume-from $(CHECKPOINT) --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+# Phase 7 Validation - Run integration tests
+test-phase7:
+	$(PYTEST) tests/test_phase7_integration.py -v
+
+# Phase 7 Benchmark - Full validation suite
+bench-phase7:
+	$(PYTHON) benchmarks/phase7_validation.py
+
+# ============================================================================
+# Phase 7 Maximum Parameters (1.8B Monster)
+# ============================================================================
+
+# Phase 7 Max - 1.8B parameters training (d=4096, L=32)
+train-phase7-max:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Warning: Recipe not found. Using dry-run mode."; \
+		$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dry-run; \
+	else \
+		$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dataset configs/dataset_mixing.yaml; \
+	fi
+
+# Phase 7 Max - Dry run (test with dummy data)
+train-phase7-max-test:
+	$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dry-run
+
+# Phase 7 Max - Resume training
+train-phase7-max-resume:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dataset configs/dataset_mixing.yaml --resume-from $(CHECKPOINT)
+
+# GPU Benchmark - Find maximum parameters for your GPU
+gpu-benchmark:
+	$(PYTHON) scripts/gpu_benchmark_standalone.py
+
+# ============================================================================
+# Phase 7 Chat AI Training (1.8B Monster - Quick Start)
+# ============================================================================
+
+# 🚀 チャットAI訓練開始 (最大設定: d=4096, L=32, ~1.8B params)
+train-chat:
+	@echo "=========================================="
+	@echo "🚀 Phase 7 Chat AI Training (1.8B Monster)"
+	@echo "=========================================="
+	@echo "Config: d_model=4096, n_layers=32, seq=512"
+	@echo "VRAM: ~6.89GB (batch=1, gradient_accum=16)"
+	@echo ""
+	$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dataset configs/dataset_mixing.yaml
+
+# 🧪 ダミーデータでテスト (データセットなしで動作確認)
+train-chat-test:
+	@echo "=========================================="
+	@echo "🧪 Phase 7 Chat AI - Dry Run Test"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dry-run
+
+# 📊 GPU性能ベンチマーク (最大パラメータ数を測定)
+bench-chat:
+	@echo "=========================================="
+	@echo "📊 GPU Maximum Parameters Benchmark"
+	@echo "=========================================="
+	$(PYTHON) scripts/gpu_benchmark_standalone.py
+
+# 🔄 訓練再開
+train-chat-resume:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
+		echo "Example: make train-chat-resume CHECKPOINT=checkpoints/phase7_max_push/step_2000.pt"; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase7_max.py --config configs/phase7_max_push.yaml --dataset configs/dataset_mixing.yaml --resume-from $(CHECKPOINT)
+
+# ✅ 環境チェック (訓練前に実行推奨)
+verify-phase7:
+	@echo "=========================================="
+	@echo "✅ Phase 7 Environment Verification"
+	@echo "=========================================="
+	$(PYTHON) scripts/verify_phase7_ready.py
+
+# 🔧 Tritonカーネル動作確認
+verify-triton:
+	$(PYTHON) scripts/check_hyperbolic_triton.py --use-triton --kernel fast

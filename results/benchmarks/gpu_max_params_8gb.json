@@ -1,0 +1,90 @@
+{
+  "timestamp": "2025-11-27T20:40:55.919698",
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "total_vram_gb": 7.99951171875,
+    "compute_capability": "8.6"
+  },
+  "tests": [
+    {
+      "desc": "Chat 6層 batch=1 seq=512",
+      "success": true,
+      "params_m": 109.157632,
+      "vram_gb": 0.4558577537536621,
+      "d_model": 2048,
+      "n_layers": 6,
+      "batch": 1,
+      "seq": 512
+    },
+    {
+      "desc": "Chat 6層 batch=2 seq=512",
+      "success": true,
+      "params_m": 109.157632,
+      "vram_gb": 0.4864020347595215,
+      "d_model": 2048,
+      "n_layers": 6,
+      "batch": 2,
+      "seq": 512
+    },
+    {
+      "desc": "Chat 8層 batch=1 seq=512",
+      "success": true,
+      "params_m": 136.465664,
+      "vram_gb": 0.5575881004333496,
+      "d_model": 2048,
+      "n_layers": 8,
+      "batch": 1,
+      "seq": 512
+    },
+    {
+      "desc": "Chat 12層 batch=1 seq=512",
+      "success": true,
+      "params_m": 191.081728,
+      "vram_gb": 0.7610487937927246,
+      "d_model": 2048,
+      "n_layers": 12,
+      "batch": 1,
+      "seq": 512
+    },
+    {
+      "desc": "Long 6層 batch=1 seq=1024",
+      "success": true,
+      "params_m": 110.206208,
+      "vram_gb": 0.48892736434936523,
+      "d_model": 2048,
+      "n_layers": 6,
+      "batch": 1,
+      "seq": 1024
+    },
+    {
+      "desc": "VeryLong 6層 batch=1 seq=2048",
+      "success": true,
+      "params_m": 112.30336,
+      "vram_gb": 0.5594916343688965,
+      "d_model": 2048,
+      "n_layers": 6,
+      "batch": 1,
+      "seq": 2048
+    },
+    {
+      "desc": "HighBatch 6層 batch=4 seq=256",
+      "success": true,
+      "params_m": 108.633344,
+      "vram_gb": 0.4844489097595215,
+      "d_model": 2048,
+      "n_layers": 6,
+      "batch": 4,
+      "seq": 256
+    }
+  ],
+  "recommended": {
+    "desc": "Chat 12層 batch=1 seq=512",
+    "success": true,
+    "params_m": 191.081728,
+    "vram_gb": 0.7610487937927246,
+    "d_model": 2048,
+    "n_layers": 12,
+    "batch": 1,
+    "seq": 512
+  }
+}

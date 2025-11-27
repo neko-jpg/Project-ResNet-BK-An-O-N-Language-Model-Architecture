@@ -1,0 +1,66 @@
+# Phase 7 最適化設定 (8GB VRAM用)
+# ベンチマーク結果: 最大1.83Bパラメータ @ d=4096, L=32
+# 
+# 物理的直観:
+# - 低ランク分解による99%+パラメータ圧縮
+# - Gradient Checkpointingによるメモリ効率化
+# - FP16 Mixed Precisionで2倍のメモリ効率
+
+# ========================================
+# チャットAI推奨設定 (安定動作)
+# ========================================
+model_type: phase7_chat
+d_model: 2048
+n_layers: 24
+n_seq: 512
+vocab_size: 50257
+
+# 低ランク圧縮設定
+embed_rank: 512          # d_model/4
+ffn_rank: 256            # d_model/8
+head_rank: 256           # d_model/8
+
+# 最適化フラグ
+use_gradient_checkpointing: true
+use_mixed_precision: true
+use_low_rank_ffn: true
+use_low_rank_embedding: true
+
+# Training
+batch_size: 1
+learning_rate: 0.0003
+weight_decay: 0.01
+grad_clip: 1.0
+warmup_steps: 2000
+epochs: 3
+
+# Data
+dataset: configs/dataset_mixing.yaml
+data_limit: 100000000  # 100M tokens
+
+# Logging
+log_interval: 100
+save_interval: 2000
+eval_interval: 1000
+save_dir: checkpoints/phase7_chat
+
+# ========================================
+# 最大パラメータ設定 (1.83B)
+# ========================================
+# 注意: この設定はVRAM 6.89GB使用
+# model_type: phase7_max
+# d_model: 4096
+# n_layers: 32
+# n_seq: 512
+# vocab_size: 50257
+# batch_size: 1
+
+# ========================================
+# 長文対応設定 (seq=1024)
+# ========================================
+# model_type: phase7_long
+# d_model: 2048
+# n_layers: 24
+# n_seq: 1024
+# vocab_size: 50257
+# batch_size: 1

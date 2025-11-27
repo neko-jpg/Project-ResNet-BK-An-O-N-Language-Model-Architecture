@@ -48,11 +48,12 @@ class HybridHyperbolicAttention(nn.Module):
         # 4. Final layer normalization for stability
         self.layer_norm = nn.LayerNorm(self.d_model)
 
-    def forward(self, x, g_ii: torch.Tensor, return_diagnostics: bool = True):
+    def forward(self, x, g_ii: torch.Tensor = None, return_diagnostics: bool = True):
         """
         Args:
             x (torch.Tensor): Input tensor. Shape: (batch, seq_len, d_model)
-            g_ii (torch.Tensor): Green's function diagonal from BK-Core. Shape: (batch, seq_len, 1)
+            g_ii (torch.Tensor, optional): Green's function diagonal from BK-Core. 
+                                           Shape: (batch, seq_len, 1). If None, uses learned gating.
             return_diagnostics (bool): If True, returns a dictionary of monitoring metrics.
 
         Returns:
@@ -92,16 +93,26 @@ class HybridHyperbolicAttention(nn.Module):
         local_out = local_out_padded[:, :seq_len, :]
 
         # --- 3. Combination ---
-        # Dynamic gating based on scattering phase energy.
-        # g_ii now has shape (B, N, 1), so we just take the absolute imaginary part.
-        energy = g_ii.imag.abs()
-        g = torch.sigmoid(energy * self.gate_sensitivity)
+        # Dynamic gating based on scattering phase energy or learned gating
+        if g_ii is not None:
+            # Use Green's function diagonal for physics-informed gating
+            # g_ii has shape (B, N, 1), take the absolute imaginary part
+            energy = g_ii.imag.abs()
+            g = torch.sigmoid(energy * self.gate_sensitivity)
+            if return_diagnostics:
+                diagnostics['scattering_energy_mean'] = energy.mean()
+        else:
+            # Fallback: Use learned gating based on input complexity
+            # Compute input complexity as variance across feature dimension
+            input_complexity = x.var(dim=-1, keepdim=True)  # (B, N, 1)
+            g = torch.sigmoid(input_complexity * self.gate_sensitivity)
+            if return_diagnostics:
+                diagnostics['input_complexity_mean'] = input_complexity.mean()
 
         if return_diagnostics:
             diagnostics['hybrid_gate_mean'] = g.mean()
-            diagnostics['scattering_energy_mean'] = energy.mean()
 
-        # Route high-energy tokens to local (hyperbolic) attention
+        # Route high-energy/complex tokens to local (hyperbolic) attention
         combined_out = g * local_out + (1 - g) * global_out
         output = self.layer_norm(combined_out)
 

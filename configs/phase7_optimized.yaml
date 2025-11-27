@@ -1,24 +1,43 @@
 # Phase 7 Optimized Configuration
 # For use with Hybrid Hyperbolic Attention and new memory layout.
+# 
+# 物理的直観:
+# Phase 7は双曲空間アテンションとSSMを組み合わせたハイブリッドモデル
+# - ローカルコンテキスト: 双曲空間での階層的関係を捉える
+# - グローバルコンテキスト: SSMによる効率的な長距離依存性
 
 # Architecture
 model_type: phase7
-d_model: 1024
-n_layers: 12  # Note: In Phase 7, this is conceptual. The Hybrid model has its own structure.
-n_seq: 768
-num_heads: 8 # Important for hyperbolic attention
+d_model: 512          # RTX 3080 (10GB) に最適化
+n_layers: 6           # Phase 7ではHybridモデルの層数
+n_seq: 512            # シーケンス長
+num_heads: 8          # アテンションヘッド数
 use_hybrid_attention: true
-hyperbolic_window_size: 64
+hyperbolic_window_size: 64  # ローカルアテンションのウィンドウサイズ
+local_window_size: 64       # 互換性のためのエイリアス
+
+# HTT Embedding (Holographic Tensor Train)
+htt_rank: 16          # HTT埋め込みのランク（パラメータ圧縮率に影響）
+
+# AR-SSM (Adaptive Rank Semiseparable)
+ar_ssm_max_rank: 32   # SSMの最大ランク
+ar_ssm_min_rank: 4    # SSMの最小ランク
+
+# Triton Kernels
+use_triton_kernel: true
+triton_kernel_version: 'fast'  # 'fast', 'v2', 'v1'
 
 # Training
-batch_size: 2
+batch_size: 4         # RTX 3080向けに最適化
 epochs: 5
-learning_rate: 0.0005 # Reduced LR for finer tuning of hyperbolic models
-grad_clip: 0.5
+learning_rate: 0.0005 # 双曲モデル用に低めのLR
+weight_decay: 0.01
+grad_clip: 1.0
+warmup_steps: 1000
 use_mixed_precision: true
 use_gradient_checkpointing: true
 
-# Curvature Scheduler
+# Curvature Scheduler (双曲空間の曲率を動的に調整)
 curvature_scheduler:
   enabled: true
   type: 'linear'
@@ -28,3 +47,10 @@ curvature_scheduler:
 # Data
 dataset: configs/dataset_mixing.yaml
 data_limit: 100000000  # 100M tokens limit
+vocab_size: 50257      # GPT-2 vocabulary
+
+# Logging
+log_interval: 50
+save_interval: 1000
+eval_interval: 500
+save_dir: checkpoints/phase7

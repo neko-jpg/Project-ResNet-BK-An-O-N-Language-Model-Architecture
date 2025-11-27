@@ -1,0 +1,78 @@
+# ========================================
+# Phase 7: Teppei's 1.8B Monster Config
+# ========================================
+# ベンチマーク実測値に基づく最大パラメータ設定
+# GPU: RTX 3080 (8-10GB VRAM)
+# 実測VRAM: 6.89GB (batch=1, seq=512)
+#
+# 使用方法:
+#   make train-phase7-max          # 訓練開始
+#   make train-phase7-max-test     # ダミーデータでテスト
+#
+# ========================================
+
+# Architecture (ベンチマーク実測値に基づく)
+model_type: phase7_max_push
+d_model: 4096          # ★ 夢の4096次元
+n_layers: 32           # ★ 32層で十分深い
+n_seq: 512             # メモリがキツいので一旦512 (学習中に余裕あれば1024へ)
+vocab_size: 50257      # GPT-2互換
+num_heads: 32          # d_model / 128 = 32
+
+# Low Rank Compression (必須 - これがないと即OOM)
+embed_rank: 512        # パラメータ圧縮の鍵 (d_model/8)
+ffn_rank: 512          # ここをケチりすぎないのが賢さのコツ
+head_rank: 512         # 出力層も圧縮
+
+# HTT Embedding (Phase 7特有)
+htt_rank: 64           # Holographic TT Embedding rank
+
+# Hybrid Attention Settings
+use_hybrid_attention: true
+hyperbolic_window_size: 64
+ar_ssm_max_rank: 32
+ar_ssm_min_rank: 4
+
+# Triton Kernels (高速化)
+use_triton_kernel: true
+triton_kernel_version: fast
+
+# ========================================
+# Training Strategy (VRAM 6.89GB使用)
+# ========================================
+batch_size: 1          # VRAM制約でバッチサイズは1一択
+gradient_accumulation_steps: 16  # 実質バッチサイズ16を稼ぐ
+use_gradient_checkpointing: true # ★ これがないと即死します
+use_mixed_precision: true        # ★ FP16必須
+
+# Optimizer
+learning_rate: 0.0001  # 大きいモデルなので控えめに
+weight_decay: 0.01
+grad_clip: 1.0
+warmup_steps: 2000
+max_steps: 100000
+
+# ========================================
+# ログ・保存
+# ========================================
+log_interval: 50
+save_interval: 2000
+eval_interval: 500
+save_dir: checkpoints/phase7_max_push
+
+# ========================================
+# 安全設定
+# ========================================
+# OOM時の自動リカバリ
+auto_reduce_batch_on_oom: true
+min_batch_size: 1
+
+# 勾配爆発防止
+max_grad_norm: 1.0
+gradient_nan_check: true
+
+# ========================================
+# データセット設定
+# ========================================
+# dataset_mixing.yaml を使用 (make recipe で設定)
+data_limit: 100000000  # 100M tokens

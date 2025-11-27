@@ -189,6 +189,33 @@ pytest --cov=src tests/
 
 ## 📈 Training a Model
 
+### 🚀 Phase 7 Chat AI Training (1.8B Monster) - Recommended
+
+8GB VRAMで1.8Bパラメータのチャットモデルを訓練！
+
+```bash
+# WSL Ubuntu環境で実行
+wsl -d ubuntu
+
+# 仮想環境を有効化
+source venv_ubuntu/bin/activate
+
+# データセットの準備（初回のみ）
+make recipe
+
+# 🚀 チャットAI訓練開始！
+make train-chat
+
+# または、ダミーデータでテスト
+make train-chat-test
+```
+
+設定ファイル: `configs/phase7_max_push.yaml`
+- d_model: 4096
+- n_layers: 32
+- seq_len: 512
+- VRAM使用量: ~6.89GB
+
 ### Phase 1 Training
 
 ```bash

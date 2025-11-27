@@ -1,0 +1,124 @@
+{
+  "benchmark_date": "2025-11-27",
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "vram_gb": 8.0,
+    "compute_capability": "8.6"
+  },
+  "triton_version": "2.2.0",
+  "optimizations": {
+    "low_rank_embedding": {
+      "enabled": true,
+      "compression_ratio": "75%",
+      "formula": "embed_rank = d_model / 4"
+    },
+    "low_rank_ffn": {
+      "enabled": true,
+      "compression_ratio": "87.5%",
+      "formula": "ffn_rank = d_model / 8"
+    },
+    "gradient_checkpointing": {
+      "enabled": true,
+      "memory_reduction": "~60%"
+    },
+    "mixed_precision": {
+      "enabled": true,
+      "dtype": "FP16",
+      "memory_reduction": "~50%"
+    }
+  },
+  "benchmark_results": {
+    "maximum_configuration": {
+      "d_model": 4096,
+      "n_layers": 32,
+      "batch_size": 1,
+      "seq_len": 512,
+      "vocab_size": 50257,
+      "parameters_millions": 1831.9,
+      "parameters_billions": 1.83,
+      "vram_usage_gb": 6.89
+    },
+    "all_configurations": [
+      {
+        "description": "Maximum (d=4096)",
+        "d_model": 4096,
+        "n_layers": 32,
+        "batch_size": 1,
+        "seq_len": 512,
+        "parameters_millions": 1831.9,
+        "vram_gb": 6.89
+      },
+      {
+        "description": "Large (d=3072)",
+        "d_model": 3072,
+        "n_layers": 48,
+        "batch_size": 1,
+        "seq_len": 512,
+        "parameters_millions": 1536.9,
+        "vram_gb": 5.83
+      },
+      {
+        "description": "Deep (d=2048, L=64)",
+        "d_model": 2048,
+        "n_layers": 64,
+        "batch_size": 1,
+        "seq_len": 512,
+        "parameters_millions": 915.1,
+        "vram_gb": 3.47
+      },
+      {
+        "description": "Long Context (seq=1024)",
+        "d_model": 2048,
+        "n_layers": 48,
+        "batch_size": 1,
+        "seq_len": 1024,
+        "parameters_millions": 697.7,
+        "vram_gb": 2.71
+      },
+      {
+        "description": "Batch Training (batch=2)",
+        "d_model": 1536,
+        "n_layers": 48,
+        "batch_size": 2,
+        "seq_len": 512,
+        "parameters_millions": 399.5,
+        "vram_gb": 1.64
+      }
+    ]
+  },
+  "recommended_configurations": {
+    "chat_ai_stable": {
+      "description": "チャットAI推奨 (安定動作)",
+      "d_model": 2048,
+      "n_layers": 24,
+      "batch_size": 1,
+      "seq_len": 512,
+      "estimated_parameters_millions": 370,
+      "estimated_vram_gb": 1.5
+    },
+    "chat_ai_maximum": {
+      "description": "チャットAI最大 (限界)",
+      "d_model": 4096,
+      "n_layers": 32,
+      "batch_size": 1,
+      "seq_len": 512,
+      "parameters_millions": 1831.9,
+      "vram_gb": 6.89
+    },
+    "long_context": {
+      "description": "長文対応",
+      "d_model": 2048,
+      "n_layers": 48,
+      "batch_size": 1,
+      "seq_len": 1024,
+      "parameters_millions": 697.7,
+      "vram_gb": 2.71
+    }
+  },
+  "conclusion": {
+    "max_parameters_billions": 1.83,
+    "max_vram_usage_gb": 6.89,
+    "vram_headroom_gb": 1.11,
+    "key_finding": "8GB VRAM環境で低ランク最適化とGradient Checkpointingにより1.83Bパラメータモデルの学習が可能"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "timestamp": "2025-11-27T20:42:40.945948",
+  "tests": [
+    {
+      "desc": "d=2048",
+      "success": true,
+      "params_m": 915.130193,
+      "vram_gb": 3.474727153778076,
+      "d_model": 2048,
+      "n_layers": 64,
+      "batch": 1,
+      "seq": 512
+    },
+    {
+      "desc": "d=3072",
+      "success": true,
+      "params_m": 1536.886993,
+      "vram_gb": 5.83079195022583,
+      "d_model": 3072,
+      "n_layers": 48,
+      "batch": 1,
+      "seq": 512
+    },
+    {
+      "desc": "d=4096",
+      "success": true,
+      "params_m": 1831.914065,
+      "vram_gb": 6.888214588165283,
+      "d_model": 4096,
+      "n_layers": 32,
+      "batch": 1,
+      "seq": 512
+    },
+    {
+      "desc": "d=1536 batch=2",
+      "success": true,
+      "params_m": 399.533713,
+      "vram_gb": 1.6387534141540527,
+      "d_model": 1536,
+      "n_layers": 48,
+      "batch": 2,
+      "seq": 512
+    },
+    {
+      "desc": "d=2048 seq=1024",
+      "success": true,
+      "params_m": 697.714513,
+      "vram_gb": 2.7118239402770996,
+      "d_model": 2048,
+      "n_layers": 48,
+      "batch": 1,
+      "seq": 1024
+    }
+  ],
+  "best": {
+    "desc": "d=4096",
+    "success": true,
+    "params_m": 1831.914065,
+    "vram_gb": 6.888214588165283,
+    "d_model": 4096,
+    "n_layers": 32,
+    "batch": 1,
+    "seq": 512
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-11-27T20:31:32.825299",
+  "gpu_info": {
+    "name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "total_vram_gb": 7.99951171875,
+    "compute_capability": "8.6",
+    "multiprocessors": 48
+  },
+  "triton_available": true,
+  "benchmarks": []
+}
