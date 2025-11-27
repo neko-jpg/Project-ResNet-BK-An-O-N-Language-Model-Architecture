@@ -1,28 +1,28 @@
 # ========================================
-# Phase 7: Teppei's 1.8B Monster Config
+# Phase 7: 1B Chat Model Config
 # ========================================
-# ベンチマーク実測値に基づく最大パラメータ設定
-# GPU: RTX 3080 (8-10GB VRAM)
-# 実測VRAM: 6.89GB (batch=1, seq=512)
+# 8GB VRAM向け安定設定
+# GPU: RTX 3080 Laptop (8GB VRAM)
+# 目標: ~1B パラメータ
 #
 # 使用方法:
-#   make train-phase7-max          # 訓練開始
-#   make train-phase7-max-test     # ダミーデータでテスト
+#   make train-chat          # 訓練開始
+#   make train-chat-test     # ダミーデータでテスト
 #
 # ========================================
 
-# Architecture (ベンチマーク実測値に基づく)
-model_type: phase7_max_push
-d_model: 4096          # ★ 夢の4096次元
-n_layers: 32           # ★ 32層で十分深い
-n_seq: 512             # メモリがキツいので一旦512 (学習中に余裕あれば1024へ)
+# Architecture (~1B params)
+model_type: phase7_1b
+d_model: 3072          # 1B狙いで3072に調整
+n_layers: 24           # 24層（OOM回避）
+n_seq: 512             # シーケンス長
 vocab_size: 50257      # GPT-2互換
-num_heads: 32          # d_model / 128 = 32
+num_heads: 24          # d_model / 128 = 24
 
 # Low Rank Compression (必須 - これがないと即OOM)
-embed_rank: 512        # パラメータ圧縮の鍵 (d_model/8)
-ffn_rank: 512          # ここをケチりすぎないのが賢さのコツ
-head_rank: 512         # 出力層も圧縮
+embed_rank: 384        # d_model/8
+ffn_rank: 384          # 圧縮率を上げてVRAM節約
+head_rank: 384         # 出力層も圧縮
 
 # HTT Embedding (Phase 7特有)
 htt_rank: 64           # Holographic TT Embedding rank

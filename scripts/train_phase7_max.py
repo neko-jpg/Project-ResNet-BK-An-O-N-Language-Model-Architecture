@@ -235,13 +235,13 @@ class Phase7MaxModel(nn.Module):
 class TrainingConfig:
     """訓練設定"""
     vocab_size: int = 50257
-    d_model: int = 4096
-    n_layers: int = 32
+    d_model: int = 3072      # 1B狙い
+    n_layers: int = 24       # 24層
     n_seq: int = 512
-    num_heads: int = 32
-    embed_rank: int = 512
-    ffn_rank: int = 512
-    head_rank: int = 512
+    num_heads: int = 24
+    embed_rank: int = 384    # d_model/8
+    ffn_rank: int = 384
+    head_rank: int = 384
 
     batch_size: int = 1
     gradient_accumulation_steps: int = 16
