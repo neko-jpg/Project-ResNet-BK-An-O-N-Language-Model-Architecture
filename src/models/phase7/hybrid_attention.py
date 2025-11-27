@@ -27,10 +27,12 @@ class HybridHyperbolicAttention(nn.Module):
         self.local_window_size = config.hyperbolic_window_size
 
         # 1. Local hyperbolic attention module
+        kernel_version = getattr(config, 'triton_kernel_version', 'fast')
         self.local_attn = HyperbolicMultiHeadAttention(
             d_model=config.d_model,
             num_heads=config.num_heads,
-            use_triton_kernel=config.use_triton_kernel
+            use_triton_kernel=config.use_triton_kernel,
+            kernel_version=kernel_version,
         )
 
         # 2. Global SSM module, configured from the main config object

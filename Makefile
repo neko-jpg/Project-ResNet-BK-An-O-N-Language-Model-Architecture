@@ -204,3 +204,15 @@ check-update:
 
 notify:
 	$(PYTHON) scripts/muse_utils.py notify
+
+# Phase 7 Hyperbolic Attention Triton smoke test
+triton-attn:
+	$(PYTHON) scripts/check_hyperbolic_triton.py --use-triton --use-mask --kernel fast --json results/triton_attention_check.json
+
+# Phase 7 Hyperbolic Attention Triton benchmark (compare all kernels)
+triton-bench:
+	$(PYTHON) scripts/benchmark_hyperbolic_triton.py --batch 4 --seq-len 512 --d-model 256 --heads 8 --json results/benchmarks/hyperbolic_triton_benchmark.json
+
+# Phase 7 Hyperbolic Attention - fast kernel only
+triton-fast:
+	$(PYTHON) scripts/check_hyperbolic_triton.py --use-triton --use-mask --kernel fast --seq-len 512 --d-model 256 --heads 8 --json results/triton_attention_check.json

@@ -1,0 +1,57 @@
+{
+  "optimization_date": "2025-11-27",
+  "summary": "Hyperbolic Attention Triton Kernel Optimization",
+  "speedup_achieved": {
+    "seq_len_512": "14.07x",
+    "seq_len_1024": "19.21x",
+    "seq_len_2048": "36.45x"
+  },
+  "kernel_versions": {
+    "fast": {
+      "description": "近似双曲距離、最速版",
+      "features": [
+        "Approximate hyperbolic distance",
+        "Flash Attention style online softmax",
+        "Autotune for RTX 3080",
+        "Autograd support"
+      ],
+      "recommended": true
+    },
+    "v1": {
+      "description": "従来版、完全な双曲距離計算",
+      "features": [
+        "Full Poincaré distance (acosh)",
+        "exp_map/log_map in kernel"
+      ],
+      "recommended": false
+    },
+    "v2": {
+      "description": "事前計算版",
+      "features": [
+        "Pre-computed exp_map",
+        "Autotune overhead"
+      ],
+      "recommended": false
+    }
+  },
+  "benchmark_results": {
+    "seq_1024_batch_4": {
+      "fast_ms": 1.05,
+      "v1_ms": 2.30,
+      "pytorch_ms": 20.21,
+      "fast_tokens_per_sec": 3894369
+    },
+    "seq_2048_batch_2": {
+      "fast_ms": 0.73,
+      "v1_ms": 2.31,
+      "pytorch_ms": 26.71,
+      "fast_tokens_per_sec": 5589985
+    }
+  },
+  "physical_validity": {
+    "boundary_effect": "preserved",
+    "curvature_dependence": "preserved",
+    "symmetry": "preserved"
+  },
+  "hardware_target": "NVIDIA RTX 3080 (10GB VRAM)"
+}

@@ -150,8 +150,13 @@ class SingleHeadHyperbolicAttention(nn.Module):
 class HyperbolicMultiHeadAttention(nn.Module):
     """
     Implements multi-head hyperbolic attention.
+    
+    カーネル選択:
+    - 'fast': 最速版（近似双曲距離、通常Attentionに近い速度）
+    - 'v2': 最適化版（正確な双曲距離、事前計算で高速化）
+    - 'v1': 従来版（完全な双曲距離計算）
     """
-    def __init__(self, d_model: int, num_heads: int, use_triton_kernel: bool = True):
+    def __init__(self, d_model: int, num_heads: int, use_triton_kernel: bool = True, kernel_version: str = 'fast'):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -159,18 +164,28 @@ class HyperbolicMultiHeadAttention(nn.Module):
         self.num_heads = num_heads
         self.d_head = d_model // num_heads
         self.use_triton_kernel = use_triton_kernel
+        self.kernel_version = kernel_version
 
+        self.triton_kernel_function = None
         if self.use_triton_kernel:
             try:
-                # Dynamically import the kernel to avoid a hard dependency on Triton
-                from src.kernels.hyperbolic_attention_kernel import hyperbolic_attention_triton
-                self.triton_kernel_function = hyperbolic_attention_triton
-            except (ImportError, ModuleNotFoundError):
+                if kernel_version == 'fast':
+                    # 最速版: 近似双曲距離
+                    from src.kernels.hyperbolic_attention_fast import fast_hyperbolic_attention
+                    self.triton_kernel_function = fast_hyperbolic_attention
+                elif kernel_version == 'v2':
+                    # 最適化版: 事前計算 + autotune
+                    from src.kernels.hyperbolic_attention_triton_v2 import hyperbolic_attention_triton_v2
+                    self.triton_kernel_function = hyperbolic_attention_triton_v2
+                else:
+                    # 従来版
+                    from src.kernels.hyperbolic_attention_triton import hyperbolic_attention_triton
+                    self.triton_kernel_function = hyperbolic_attention_triton
+            except (ImportError, ModuleNotFoundError) as e:
                 import warnings
                 warnings.warn(
-                    "Triton kernel for hyperbolic attention is enabled but could not be imported. "
-                    "Falling back to PyTorch implementation. Please ensure Triton is installed "
-                    "for optimal performance."
+                    f"Triton kernel '{kernel_version}' could not be imported: {e}. "
+                    "Falling back to PyTorch implementation."
                 )
                 self.triton_kernel_function = None
 
@@ -198,7 +213,7 @@ class HyperbolicMultiHeadAttention(nn.Module):
         prime_bump_init_(self.W_v.weight)
         prime_bump_init_(self.W_o.weight)
 
-    def forward(self, x, mask=None, return_diagnostics: bool = True):
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None, return_diagnostics: bool = True):
         """
         Args:
             x (torch.Tensor): Input tensor in Euclidean space. Shape: (batch, seq_len, d_model)
@@ -229,35 +244,57 @@ class HyperbolicMultiHeadAttention(nn.Module):
             k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
             v_tangent = v_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
 
+            # マスクは Triton カーネルにも対応させるため bool に正規化しておく
+            mask_bool = None
+            if mask is not None:
+                mask_bool = mask.to(device=x.device, dtype=torch.bool)
+                if mask_bool.dim() == 4:
+                    if mask_bool.shape[0] == 1 and batch_size != 1:
+                        mask_bool = mask_bool.expand(batch_size, -1, seq_len, seq_len)
+                else:
+                    # 非対応形状は明示的に失敗させる
+                    raise ValueError(f"Unsupported mask shape {mask.shape}; expected (B, H|1, N, N)")
+
             # Determine if we can use the Triton kernel
             can_use_triton = self.use_triton_kernel and hasattr(self, 'triton_kernel_function')
-            if can_use_triton and mask is not None:
-                # Fallback to PyTorch implementation if masking is required, as Triton kernel does not support it
-                can_use_triton = False
 
             if can_use_triton:
-                output_hyperbolic, (q_norms, k_norms, distances) = self.triton_kernel_function(
+                # New optimized Triton kernel interface
+                # Input: q, k, v in tangent space [B, H, N, D]
+                # The kernel handles exp_map internally
+                beta_pos = F.softplus(self.attention.beta.float())
+                causal = mask_bool is not None  # Use causal masking if mask provided
+                
+                output_hyperbolic = self.triton_kernel_function(
                     q_tangent,
                     k_tangent,
                     v_tangent,
                     c,
-                    F.softplus(self.attention.beta.float()),
-                    self.attention.attention_bias.float()
+                    beta_pos,
+                    causal,
                 )
 
                 output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
                 output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
                 final_output = self.W_o(output_tangent_concat)
 
-                with torch.no_grad():
-                    head_diagnostics = {
-                        'hyperbolic_dist_mean': distances.mean(),
-                        'hyperbolic_dist_max': distances.max(),
-                        'hyperbolic_dist_min': distances.min(),
-                    }
-                    # Store aggregated norms for the final diagnostics dictionary
-                    self.triton_q_norms = q_norms
-                    self.triton_k_norms = k_norms
+                # Only compute diagnostics if requested (expensive operation)
+                head_diagnostics = {}
+                if return_diagnostics:
+                    with torch.no_grad():
+                        # Sample only first 8 positions for efficiency
+                        q_sample = q_tangent[:, :, :8, :]
+                        k_sample = k_tangent[:, :, :8, :]
+                        q_hyp_sample = exp_map_at_origin(q_sample, c=c)
+                        k_hyp_sample = exp_map_at_origin(k_sample, c=c)
+                        dist_sample = poincare_distance(q_hyp_sample, k_hyp_sample, c=c)
+                        head_diagnostics = {
+                            'hyperbolic_dist_mean': dist_sample.mean(),
+                            'hyperbolic_dist_max': dist_sample.max(),
+                            'hyperbolic_dist_min': dist_sample.min(),
+                        }
+                        self.triton_q_norms = torch.norm(q_hyp_sample, dim=-1)
+                        self.triton_k_norms = torch.norm(k_hyp_sample, dim=-1)
 
                 q_hyp = None  # Signal that diagnostics are handled separately
             else:
@@ -271,10 +308,10 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 v_tangent_flat = v_tangent.reshape(batch_size * self.num_heads, seq_len, self.d_head)
 
                 # Reshape mask for multi-head attention
-                if mask is not None:
+                if mask_bool is not None:
                     # Original mask shape: (B, 1, N, N)
                     # Expand for heads and reshape for flattened batch
-                    mask_flat = mask.expand(batch_size, self.num_heads, seq_len, seq_len).reshape(batch_size * self.num_heads, seq_len, seq_len)
+                    mask_flat = mask_bool.expand(batch_size, self.num_heads, seq_len, seq_len).reshape(batch_size * self.num_heads, seq_len, seq_len)
                 else:
                     mask_flat = None
 

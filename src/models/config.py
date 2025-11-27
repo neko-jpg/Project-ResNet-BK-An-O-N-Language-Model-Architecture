@@ -38,6 +38,7 @@ class ResNetBKConfig:
     num_heads: int = 4
     use_fused_moe_kernel: bool = False
     use_triton_kernel: bool = True # For Hyperbolic Attention
+    triton_kernel_version: str = 'fast'  # 'fast', 'v2', 'v1'
 
     # AR-SSM specific parameters
     ar_ssm_max_rank: int = 32

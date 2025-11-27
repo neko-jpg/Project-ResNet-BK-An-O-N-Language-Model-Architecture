@@ -72,7 +72,7 @@ class MoEResNetBKLayer(nn.Module):
         self.v_max = 3.0
         self.feature_clamp = 10.0
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, D = x.shape
         assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
         
@@ -95,9 +95,12 @@ class MoEResNetBKLayer(nn.Module):
             z = z.to(dtype=torch.complex64, device=he_diag.device)
             features, g_ii_scalar = self.bk_core(he_diag, h0_super, h0_sub, z)
             G_ii = g_ii_scalar.unsqueeze(-1)
+
+        # 物理的に重要な Green 関数の対角成分を保持してハイブリッド注意に渡す
+        self.last_g_ii = G_ii
         
         if self.use_hybrid_attention:
-            out_tuple = self.hybrid_attn(x, G_ii, return_diagnostics=True)
+            out_tuple = self.hybrid_attn(x, g_ii=G_ii, return_diagnostics=True)
             if isinstance(out_tuple, tuple):
                 output, diagnostics = out_tuple
                 self.last_hybrid_diagnostics = diagnostics

@@ -1,0 +1,38 @@
+{
+  "config": {
+    "batch": 2,
+    "seq_len": 2048,
+    "d_model": 256,
+    "heads": 8,
+    "device": "cuda"
+  },
+  "kernels": [
+    {
+      "kernel": "fast",
+      "status": "ok",
+      "avg_time_ms": 0.7327390000000378,
+      "min_time_ms": 0.6312259999958769,
+      "max_time_ms": 1.0730579999744805,
+      "tokens_per_sec": 5589984.974185609
+    },
+    {
+      "kernel": "v1",
+      "status": "ok",
+      "avg_time_ms": 2.30529029999218,
+      "min_time_ms": 1.9843369999534843,
+      "max_time_ms": 2.576288999989629,
+      "tokens_per_sec": 1776782.7331828424
+    },
+    {
+      "kernel": "pytorch",
+      "status": "ok",
+      "avg_time_ms": 26.7088676999947,
+      "min_time_ms": 25.666467999997167,
+      "max_time_ms": 29.959586000018135,
+      "tokens_per_sec": 153357.30612049918
+    }
+  ],
+  "fastest_kernel": "fast",
+  "fastest_time_ms": 0.7327390000000378,
+  "speedup_vs_pytorch": 36.4507248829301
+}
