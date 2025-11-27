@@ -345,3 +345,17 @@ verify-phase7:
 # 🔧 Tritonカーネル動作確認
 verify-triton:
 	$(PYTHON) scripts/check_hyperbolic_triton.py --use-triton --kernel fast
+
+# 💬 訓練済みモデルでチャット
+chat-ai:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "========================================"; \
+		echo "💬 MUSE Chat AI (Auto-detect checkpoint)"; \
+		echo "========================================"; \
+		$(PYTHON) scripts/chat_inference.py; \
+	else \
+		echo "========================================"; \
+		echo "💬 MUSE Chat AI"; \
+		echo "========================================"; \
+		$(PYTHON) scripts/chat_inference.py --checkpoint $(CHECKPOINT); \
+	fi

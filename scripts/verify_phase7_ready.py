@@ -52,8 +52,8 @@ def check_cuda():
 
 
 def check_triton():
-    """Tritonチェック"""
-    print("\n3. Triton Check")
+    """Tritonチェック（必須）"""
+    print("\n3. Triton Check (REQUIRED)")
     try:
         import triton
         version = getattr(triton, '__version__', 'unknown')
@@ -65,10 +65,11 @@ def check_triton():
             print("   ✓ Triton language module available")
             return True
         except Exception as e:
-            print(f"   ⚠ Triton language import warning: {e}")
-            return True  # Tritonはあるが警告
+            print(f"   ✗ Triton language import failed: {e}")
+            return False
     except ImportError:
-        print("   ⚠ Triton not installed (PyTorch fallback will be used)")
+        print("   ✗ Triton not installed!")
+        print("   → Phase 7 REQUIRES Triton. Install with: pip install triton")
         return False
 
 
@@ -260,7 +261,8 @@ def main():
         print(f"  {status} {name}")
         if not passed:
             all_pass = False
-            if name in ["Python", "CUDA", "Model"]:
+            # Python, CUDA, Triton, Model は必須
+            if name in ["Python", "CUDA", "Triton", "Model"]:
                 critical_fail = True
     
     print()

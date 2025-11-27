@@ -50,7 +50,12 @@ learning_rate: 0.0001  # 大きいモデルなので控えめに
 weight_decay: 0.01
 grad_clip: 1.0
 warmup_steps: 2000
-max_steps: 100000
+
+# Training Duration
+# 1エポック = 195,312 steps (100M tokens / 512 seq)
+# 5エポック = 976,560 steps
+min_epochs: 5          # ★ 最低5エポックは回す
+max_steps: 1000000     # 5エポック分 (~976,560 steps)
 
 # ========================================
 # ログ・保存
