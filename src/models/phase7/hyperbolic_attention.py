@@ -13,10 +13,18 @@ import math
 # Epsilon for numerical stability, widened for mixed precision
 EPS = 1e-5
 
-def poincare_distance(x, y, c, dim=-1):
+def poincare_distance(x, y, c, dim=-1, x_norm_sq=None, y_norm_sq=None):
     """
     Computes pairwise Poincaré distance with curvature c.
     d(x,y) = (1/sqrt(c)) * acosh(1 + 2*c*||x-y||^2 / ((1-c*||x||^2)(1-c*||y||^2)))
+
+    Args:
+        x, y: Input tensors.
+        c: Curvature.
+        dim: Dimension to reduce.
+        x_norm_sq, y_norm_sq: Optional pre-computed squared norms of x and y.
+                              If provided, they should have shape compatible with broadcasting.
+                              Typically (..., 1) or (..., 1, 1).
     """
     with torch.cuda.amp.autocast(enabled=False):
         x = x.float()
@@ -24,14 +32,25 @@ def poincare_distance(x, y, c, dim=-1):
         c = c.float()
 
         sqrt_c = torch.sqrt(c)
-        x_norm_sq = (x * x).sum(dim=dim, keepdim=True)
-        y_norm_sq = (y * y).sum(dim=dim, keepdim=True)
+
+        # Use pre-computed norms if available to save O(N) operations
+        if x_norm_sq is None:
+            x_norm_sq = (x * x).sum(dim=dim, keepdim=True)
+        else:
+            x_norm_sq = x_norm_sq.float()
+
+        if y_norm_sq is None:
+            y_norm_sq = (y * y).sum(dim=dim, keepdim=True)
+        else:
+            y_norm_sq = y_norm_sq.float()
 
         y_t = y.transpose(-2, -1)
         xy_dot = torch.matmul(x, y_t)
 
         x_norm_sq_broadcast = x_norm_sq.expand(-1, -1, -1, y.shape[-2])
         y_norm_sq_broadcast = y_norm_sq.transpose(-2, -1).expand(-1, -1, x.shape[-2], -1)
+
+        # ||x-y||^2 = ||x||^2 + ||y||^2 - 2<x,y>
         diff_norm_sq = x_norm_sq_broadcast - 2 * xy_dot + y_norm_sq_broadcast
 
         # Denominator term: (1 - c*||x_i||^2)(1 - c*||y_j||^2)
@@ -50,6 +69,12 @@ def exp_map_at_origin(v, c, dim=-1):
     """
     Exponential map with curvature c.
     Formula: (1/sqrt(c)) * tanh(sqrt(c) * ||v||) * (v / ||v||)
+
+    Returns:
+        mapped_v: The vector in Poincaré ball.
+        v_norm_sq: The squared norm of the *output* vector `mapped_v`.
+                   This is returned to allow downstream optimization in poincare_distance.
+                   ||mapped_v|| = (1/sqrt(c)) * tanh(sqrt(c) * ||v||)
     """
     with torch.cuda.amp.autocast(enabled=False):
         v = v.float()
@@ -57,9 +82,19 @@ def exp_map_at_origin(v, c, dim=-1):
         sqrt_c = torch.sqrt(c)
         v_norm = v.norm(dim=dim, keepdim=True).clamp_min(EPS)
 
-        mapped_v = (1. / sqrt_c) * F.tanh(sqrt_c * v_norm) * (v / v_norm)
+        # Calculate the norm of the mapped vector analytically
+        # This saves re-computing it later
+        tanh_term = F.tanh(sqrt_c * v_norm)
+        scale_factor = (1. / sqrt_c) * tanh_term / v_norm
 
-    return mapped_v.to(v.dtype)
+        mapped_v = scale_factor * v
+
+        # ||mapped_v|| = (1/sqrt(c)) * tanh(sqrt(c) * ||v||)
+        # We need squared norm for poincare_distance
+        mapped_norm = (1. / sqrt_c) * tanh_term
+        mapped_norm_sq = mapped_norm * mapped_norm
+
+    return mapped_v.to(v.dtype), mapped_norm_sq.to(v.dtype)
 
 def log_map_at_origin(y, c, dim=-1):
     """
@@ -102,7 +137,7 @@ class SingleHeadHyperbolicAttention(nn.Module):
         # Learnable bias parameter
         self.attention_bias = nn.Parameter(torch.tensor(0.0))
 
-    def forward(self, q, k, v_tangent, c, mask=None):
+    def forward(self, q, k, v_tangent, c, mask=None, q_norm_sq=None, k_norm_sq=None):
         """
         Args:
             q (torch.Tensor): Queries in the Poincaré ball. Shape: (batch, seq_len, dim)
@@ -110,12 +145,21 @@ class SingleHeadHyperbolicAttention(nn.Module):
             v_tangent (torch.Tensor): Values in the tangent space. Shape: (batch, seq_len, dim)
             c (torch.Tensor): Curvature tensor.
             mask (torch.Tensor, optional): Attention mask. Shape: (batch, seq_len, seq_len).
+            q_norm_sq (torch.Tensor, optional): Pre-computed squared norms of q.
+            k_norm_sq (torch.Tensor, optional): Pre-computed squared norms of k.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor, dict]: Aggregated value, attention weights, and diagnostics.
         """
         # 1. Compute pairwise hyperbolic distances
-        dist_qk_unsqueezed = poincare_distance(q.unsqueeze(1), k.unsqueeze(1), c=c)
+        # Pass norms if available to avoid re-computation
+        # q_norm_sq: (B*H, N, 1) -> unsqueeze to (B*H, 1, N, 1)
+        # k_norm_sq: (B*H, N, 1) -> unsqueeze to (B*H, 1, N, 1) for poincare_distance
+
+        q_ns_in = q_norm_sq.unsqueeze(1) if q_norm_sq is not None else None
+        k_ns_in = k_norm_sq.unsqueeze(1) if k_norm_sq is not None else None
+
+        dist_qk_unsqueezed = poincare_distance(q.unsqueeze(1), k.unsqueeze(1), c=c, x_norm_sq=q_ns_in, y_norm_sq=k_ns_in)
         dist_qk = dist_qk_unsqueezed.squeeze(1)
 
         # 2. Calculate attention scores
@@ -130,7 +174,7 @@ class SingleHeadHyperbolicAttention(nn.Module):
 
         # 3. Aggregate values, which are already in the tangent space
         output_tangent = torch.bmm(attention_weights, v_tangent)
-        output_hyperbolic = exp_map_at_origin(output_tangent, c=c)
+        output_hyperbolic, _ = exp_map_at_origin(output_tangent, c=c)
 
         # 4. Create diagnostics
         with torch.no_grad():
@@ -285,8 +329,8 @@ class HyperbolicMultiHeadAttention(nn.Module):
                         # Sample only first 8 positions for efficiency
                         q_sample = q_tangent[:, :, :8, :]
                         k_sample = k_tangent[:, :, :8, :]
-                        q_hyp_sample = exp_map_at_origin(q_sample, c=c)
-                        k_hyp_sample = exp_map_at_origin(k_sample, c=c)
+                        q_hyp_sample, _ = exp_map_at_origin(q_sample, c=c)
+                        k_hyp_sample, _ = exp_map_at_origin(k_sample, c=c)
                         dist_sample = poincare_distance(q_hyp_sample, k_hyp_sample, c=c)
                         head_diagnostics = {
                             'hyperbolic_dist_mean': dist_sample.mean(),
@@ -299,13 +343,17 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 q_hyp = None  # Signal that diagnostics are handled separately
             else:
                 # PyTorch implementation
-                q_hyp = exp_map_at_origin(q_tangent, c=c)
-                k_hyp = exp_map_at_origin(k_tangent, c=c)
+                q_hyp, q_norm_sq = exp_map_at_origin(q_tangent, c=c)
+                k_hyp, k_norm_sq = exp_map_at_origin(k_tangent, c=c)
                 # v_tangent remains in the tangent space, no exp_map needed
 
                 q_hyp_flat = q_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
                 k_hyp_flat = k_hyp.reshape(batch_size * self.num_heads, seq_len, self.d_head)
                 v_tangent_flat = v_tangent.reshape(batch_size * self.num_heads, seq_len, self.d_head)
+
+                # Flatten norms to match (B*H, N, 1)
+                q_norm_sq_flat = q_norm_sq.reshape(batch_size * self.num_heads, seq_len, 1)
+                k_norm_sq_flat = k_norm_sq.reshape(batch_size * self.num_heads, seq_len, 1)
 
                 # Reshape mask for multi-head attention
                 if mask_bool is not None:
@@ -315,7 +363,10 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 else:
                     mask_flat = None
 
-                output_hyperbolic_flat, _, head_diagnostics = self.attention(q_hyp_flat, k_hyp_flat, v_tangent_flat, c=c, mask=mask_flat)
+                output_hyperbolic_flat, _, head_diagnostics = self.attention(
+                    q_hyp_flat, k_hyp_flat, v_tangent_flat, c=c, mask=mask_flat,
+                    q_norm_sq=q_norm_sq_flat, k_norm_sq=k_norm_sq_flat
+                )
 
                 output_hyperbolic = output_hyperbolic_flat.view(batch_size, self.num_heads, seq_len, self.d_head)
                 output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
@@ -329,9 +380,11 @@ class HyperbolicMultiHeadAttention(nn.Module):
             with torch.no_grad():
                 diagnostics = { 'curvature': c.item() }
                 if q_hyp is not None:
-                    # PyTorch path: compute norms from q_hyp
-                    q_norms = torch.norm(q_hyp, dim=-1)
-                    k_norms = torch.norm(k_hyp, dim=-1)
+                    # PyTorch path: compute norms from q_hyp (or just sqrt of norm_sq)
+                    # To be strict, let's use the actual values we have
+                    # q_norm_sq is (B, H, N, 1)
+                    q_norms = torch.sqrt(q_norm_sq.squeeze(-1))
+                    k_norms = torch.sqrt(k_norm_sq.squeeze(-1))
                     diagnostics.update({
                         'boundary_collapse_q_mean_norm': q_norms.mean(),
                         'boundary_collapse_k_mean_norm': k_norms.mean(),
