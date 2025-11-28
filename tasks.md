@@ -1,0 +1,538 @@
+# Implementation Plan
+
+- [x] 1. Set up project structure and core interfaces
+  - Create directory structure for phase8 modules
+  - Define Phase8Config dataclass extending Phase7Config
+  - Create Phase8Diagnostics dataclass
+  - Set up __init__.py files with proper exports
+  - _Requirements: All_
+
+- [ ] 2. Implement Flash Hyperbolic Attention Kernel (Triton)
+- [ ] 2.1 Create flash_hyperbolic_triton.py with online softmax
+  - Implement block-wise distance computation with BLOCK_M=128, BLOCK_N=64
+  - Add causal masking optimization (skip upper-triangular blocks)
+  - Use shared memory for Q block caching (48KB target)
+  - Target: 70%+ FLOPS utilization on RTX 3080
+  - _Requirements: 31.1, 31.2, 31.3_
+- [ ] 2.2 Implement Triton autotune configurations
+  - Add configs for RTX 3080 (10GB), RTX 3090 (24GB), RTX 4090 (24GB)
+  - Tune BLOCK_M, BLOCK_N, num_warps, num_stages
+  - Target: Optimal config selection within 5% of manual tuning
+  - _Requirements: 43.1, 43.2, 43.3_
+- [ ] 2.3 GPU benchmark: Flash Hyperbolic vs Phase 7
+  - Measure throughput at seq=1024, 2048, 4096, 8192
+  - Target: 2x throughput improvement over Phase 7
+  - Output: results/benchmarks/phase8_flash_hyperbolic_benchmark.json
+  - _Requirements: 31.1-31.6_
+- [ ] 2.4 GPU memory profiling
+  - Measure peak VRAM at seq=4096, 8192, 16384
+  - Target: O(N) memory scaling, <3GB at seq=8192
+  - Output: results/benchmarks/phase8_flash_memory_profile.json
+  - _Requirements: 31.3, 7.3_
+- [ ] 2.5 Write property test for Flash Hyperbolic memory scaling
+  - **Property 17: Flash Hyperbolic Memory**
+  - **Validates: Requirements 31.3**
+- [ ] 2.6 Implement backward pass with recomputation
+  - Recompute attention weights from Q, K instead of storing
+  - Target: <10% overhead vs storing
+  - _Requirements: 31.5_
+- [ ] 2.7 Write property test for FLOPS utilization
+  - **Property 18: FLOPS Utilization**
+  - **Validates: Requirements 31.4**
+- [ ] 2.8 Write unit tests for Flash Hyperbolic Attention
+  - Test output shape, numerical stability, memory scaling
+  - _Requirements: 31.1-31.6_
+
+- [ ] 3. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 4. Implement Entailment Cone Module
+- [ ] 4.1 Create entailment_cones.py with aperture computation
+  - Implement compute_aperture function
+  - Add learnable aperture network
+  - _Requirements: 1.1, 1.2_
+- [ ] 4.2 Write property test for entailment score range
+  - **Property 1: Entailment Score Range**
+  - **Validates: Requirements 1.5**
+- [ ] 4.3 Write property test for aperture monotonicity
+  - **Property 2: Aperture Monotonicity**
+  - **Validates: Requirements 1.2**
+- [ ] 4.4 Implement logical operations (AND, OR)
+  - Tangent space intersection for AND
+  - Möbius addition for OR
+  - _Requirements: 1.3, 1.4_
+- [ ] 4.5 Implement configuration serialization with round-trip
+  - JSON serialization and pretty printer
+  - _Requirements: 1.6, 1.7_
+- [ ] 4.6 Write property test for configuration round-trip
+  - **Property 3: Entailment Cone Configuration Round-Trip**
+  - **Validates: Requirements 1.7**
+- [ ] 4.7 Write unit tests for Entailment Cones
+  - Test entailment checking, logical operations
+  - _Requirements: 1.1-1.7_
+
+- [ ] 5. Implement Hyperbolic Persistent Homology
+- [ ] 5.1 Create persistent_homology.py with Betti number computation
+  - Implement witness complex for efficiency
+  - Add sparse filtrations for O(N log N) complexity
+  - _Requirements: 2.1, 2.4_
+- [ ] 5.2 Write property test for Betti number consistency
+  - **Property 4: Betti Number Consistency**
+  - **Validates: Requirements 2.1**
+- [ ] 5.3 Write property test for sparse filtration complexity
+  - **Property 5: Sparse Filtration Complexity**
+  - **Validates: Requirements 2.4**
+- [ ] 5.4 Implement circular reasoning detection
+  - β₁Ethreshold monitoring
+  - Diagnostic warning emission
+  - _Requirements: 2.2_
+- [ ] 5.5 Implement curvature adjustment suggestion
+  - Increase curvature proportionally to β₁E
+  - _Requirements: 2.5_
+- [ ] 5.6 Write unit tests for Persistent Homology
+  - Test with known topologies, complexity measurement
+  - _Requirements: 2.1-2.6_
+
+- [ ] 6. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 7. Implement Sheaf Attention Module
+- [ ] 7.1 Create sheaf_attention.py with restriction maps
+  - Implement restriction map computation between heads
+  - Add agreement threshold checking
+  - _Requirements: 3.1, 3.2, 3.3_
+- [ ] 7.2 Write property test for consensus consistency
+  - **Property 6: Sheaf Consensus Consistency**
+  - **Validates: Requirements 3.4**
+- [ ] 7.3 Implement consensus aggregation
+  - Weight heads by agreement scores
+  - Filter inconsistent information
+  - _Requirements: 3.4_
+- [ ] 7.4 Implement sheaf cohomology detection
+  - Detect global obstructions to consistent information flow
+  - _Requirements: 3.5_
+- [ ] 7.5 Implement JSON serialization for sheaf structure
+  - Serialize restriction maps and section data
+  - _Requirements: 3.6_
+- [ ] 7.6 Write unit tests for Sheaf Attention
+  - Test restriction maps, consensus, cohomology
+  - _Requirements: 3.1-3.6_
+
+- [ ] 8. Implement Logarithmic Quantization
+- [ ] 8.1 Create quantization.py with logarithmic quantizer
+  - Implement non-uniform quantization steps
+  - Add boundary-adaptive scaling
+  - _Requirements: 4.1, 4.2_
+- [ ] 8.2 Write property test for quantization step decay
+  - **Property 7: Quantization Step Exponential Decay**
+  - **Validates: Requirements 4.1**
+- [ ] 8.3 Implement INT8 quantized kernels
+  - Integer arithmetic for distance approximation
+  - Lookup tables for transcendental functions
+  - _Requirements: 36.1, 36.2_
+- [ ] 8.4 Write property test for INT4 accuracy preservation
+  - **Property 8: INT4 Accuracy Preservation**
+  - **Validates: Requirements 4.3**
+- [ ] 8.5 Implement calibration pipeline
+  - Representative data calibration
+  - Per-layer boundary determination
+  - _Requirements: 4.5_
+- [ ] 8.6 Write property test for INT8 throughput improvement
+  - **Property 19: INT8 Throughput Improvement**
+  - **Validates: Requirements 36.5**
+- [ ] 8.7 Write unit tests for Quantization
+  - Test quantization accuracy, throughput
+  - _Requirements: 4.1-4.6, 36.1-36.6_
+
+- [ ] 9. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 10. Implement Tangent-Space Linear Attention
+- [ ] 10.1 Create linear_attention.py with kernel approximation
+  - Implement Q(K^T V) formulation
+  - Add numerical stability for exp_map/log_map
+  - _Requirements: 5.1, 5.2_
+- [ ] 10.2 Write property test for linear attention complexity
+  - **Property 9: Linear Attention Complexity**
+  - **Validates: Requirements 5.3**
+- [ ] 10.3 Write property test for distance approximation error
+  - **Property 10: Distance Approximation Error**
+  - **Validates: Requirements 5.4**
+- [ ] 10.4 Implement automatic mode switching
+  - Switch to linear for low curvature (c < 0.1)
+  - Use exact for high curvature (c > 1.0)
+  - _Requirements: 5.5, 5.6_
+- [ ] 10.5 Write property test for linear attention correlation
+  - **Property 21: Linear Attention Correlation**
+  - **Validates: Requirements 70.4**
+- [ ] 10.6 Write unit tests for Linear Attention
+  - Test complexity, accuracy, mode switching
+  - _Requirements: 5.1-5.6, 70.1-70.6_
+
+- [ ] 11. Implement Hybrid Precision Strategy
+- [ ] 11.1 Create precision_manager.py with dynamic precision
+  - Enforce FP32 for curvature computation
+  - Use FP32 for boundary-near embeddings
+  - _Requirements: 6.1, 6.2_
+- [ ] 11.2 Write property test for curvature precision enforcement
+  - **Property 11: Curvature Precision Enforcement**
+  - **Validates: Requirements 6.1**
+- [ ] 11.3 Implement gradient overflow detection and recovery
+  - Automatic upcast to FP32 on overflow
+  - Checkpoint on NaN/Inf
+  - _Requirements: 6.4, 6.5_
+- [ ] 11.4 Write property test for boundary collapse prevention
+  - **Property 12: Boundary Collapse Prevention**
+  - **Validates: Requirements 6.6**
+- [ ] 11.5 Write unit tests for Hybrid Precision
+  - Test precision switching, overflow handling
+  - _Requirements: 6.1-6.6_
+
+- [ ] 12. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 13. Implement Block-wise Distance Computation
+- [ ] 13.1 Create block_distance.py with 128x128 block processing
+  - Immediate softmax and V multiplication
+  - Discard distance block after use
+  - _Requirements: 7.1, 7.2_
+- [ ] 13.2 Write property test for block-wise memory scaling
+  - **Property 13: Block-wise Memory Scaling**
+  - **Validates: Requirements 7.3**
+- [ ] 13.3 Implement shared memory optimization
+  - Use shared memory for block-local computations
+  - _Requirements: 7.4_
+- [ ] 13.4 Implement causal block skipping
+  - Skip upper-triangular blocks entirely
+  - _Requirements: 7.5_
+- [ ] 13.5 Write unit tests for Block-wise Distance
+  - Test memory usage, correctness
+  - _Requirements: 7.1-7.6_
+
+- [ ] 14. Implement BK-Core Hyperbolic Integration
+- [ ] 14.1 Create bk_core_hyperbolic.py with Green's function gating
+  - Compute G_ii using BK-Core
+  - Modulate attention weights with scattering energy
+  - _Requirements: 22.1, 22.2_
+- [ ] 14.2 Write property test for BK-Core gate correlation
+  - **Property 15: BK-Core Gate Correlation**
+  - **Validates: Requirements 22.2**
+- [ ] 14.3 Implement resonance detection and curvature adjustment
+  - Detect resonance from G_ii real part
+  - Adjust curvature based on resonance
+  - _Requirements: 22.3_
+- [ ] 14.4 Implement hybrid gradient computation
+  - Use theoretical + hypothesis-7 blend
+  - _Requirements: 22.5_
+- [ ] 14.5 Write unit tests for BK-Core Integration
+  - Test gating, resonance, gradients
+  - _Requirements: 22.1-22.6_
+
+- [ ] 15. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 16. Implement AR-SSM Hyperbolic Fusion
+- [ ] 16.1 Create ar_ssm_fusion.py with hyperbolic rank gating
+  - Use hyperbolic distance as complexity signal
+  - Automatic curvature increase at high rank
+  - _Requirements: 21.1, 21.2, 21.3_
+- [ ] 16.2 Write property test for AR-SSM throughput
+  - **Property 14: AR-SSM Hyperbolic Throughput**
+  - **Validates: Requirements 21.5**
+- [ ] 16.3 Implement physics-informed gating
+  - Use BK-Core G_ii for gating
+  - _Requirements: 21.4_
+- [ ] 16.4 Write unit tests for AR-SSM Fusion
+  - Test rank gating, throughput
+  - _Requirements: 21.1-21.6_
+
+- [ ] 17. Implement Enhanced Fast Kernel (Triton Optimization)
+- [ ] 17.1 Enhance hyperbolic_attention_fast.py with advanced approximations
+  - Taylor expansion for small distances (d < 0.1): 3rd order
+  - Asymptotic approximation for large distances (d > 2.0)
+  - Target: <1% error vs exact, 50x speedup over PyTorch
+  - _Requirements: 26.1, 26.5_
+- [ ] 17.2 Implement warp-level hyperbolic primitives
+  - Warp shuffle for norm computation
+  - Warp-level reduction for inner products
+  - Target: 90%+ warp execution efficiency
+  - _Requirements: 32.1, 32.2, 32.4_
+- [ ] 17.3 Implement Tensor Core acceleration
+  - FP16 WMMA for QK^T in tangent space
+  - FP32 for hyperbolic correction factor
+  - Target: 80%+ Tensor Core utilization
+  - _Requirements: 33.1, 33.2, 33.3_
+- [ ] 17.4 GPU benchmark: Enhanced kernel vs Phase 7 fast kernel
+  - Measure at seq=1024, 2048, 4096
+  - Target: 50x speedup over PyTorch reference (vs Phase 7's 36x)
+  - Output: results/benchmarks/phase8_enhanced_kernel_benchmark.json
+  - _Requirements: 26.4_
+- [ ] 17.5 Write property test for enhanced kernel speedup
+  - **Property 16: Enhanced Kernel Speedup**
+  - **Validates: Requirements 26.4**
+- [ ] 17.6 Implement hierarchical block decomposition
+  - For sequences > 4096
+  - Reduce memory bandwidth requirements
+  - _Requirements: 26.2_
+- [ ] 17.7 Add RTX 4090 autotuning configurations
+  - Optimize for Ada Lovelace architecture
+  - _Requirements: 26.3_
+- [ ] 17.8 Write unit tests for Enhanced Fast Kernel
+  - Test speedup, accuracy, Tensor Core usage
+  - _Requirements: 26.1-26.6, 32.1-32.6, 33.1-33.6_
+
+- [ ] 18. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 19. Implement Hyperbolic SSM
+- [ ] 19.1 Create hyperbolic_ssm.py with Möbius state transitions
+  - State evolution using Möbius transformations
+  - Associative scan in hyperbolic space
+  - _Requirements: 69.1, 69.2, 69.3_
+- [ ] 19.2 Write property test for Hyperbolic SSM throughput
+  - **Property 20: Hyperbolic SSM Throughput**
+  - **Validates: Requirements 69.4**
+- [ ] 19.3 Write unit tests for Hyperbolic SSM
+  - Test state evolution, throughput
+  - _Requirements: 69.1-69.6_
+
+- [x] 20. Implement Adaptive Hyperbolic Computation
+- [x] 20.1 Create adaptive_computation.py with complexity-based halting
+  - Use hyperbolic distance from origin as complexity signal
+  - Fewer layers for tokens near origin
+  - _Requirements: 80.1, 80.2, 80.3_
+- [ ] 20.2 Write property test for adaptive computation savings
+  - **Property 22: Adaptive Computation Savings**
+  - **Validates: Requirements 80.4**
+- [x] 20.3 Write unit tests for Adaptive Computation
+  - Test compute savings, halting
+  - _Requirements: 80.1-80.6_
+
+- [ ] 21. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 22. Implement Phase8IntegratedModel
+- [x] 22.1 Create integrated_model.py combining all components
+  - Integrate Flash Hyperbolic, Entailment, Topology, Sheaf
+  - Add BK-Core and AR-SSM integration
+  - _Requirements: All_
+- [x] 22.2 Implement component enable/disable flags
+  - Allow independent ON/OFF for each component
+  - _Requirements: All_
+- [x] 22.3 Implement diagnostics collection
+  - Collect diagnostics from all components
+  - _Requirements: All_
+- [x] 22.4 Write integration tests for Phase8IntegratedModel
+  - Test full forward pass, diagnostics
+  - _Requirements: All_
+
+- [x] 23. Implement Sparse Hyperbolic Attention
+- [x] 23.1 Create sparse_attention.py with LSH for hyperbolic space
+  - Top-k sparsity based on approximate distance
+  - Tree-based patterns for hierarchical structure
+  - _Requirements: 38.1, 38.2, 38.5_
+- [x] 23.2 Implement sparsity ratio control
+  - Configurable sparsity (default 90%)
+  - _Requirements: 38.3_
+- [x] 23.3 Write unit tests for Sparse Attention
+  - Test sparsity, approximation quality
+  - _Requirements: 38.1-38.6_
+
+- [x] 24. Implement KV Cache Compression
+- [x] 24.1 Create kv_compression.py with 4-bit quantization
+  - Per-channel scaling
+  - Hyperbolic distance-based eviction
+  - _Requirements: 39.1, 39.2_
+- [ ] 24.2 Implement learned projection to lower dimension
+  - _Requirements: 39.3_
+- [ ] 24.3 Implement fused decompression
+  - Fuse with distance computation
+  - _Requirements: 39.5_
+- [x] 24.4 Write unit tests for KV Compression
+  - Test compression ratio, accuracy
+  - _Requirements: 39.1-39.6_
+
+- [ ] 25. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 26. Implement Dynamic Curvature Adaptation
+- [x] 26.1 Create curvature_adapter.py with topology-based adaptation
+  - Increase curvature for high β₁E
+  - Decrease for flat hierarchy
+  - _Requirements: 12.1, 12.2, 12.3_
+- [x] 26.2 Implement smooth curvature transitions
+  - Prevent gradient discontinuities
+  - _Requirements: 12.4_
+- [x] 26.3 Write unit tests for Curvature Adaptation
+  - Test adaptation logic, smoothness
+  - _Requirements: 12.1-12.5_
+
+- [x] 27. Implement Koopman-Hyperbolic Bridge
+- [x] 27.1 Create koopman_bridge.py with eigenfunction geodesics
+  - Represent eigenfunctions as geodesics
+  - Place stable modes near boundary
+  - _Requirements: 25.1, 25.2, 25.3_
+- [x] 27.2 Implement multi-step prediction along geodesics
+  - Use parallel transport
+  - _Requirements: 25.4_
+- [x] 27.3 Write unit tests for Koopman Bridge
+  - Test eigenfunction representation, prediction
+  - _Requirements: 25.1-25.6_
+
+- [x] 28. Implement Numerical Safety Guards
+- [x] 28.1 Create numerical_guard.py with boundary collapse detection
+  - Check for norm > 0.999
+  - Apply norm regularization
+  - _Requirements: 6.6_
+- [x] 28.2 Create gradient_safety.py with gradient clipping
+  - Hyperbolic gradient clipping
+  - Explosion detection
+  - _Requirements: 6.4, 6.5_
+- [x] 28.3 Write unit tests for Safety Guards
+  - Test detection, recovery
+  - _Requirements: 6.1-6.6_
+
+- [ ] 29. Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 30. Implement Comprehensive GPU Benchmark Suite
+- [ ] 30.1 Create benchmark_phase8_throughput.py
+  - Measure tokens/sec at seq=1024, 2048, 4096, 8192
+  - Compare to Phase 7 baseline
+  - Target: 2x throughput improvement
+  - Output: results/benchmarks/phase8_throughput_benchmark.json
+  - _Requirements: 30.1, 30.2_
+- [ ] 30.2 Create benchmark_phase8_memory.py with GPU profiling
+  - Measure peak VRAM at various sequence lengths
+  - Use torch.cuda.memory_stats() for detailed breakdown
+  - Target: 50-80% memory reduction vs Phase 7
+  - Output: results/benchmarks/phase8_memory_profile.json
+  - _Requirements: 30.2_
+- [ ] 30.3 Create benchmark_triton_kernels.py
+  - Compare all Triton kernels: flash, enhanced, quantized
+  - Measure FLOPS utilization with nvprof/nsight
+  - Target: 70%+ FLOPS utilization
+  - Output: results/benchmarks/phase8_triton_benchmark.json
+  - _Requirements: 31.4, 26.4_
+- [ ] 30.4 Create benchmark_quantization.py
+  - Compare FP16, INT8, INT4 throughput
+  - Measure accuracy degradation
+  - Target: INT8 2x speedup, <1% PPL degradation
+  - Output: results/benchmarks/phase8_quantization_benchmark.json
+  - _Requirements: 36.5, 4.3, 4.4_
+- [ ] 30.5 Create benchmark_hierarchical_tasks.py
+  - WordNet hypernym prediction accuracy
+  - Tree structure reconstruction F1
+  - Target: 7%+ improvement over Phase 7
+  - Output: results/benchmarks/phase8_hierarchical_benchmark.json
+  - _Requirements: 30.4_
+- [ ] 30.6 Create benchmark_long_context.py
+  - Perplexity on 2048, 4096, 8192, 16384 tokens
+  - Memory usage at each length
+  - Target: Support 16384 tokens on RTX 3080 (10GB)
+  - Output: results/benchmarks/phase8_long_context_benchmark.json
+  - _Requirements: 30.5_
+- [ ] 30.7 Create benchmark_consumer_gpu.py
+  - Test on RTX 3080 (10GB), RTX 3090 (24GB), RTX 4090 (24GB)
+  - Verify all targets are met on each GPU
+  - Output: results/benchmarks/phase8_consumer_gpu_benchmark.json
+  - _Requirements: 10.1-10.6, 28.1-28.6_
+- [ ] 30.8 Write benchmark validation tests
+  - Verify benchmark correctness
+  - _Requirements: 30.1-30.6_
+
+- [ ] 31. Implement Documentation
+- [ ] 31.1 Create PHASE8_IMPLEMENTATION_GUIDE.md
+  - Installation, configuration, usage
+- [ ] 31.2 Create PHASE8_API_REFERENCE.md
+  - API documentation for all modules
+- [ ] 31.3 Create example scripts
+  - phase8_basic_usage.py
+  - phase8_entailment_demo.py
+  - phase8_topology_demo.py
+  - phase8_optimization_demo.py
+- [ ] 31.4 Create quick reference guides
+  - PHASE8_ENTAILMENT_QUICK_REFERENCE.md
+  - PHASE8_TOPOLOGY_QUICK_REFERENCE.md
+  - PHASE8_OPTIMIZATION_QUICK_REFERENCE.md
+
+- [ ] 32. Implement Advanced Triton Optimizations
+- [ ] 32.1 Create fused_ln_hyperbolic_triton.py
+  - Fuse LayerNorm with hyperbolic projection
+  - Warp-level reduction for mean/variance
+  - Target: 80%+ memory bandwidth utilization
+  - _Requirements: 45.1-45.6_
+- [ ] 32.2 Create quantized_hyperbolic_triton.py
+  - INT8 distance computation with lookup tables
+  - INT4 weights with 8-bit activations (W4A8)
+  - Target: 2x speedup for INT8, 4x for INT4
+  - _Requirements: 36.1-36.6_
+- [ ] 32.3 Create sparse_hyperbolic_triton.py
+  - Top-k sparsity with LSH for hyperbolic space
+  - Skip zero blocks entirely
+  - Target: 5x speedup at 90% sparsity
+  - _Requirements: 38.1-38.6_
+- [ ] 32.4 Create register_tiled_distance_triton.py
+  - Register-tiled computation for hyperbolic distance
+  - Maximize ILP (4+ independent ops per cycle)
+  - Target: Zero register spilling
+  - _Requirements: 51.1-51.6_
+- [ ] 32.5 GPU benchmark: All Triton kernels
+  - Compare fused, quantized, sparse, register-tiled
+  - Output: results/benchmarks/phase8_triton_all_kernels.json
+- [ ] 32.6 Write unit tests for Triton kernels
+  - Test correctness, performance
+  - _Requirements: 32.1-32.5_
+
+- [ ] 33. Implement Memory Optimization Kernels
+- [ ] 33.1 Create kv_cache_compression_triton.py
+  - 4-bit KV cache with per-channel scaling
+  - Fused decompression with distance computation
+  - Target: 4x compression, <1% PPL degradation
+  - _Requirements: 39.1-39.6_
+- [ ] 33.2 Create memory_pool_triton.py
+  - Pre-allocated memory blocks for hyperbolic tensors
+  - Sub-microsecond allocation latency
+  - Target: <20% fragmentation
+  - _Requirements: 44.1-44.6_
+- [ ] 33.3 Create prefetch_hyperbolic_triton.py
+  - Software prefetch for K, V blocks
+  - Target: 90%+ L2 cache hit rate
+  - _Requirements: 48.1-48.6_
+- [ ] 33.4 GPU memory profiling for all optimizations
+  - Measure memory savings from each optimization
+  - Output: results/benchmarks/phase8_memory_optimizations.json
+- [ ] 33.5 Write unit tests for memory optimizations
+  - Test compression, pooling, prefetch
+  - _Requirements: 33.1-33.4_
+
+- [ ] 34. Implement CI/CD Integration
+- [ ] 34.1 Create .github/workflows/phase8_tests.yml
+  - Automated testing on push/PR
+- [ ] 34.2 Create .github/workflows/phase8_gpu_benchmarks.yml
+  - GPU benchmark on self-hosted runner (RTX 3080)
+  - Run on merge to main
+- [ ] 34.3 Add performance regression detection
+  - Compare against baseline benchmarks
+  - Fail if throughput drops >5%
+- [ ] 34.4 Add memory regression detection
+  - Verify memory targets are met
+  - Fail if memory increases >10%
+
+- [ ] 35. Final GPU Verification
+- [ ] 35.1 Run full benchmark suite on RTX 3080
+  - Verify all throughput targets
+  - Verify all memory targets
+  - Output: results/benchmarks/phase8_rtx3080_final.json
+- [ ] 35.2 Run full benchmark suite on RTX 3090/4090 (if available)
+  - Verify scaling to larger GPUs
+  - Output: results/benchmarks/phase8_rtx3090_final.json
+- [ ] 35.3 Generate final performance report
+  - Compare all metrics to Phase 7
+  - Output: results/benchmarks/PHASE8_FINAL_PERFORMANCE_REPORT.md
+- [ ] 35.4 Update paper/main.tex with benchmark results
+  - Add Phase 8 performance tables
+  - Add Triton kernel comparison figures
+
+- [ ] 36. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
