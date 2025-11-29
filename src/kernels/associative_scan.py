@@ -278,19 +278,8 @@ def fused_associative_scan(
     # Allocate output
     output_flat = torch.empty_like(x_flat)
     
-    # Requirement 8.1: Implement configurable block sizes (BLOCK_SIZE parameter)
-    # Choose block size based on sequence length
-    # Optimal block sizes for different GPU architectures
-    if N <= 256:
-        BLOCK_SIZE = 256
-    elif N <= 512:
-        BLOCK_SIZE = 512
-    elif N <= 1024:
-        BLOCK_SIZE = 1024
-    else:
-        BLOCK_SIZE = 1024  # Max block size for most GPUs
-    
     # Calculate grid size (number of blocks)
+    # Note: BLOCK_SIZE is auto-tuned by Triton, so we don't pass it explicitly
     grid = lambda meta: (triton.cdiv(N, meta['BLOCK_SIZE']),)
     
     # Launch kernel for each batch element
@@ -298,11 +287,11 @@ def fused_associative_scan(
     # A more optimized version would process multiple batch elements in parallel
     for b in range(batch_size):
         # Use optimized kernel
+        # BLOCK_SIZE is determined by autotune, not passed as argument
         fused_associative_scan_kernel_optimized[grid](
             x_flat[b],
             output_flat[b],
             N=N,
-            BLOCK_SIZE=BLOCK_SIZE,
         )
     
     # Reverse back if needed

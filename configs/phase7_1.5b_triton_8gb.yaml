@@ -1,0 +1,123 @@
+# Phase 7 - 1.5B Parameters Configuration (8GB VRAM対応版)
+# 用途: RTX 3080 8GB / RTX 3070などの8GB GPU向け
+# パラメータ数: ~1.2B (1,200,000,000)
+# VRAM: ~7-8GB (batch_size=1, gradient_accumulation=16)
+# 
+# 注意: オプティマイザをAdamW 8bitに変更してメモリを削減
+
+# ============================================================================
+# Architecture - 1.2B Parameters (8GB最適化)
+# ============================================================================
+model_type: phase7
+d_model: 1792           # 埋め込み次元 (8GB向けに調整)
+n_layers: 24            # Transformerレイヤー数
+n_seq: 512              # シーケンス長
+num_heads: 16           # アテンションヘッド数
+use_hybrid_attention: true
+hyperbolic_window_size: 128
+local_window_size: 128
+
+# ============================================================================
+# HTT Embedding (Holographic Tensor Train) - パラメータ圧縮
+# ============================================================================
+htt_rank: 32
+use_htt_compression: true
+
+# ============================================================================
+# AR-SSM (Adaptive Rank Semiseparable) - 長距離依存性
+# ============================================================================
+ar_ssm_max_rank: 64
+ar_ssm_min_rank: 8
+use_ar_ssm: true
+
+# ============================================================================
+# Triton Kernels - 必須 (全最適化ON)
+# ============================================================================
+use_triton_kernel: true
+triton_kernel_version: 'fast'
+use_fused_kernels: true
+use_memory_efficient_attention: true
+
+# ============================================================================
+# Training Configuration - 8GB最適化
+# ============================================================================
+batch_size: 1
+gradient_accumulation_steps: 16
+epochs: 1  # Changed from 10 to 1 for quick test
+learning_rate: 0.0001  # Lower LR for stability (was 0.0003)
+weight_decay: 0.01
+grad_clip: 1.0
+warmup_steps: 2000
+max_steps: 10000  # Changed from 100000 to 10000 for quick test (~1.4 hours)
+
+# ============================================================================
+# Mixed Precision & Optimization - 全最適化ON + 8bit optimizer
+# ============================================================================
+use_mixed_precision: true
+use_gradient_checkpointing: true  # use_reentrant=True for vmap compatibility
+use_flash_attention: true
+use_fused_optimizer: true
+optimizer: 'adamw_8bit'             # 8bit AdamW (メモリ削減)
+use_compile: true
+
+# ============================================================================
+# Curvature Scheduler
+# ============================================================================
+curvature_scheduler:
+  enabled: true
+  type: 'cosine'
+  warmup_steps: 5000
+  target_curvature: 1.0
+  min_curvature: 0.1
+
+# ============================================================================
+# Data Configuration
+# ============================================================================
+dataset: configs/dataset_mixing.yaml
+data_limit: 500000000
+vocab_size: 50257
+max_seq_length: 512
+
+# ============================================================================
+# Logging & Checkpointing
+# ============================================================================
+log_interval: 50
+save_interval: 2000
+eval_interval: 1000
+save_dir: checkpoints/phase7_1.5b_triton_8gb
+wandb_project: muse-phase7-1.5b-8gb
+use_tensorboard: true
+
+# ============================================================================
+# Advanced Optimizations
+# ============================================================================
+use_cpu_offload: false
+use_zero_optimization: false
+use_activation_checkpointing: true
+use_gradient_clipping: true
+use_lr_scheduler: true
+lr_scheduler_type: 'cosine'
+
+# ============================================================================
+# Stability & Safety
+# ============================================================================
+use_gradient_monitoring: true
+use_nan_detection: true
+use_loss_scaling: true
+initial_loss_scale: 65536.0
+
+# ============================================================================
+# Hardware Optimization
+# ============================================================================
+num_workers: 4
+pin_memory: true
+prefetch_factor: 2
+persistent_workers: true
+
+# ============================================================================
+# Evaluation
+# ============================================================================
+eval_batch_size: 1
+eval_steps: 100
+compute_perplexity: true
+compute_loss_breakdown: true

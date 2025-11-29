@@ -56,11 +56,21 @@ help:
 		echo "make up         - Docker環境の起動"; \
 		echo "make down       - Docker環境の停止"; \
 		echo ""; \
-		echo "Phase 7 (ハイブリッド双曲アテンション):"; \
-		echo "make train-phase7       - Phase 7モデルの学習 (CUDA+Triton必須)"; \
-		echo "make train-phase7-small - テスト用小規模設定で学習"; \
-		echo "make test-phase7        - Phase 7統合テスト実行"; \
-		echo "make triton-attn        - Tritonカーネル動作確認"; \
+		echo "Phase 7 (ハイブリッド双曲アテンション - Triton必須):"; \
+		echo "make check-phase7-env       - Phase 7環境チェック (CUDA+Triton確認)"; \
+		echo "make train-phase7-1.5b      - 🚀 1.5Bパラメータ訓練 (10GB+ VRAM)"; \
+		echo "make train-phase7-1.5b-8gb  - 🚀 1.2Bパラメータ訓練 (8GB VRAM最適化)"; \
+		echo "make train-phase7-1.5b-test - 🧪 1.5Bモデル動作確認 (ダミーデータ)"; \
+		echo "make train-phase7-1.5b-resume CHECKPOINT=... - 🔄 訓練再開"; \
+		echo "make bench-phase7-1.5b      - 📊 GPUベンチマーク"; \
+		echo "make chat-phase7-1.5b CHECKPOINT=... - 💬 チャット推論"; \
+		echo "make train-phase7           - Phase 7モデルの学習 (デフォルト設定)"; \
+		echo "make train-phase7-small     - テスト用小規模設定で学習"; \
+		echo "make train-phase7-large     - 大規模設定で学習 (24GB+ VRAM)"; \
+		echo "make train-phase7-config CONFIG=path/to/config.yaml - カスタム設定で学習"; \
+		echo "make train-phase7-resume CHECKPOINT=path/to/model.pt - 訓練再開"; \
+		echo "make test-phase7            - Phase 7統合テスト実行"; \
+		echo "make triton-attn            - Tritonカーネル動作確認"; \
 		echo ""; \
 		echo "Phase 8 (双曲超越 - O(N)複雑度):"; \
 		echo "make train-phase8       - Phase 8モデルの学習 (O(N)線形アテンション)"; \
@@ -96,11 +106,21 @@ help:
 		echo "make up         - Start Docker environment"; \
 		echo "make down       - Stop Docker environment"; \
 		echo ""; \
-		echo "Phase 7 (Hybrid Hyperbolic Attention):"; \
-		echo "make train-phase7       - Train Phase 7 model (CUDA+Triton required)"; \
-		echo "make train-phase7-small - Train with small config for testing"; \
-		echo "make test-phase7        - Run Phase 7 integration tests"; \
-		echo "make triton-attn        - Verify Triton kernel"; \
+		echo "Phase 7 (Hybrid Hyperbolic Attention - Triton Required):"; \
+		echo "make check-phase7-env       - Check Phase 7 environment (CUDA+Triton)"; \
+		echo "make train-phase7-1.5b      - 🚀 Train 1.5B model (10GB+ VRAM)"; \
+		echo "make train-phase7-1.5b-8gb  - 🚀 Train 1.2B model (8GB VRAM optimized)"; \
+		echo "make train-phase7-1.5b-test - 🧪 Test 1.5B model (dummy data)"; \
+		echo "make train-phase7-1.5b-resume CHECKPOINT=... - 🔄 Resume training"; \
+		echo "make bench-phase7-1.5b      - 📊 Benchmark GPU"; \
+		echo "make chat-phase7-1.5b CHECKPOINT=... - 💬 Chat inference"; \
+		echo "make train-phase7           - Train Phase 7 model (default config)"; \
+		echo "make train-phase7-small     - Train with small config for testing"; \
+		echo "make train-phase7-large     - Train with large config (24GB+ VRAM)"; \
+		echo "make train-phase7-config CONFIG=path/to/config.yaml - Train with custom config"; \
+		echo "make train-phase7-resume CHECKPOINT=path/to/model.pt - Resume training"; \
+		echo "make test-phase7            - Run Phase 7 integration tests"; \
+		echo "make triton-attn            - Verify Triton kernel"; \
 		echo ""; \
 		echo "Phase 8 (Hyperbolic Transcendence - O(N) Complexity):"; \
 		echo "make train-phase8       - Train Phase 8 model (O(N) linear attention)"; \
@@ -244,36 +264,67 @@ triton-fast:
 	$(PYTHON) scripts/check_hyperbolic_triton.py --use-triton --use-mask --kernel fast --seq-len 512 --d-model 256 --heads 8 --json results/triton_attention_check.json
 
 # ============================================================================
-# Phase 7 Training Commands
+# Phase 7 Training Commands (Triton必須 - CUDA+Triton Required)
 # ============================================================================
 
-# Phase 7 Training - Default configuration (RTX 3080 optimized)
-train-phase7:
+# Phase 7環境チェック (Triton必須確認)
+check-phase7-env:
+	@echo "=========================================="
+	@echo "🔍 Phase 7 環境チェック (Triton必須)"
+	@echo "=========================================="
+	@$(PYTHON) -c "import torch; print('✓ PyTorch:', torch.__version__)" || (echo "❌ PyTorch not found"; exit 1)
+	@$(PYTHON) -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print('✓ CUDA:', torch.version.cuda)" || (echo "❌ CUDA not available"; exit 1)
+	@$(PYTHON) -c "import triton; print('✓ Triton:', triton.__version__)" || (echo "❌ Triton not found. Install: pip install triton"; exit 1)
+	@$(PYTHON) -c "from src.kernels.hyperbolic_attention_fast import fast_hyperbolic_attention; print('✓ Hyperbolic Triton kernel loaded')" || (echo "❌ Triton kernel load failed"; exit 1)
+	@echo "=========================================="
+	@echo "✅ Phase 7環境OK - 訓練可能です"
+	@echo "=========================================="
+
+# Phase 7 Training - Default configuration (RTX 3080 optimized, Triton必須)
+train-phase7: check-phase7-env
 	@if [ ! -f configs/dataset_mixing.yaml ]; then \
 		echo "Error: Recipe not found. Please run 'make recipe' first."; \
 		exit 1; \
 	fi
+	@echo "🚀 Phase 7訓練開始 (Tritonカーネル使用)"
 	$(PYTHON) scripts/train_phase7.py --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
 
-# Phase 7 Training - Small configuration for testing
-train-phase7-small:
+# Phase 7 Training - Small configuration for testing (Triton必須)
+train-phase7-small: check-phase7-env
+	@echo "🧪 Phase 7小規模テスト訓練 (Tritonカーネル使用)"
 	$(PYTHON) scripts/train_phase7.py --d-model 256 --n-layers 4 --n-seq 256 --batch-size 8 --epochs 1 $(TRAIN_OVERRIDES)
 
-# Phase 7 Training - Large configuration (requires 24GB+ VRAM)
-train-phase7-large:
+# Phase 7 Training - Large configuration (requires 24GB+ VRAM, Triton必須)
+train-phase7-large: check-phase7-env
 	@if [ ! -f configs/dataset_mixing.yaml ]; then \
 		echo "Error: Recipe not found. Please run 'make recipe' first."; \
 		exit 1; \
 	fi
+	@echo "🔥 Phase 7大規模訓練 (Tritonカーネル使用)"
 	$(PYTHON) scripts/train_phase7.py --d-model 768 --n-layers 12 --n-seq 1024 --batch-size 2 --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
 
-# Phase 7 Training - Resume from checkpoint
-train-phase7-resume:
+# Phase 7 Training - Resume from checkpoint (Triton必須)
+train-phase7-resume: check-phase7-env
 	@if [ -z "$(CHECKPOINT)" ]; then \
 		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
 		exit 1; \
 	fi
+	@echo "🔄 Phase 7訓練再開 (Tritonカーネル使用)"
 	$(PYTHON) scripts/train_phase7.py --resume-from $(CHECKPOINT) --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+# Phase 7 Training - Custom config file (Triton必須)
+train-phase7-config: check-phase7-env
+	@if [ -z "$(CONFIG)" ]; then \
+		echo "Error: Please specify CONFIG=path/to/config.yaml"; \
+		echo "Example: make train-phase7-config CONFIG=configs/phase7_optimized.yaml"; \
+		exit 1; \
+	fi
+	@if [ ! -f $(CONFIG) ]; then \
+		echo "Error: Config file not found: $(CONFIG)"; \
+		exit 1; \
+	fi
+	@echo "⚙️  Phase 7訓練 (カスタム設定: $(CONFIG))"
+	$(PYTHON) scripts/train_phase7.py --config $(CONFIG) $(TRAIN_OVERRIDES)
 
 # Phase 7 Validation - Run integration tests
 test-phase7:
@@ -361,6 +412,83 @@ train-phase7-max-resume:
 # GPU Benchmark - Find maximum parameters for your GPU
 gpu-benchmark:
 	$(PYTHON) scripts/gpu_benchmark_standalone.py
+
+# ============================================================================
+# Phase 7 - 1.5B Parameters Training (Triton必須 - 全最適化ON)
+# ============================================================================
+
+# 🚀 Phase 7 - 1.5Bパラメータ訓練開始 (Triton必須)
+train-phase7-1.5b: check-phase7-env
+	@echo "=========================================="
+	@echo "🚀 Phase 7 - 1.5B Parameters Training"
+	@echo "=========================================="
+	@echo "Config: d_model=2048, n_layers=24, seq=1024"
+	@echo "Parameters: ~1.5B (1,500,000,000)"
+	@echo "VRAM: ~8-10GB (batch=1, gradient_accum=16)"
+	@echo "Triton: 必須 (全最適化ON)"
+	@echo ""
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "⚠️  Warning: Recipe not found. Please run 'make recipe' first."; \
+		echo "Using dry-run mode for testing..."; \
+		$(PYTHON) scripts/train_phase7.py --config configs/phase7_1.5b_triton.yaml --dry-run; \
+	else \
+		$(PYTHON) scripts/train_phase7.py --config configs/phase7_1.5b_triton.yaml --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES); \
+	fi
+
+# 🚀 Phase 7 - 1.5Bパラメータ訓練 (8GB VRAM版)
+train-phase7-1.5b-8gb: check-phase7-env
+	@echo "=========================================="
+	@echo "🚀 Phase 7 - 1.2B Parameters (8GB VRAM)"
+	@echo "=========================================="
+	@echo "Config: d_model=1792, n_layers=24, seq=512"
+	@echo "Parameters: ~1.2B (optimized for 8GB GPU)"
+	@echo "VRAM: ~7-8GB (batch=1, gradient_accum=16)"
+	@echo "Optimizer: AdamW 8bit (memory efficient)"
+	@echo ""
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "⚠️  Warning: Recipe not found. Using dry-run mode..."; \
+		$(PYTHON) scripts/train_phase7.py --config configs/phase7_1.5b_triton_8gb.yaml --dry-run; \
+	else \
+		$(PYTHON) scripts/train_phase7.py --config configs/phase7_1.5b_triton_8gb.yaml --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES); \
+	fi
+
+# 🧪 1.5Bモデル - ダミーデータでテスト
+train-phase7-1.5b-test: check-phase7-env
+	@echo "=========================================="
+	@echo "🧪 Phase 7 - 1.5B Dry Run Test"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase7.py --config configs/phase7_1.5b_triton.yaml --dry-run
+
+# 🔄 1.5Bモデル - 訓練再開
+train-phase7-1.5b-resume: check-phase7-env
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
+		echo "Example: make train-phase7-1.5b-resume CHECKPOINT=checkpoints/phase7_1.5b_triton/step_2000.pt"; \
+		exit 1; \
+	fi
+	@echo "🔄 Phase 7 - 1.5B Training Resume"
+	$(PYTHON) scripts/train_phase7.py --config configs/phase7_1.5b_triton.yaml --dataset configs/dataset_mixing.yaml --resume-from $(CHECKPOINT) $(TRAIN_OVERRIDES)
+
+# 📊 1.5Bモデル - GPU性能ベンチマーク
+bench-phase7-1.5b:
+	@echo "=========================================="
+	@echo "📊 Phase 7 - 1.5B GPU Benchmark"
+	@echo "=========================================="
+	$(PYTHON) scripts/gpu_benchmark_phase7.py --config configs/phase7_1.5b_triton.yaml
+
+# 💬 1.5Bモデル - チャット推論
+chat-phase7-1.5b:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "========================================"; \
+		echo "💬 Phase 7 - 1.5B Chat (Auto-detect)"; \
+		echo "========================================"; \
+		$(PYTHON) scripts/chat_inference.py --config configs/phase7_1.5b_triton.yaml; \
+	else \
+		echo "========================================"; \
+		echo "💬 Phase 7 - 1.5B Chat"; \
+		echo "========================================"; \
+		$(PYTHON) scripts/chat_inference.py --config configs/phase7_1.5b_triton.yaml --checkpoint $(CHECKPOINT); \
+	fi
 
 # ============================================================================
 # Phase 7 Chat AI Training (1.8B Monster - Quick Start)

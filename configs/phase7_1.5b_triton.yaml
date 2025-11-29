@@ -1,0 +1,127 @@
+# Phase 7 - 1.5B Parameters Configuration (Triton必須 - 全最適化ON)
+# 用途: 本格的な大規模言語モデル訓練
+# パラメータ数: ~1.5B (1,500,000,000)
+# VRAM: ~8-10GB (batch_size=1, gradient_accumulation=16)
+# 
+# 物理的直観:
+# Phase 7は双曲空間アテンションとSSMを組み合わせたハイブリッドモデル
+# - ローカルコンテキスト: 双曲空間での階層的関係を捉える
+# - グローバルコンテキスト: SSMによる効率的な長距離依存性
+# - Tritonカーネル: GPU最適化された高速演算
+
+# ============================================================================
+# Architecture - 1.5B Parameters
+# ============================================================================
+model_type: phase7
+d_model: 2048           # 埋め込み次元 (1.5Bに最適化)
+n_layers: 24            # Transformerレイヤー数
+n_seq: 512              # シーケンス長 (メモリ効率のため512に調整)
+num_heads: 16           # アテンションヘッド数
+use_hybrid_attention: true
+hyperbolic_window_size: 128   # 双曲アテンションのウィンドウサイズ
+local_window_size: 128        # ローカルアテンションのウィンドウサイズ
+
+# ============================================================================
+# HTT Embedding (Holographic Tensor Train) - パラメータ圧縮
+# ============================================================================
+htt_rank: 32            # HTT埋め込みのランク (高ランクで表現力向上)
+use_htt_compression: true
+
+# ============================================================================
+# AR-SSM (Adaptive Rank Semiseparable) - 長距離依存性
+# ============================================================================
+ar_ssm_max_rank: 64     # SSMの最大ランク (長距離依存性の表現力)
+ar_ssm_min_rank: 8      # SSMの最小ランク
+use_ar_ssm: true
+
+# ============================================================================
+# Triton Kernels - 必須 (全最適化ON)
+# ============================================================================
+use_triton_kernel: true
+triton_kernel_version: 'fast'  # 'fast' = 最速カーネル
+use_fused_kernels: true        # 融合カーネル使用
+use_memory_efficient_attention: true  # メモリ効率的アテンション
+
+# ============================================================================
+# Training Configuration - 最適化設定
+# ============================================================================
+batch_size: 1           # バッチサイズ (VRAM制約)
+gradient_accumulation_steps: 16  # 勾配累積 (実効バッチサイズ=16)
+epochs: 10
+learning_rate: 0.0001   # Lower LR for stability (was 0.0003)
+weight_decay: 0.01
+grad_clip: 1.0
+warmup_steps: 2000      # ウォームアップステップ数
+max_steps: 100000       # 最大訓練ステップ数
+
+# ============================================================================
+# Mixed Precision & Optimization - 全最適化ON
+# ============================================================================
+use_mixed_precision: true           # FP16混合精度訓練
+use_gradient_checkpointing: true    # use_reentrant=True for vmap compatibility
+use_flash_attention: true           # Flash Attention (高速化)
+use_fused_optimizer: true           # 融合オプティマイザ
+optimizer: 'adamw_fused'            # 融合AdamW
+use_compile: true                   # torch.compile使用 (PyTorch 2.0+)
+
+# ============================================================================
+# Curvature Scheduler - 双曲空間の曲率を動的調整
+# ============================================================================
+curvature_scheduler:
+  enabled: true
+  type: 'cosine'        # コサインスケジューリング
+  warmup_steps: 5000
+  target_curvature: 1.0
+  min_curvature: 0.1
+
+# ============================================================================
+# Data Configuration
+# ============================================================================
+dataset: configs/dataset_mixing.yaml
+data_limit: 500000000   # 500M tokens (大規模訓練)
+vocab_size: 50257       # GPT-2 vocabulary
+max_seq_length: 1024
+
+# ============================================================================
+# Logging & Checkpointing
+# ============================================================================
+log_interval: 50
+save_interval: 2000     # 2000ステップごとに保存
+eval_interval: 1000     # 1000ステップごとに評価
+save_dir: checkpoints/phase7_1.5b_triton
+wandb_project: muse-phase7-1.5b
+use_tensorboard: true
+
+# ============================================================================
+# Advanced Optimizations - 追加最適化
+# ============================================================================
+use_cpu_offload: false              # CPU オフロード (不要)
+use_zero_optimization: false        # ZeRO最適化 (単一GPU用)
+use_activation_checkpointing: true  # アクティベーションチェックポイント
+use_gradient_clipping: true         # 勾配クリッピング
+use_lr_scheduler: true              # 学習率スケジューラ
+lr_scheduler_type: 'cosine'         # コサインアニーリング
+
+# ============================================================================
+# Stability & Safety
+# ============================================================================
+use_gradient_monitoring: true       # 勾配モニタリング
+use_nan_detection: true             # NaN検出
+use_loss_scaling: true              # 損失スケーリング
+initial_loss_scale: 65536.0
+
+# ============================================================================
+# Hardware Optimization
+# ============================================================================
+num_workers: 4          # データローダーのワーカー数
+pin_memory: true        # ピンメモリ使用
+prefetch_factor: 2      # プリフェッチファクター
+persistent_workers: true # 永続的ワーカー
+
+# ============================================================================
+# Evaluation
+# ============================================================================
+eval_batch_size: 1
+eval_steps: 100
+compute_perplexity: true
+compute_loss_breakdown: true

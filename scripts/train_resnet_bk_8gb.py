@@ -45,11 +45,13 @@ def create_dummy_dataset(config: ResNetBKConfig, num_samples: int = 1000):
 
 
 def train_epoch(model, dataloader, optimizer, scheduler, device, epoch, 
-                gradient_accumulation_steps=1, use_amp=False, empty_cache_every=10):
+                gradient_accumulation_steps=1, use_amp=False, empty_cache_every=10,
+                log_file=None, global_step=0):
     """1エポックの訓練"""
     model.train()
     total_loss = 0
     total_tokens = 0
+    current_step = global_step
     
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
     
@@ -129,6 +131,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch,
                 
                 optimizer.zero_grad()
                 scheduler.step()
+                current_step += 1
         
         # Stats
         total_loss += loss.item() * gradient_accumulation_steps * input_ids.numel()
@@ -147,10 +150,25 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, epoch,
         if torch.cuda.is_available():
             postfix['mem'] = f'{torch.cuda.memory_allocated() / 1024**3:.2f}GB'
         pbar.set_postfix(postfix)
+        
+        # Log to JSON file
+        if log_file and (batch_idx + 1) % gradient_accumulation_steps == 0:
+            log_entry = {
+                'timestamp': datetime.now().isoformat(),
+                'epoch': epoch,
+                'step': current_step,
+                'batch': batch_idx,
+                'loss': loss.item() * gradient_accumulation_steps,
+                'perplexity': torch.exp(loss * gradient_accumulation_steps).item(),
+                'learning_rate': scheduler.get_last_lr()[0],
+                'memory_gb': torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else 0
+            }
+            with open(log_file, 'a') as f:
+                f.write(json.dumps(log_entry) + '\n')
     
     avg_loss = total_loss / total_tokens
     avg_ppl = torch.exp(torch.tensor(avg_loss)).item()
-    return avg_loss, avg_ppl
+    return avg_loss, avg_ppl, current_step
 
 
 def main():
@@ -293,19 +311,40 @@ def main():
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     
+    # Create log file
+    log_file = save_dir / 'training_log.json'
+    print(f"Training log: {log_file}\n")
+    
+    global_step = 0
     start_time = time.time()
     for epoch in range(1, args.epochs + 1):
-        avg_loss, avg_ppl = train_epoch(
+        avg_loss, avg_ppl, global_step = train_epoch(
             model, dataloader, optimizer, scheduler, device, epoch,
             gradient_accumulation_steps=args.gradient_accumulation,
             use_amp=args.use_amp,
-            empty_cache_every=10
+            empty_cache_every=10,
+            log_file=log_file,
+            global_step=global_step
         )
         
-        print(f"\nEpoch {epoch} Summary:")
+        print(f"\nEpoch {epoch} Summary (Step {global_step}):")
         print(f"  Average Loss: {avg_loss:.4f}")
         print(f"  Average Perplexity: {avg_ppl:.2f}")
         print(f"  Time: {time.time() - start_time:.2f}s\n")
+        
+        # Log epoch summary
+        if log_file:
+            epoch_summary = {
+                'timestamp': datetime.now().isoformat(),
+                'epoch': epoch,
+                'step': global_step,
+                'type': 'epoch_summary',
+                'avg_loss': avg_loss,
+                'avg_perplexity': avg_ppl,
+                'elapsed_time': time.time() - start_time
+            }
+            with open(log_file, 'a') as f:
+                f.write(json.dumps(epoch_summary) + '\n')
         
         # Save checkpoint
         if epoch % (args.save_every // len(dataloader) + 1) == 0:

@@ -46,6 +46,12 @@ class MoEResNetBKLayer(nn.Module):
         self.bk_scale = nn.Parameter(torch.ones(config.d_model, dtype=torch.float32))
         self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
         self.homeostasis = HomeostasisController()
+        
+        # Initialize v_proj with very small weights to prevent NaN in BK Core
+        with torch.no_grad():
+            nn.init.normal_(self.v_proj.weight, mean=0.0, std=0.01)
+            if self.v_proj.bias is not None:
+                nn.init.zeros_(self.v_proj.bias)
 
         self.use_birman_schwinger = config.use_birman_schwinger
         if config.use_birman_schwinger:
@@ -293,12 +299,18 @@ class LanguageModel(nn.Module):
         return [i for i, is_prime in enumerate(sieve) if is_prime]
 
     def _reset_parameters(self, prime_bump_init: bool, prime_bump_scale: float):
-        nn.init.normal_(self.token_embedding.weight, mean=0.0, std=prime_bump_scale)
-        nn.init.normal_(self.position_embedding.weight, mean=0.0, std=prime_bump_scale)
+        # Use smaller std for embeddings to prevent NaN
+        embed_std = min(prime_bump_scale, 0.02)
+        nn.init.normal_(self.token_embedding.weight, mean=0.0, std=embed_std)
+        nn.init.normal_(self.position_embedding.weight, mean=0.0, std=embed_std)
 
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight)
+                # Use smaller initialization for stability
+                # Especially important for v_proj which feeds into BK Core
+                fan_in = module.weight.size(1)
+                std = (1.0 / fan_in) ** 0.5  # Smaller than xavier
+                nn.init.normal_(module.weight, mean=0.0, std=std)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.LayerNorm):
@@ -331,7 +343,8 @@ class LanguageModel(nn.Module):
         for block in self.blocks:
             if self.use_gradient_checkpointing and self.training:
                 from torch.utils.checkpoint import checkpoint
-                h = checkpoint(lambda inp, blk=block: blk(inp), h)
+                # use_reentrant=True for vmap compatibility
+                h = checkpoint(lambda inp, blk=block: blk(inp), h, use_reentrant=True)
             else:
                 h = block(h)
 

@@ -29,6 +29,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    print("Warning: tqdm not installed. Install with: pip install tqdm")
+
 # ============================================================================
 # STRICT REQUIREMENTS CHECK - Phase 7 requires CUDA + Triton
 # ============================================================================
@@ -43,7 +50,7 @@ def check_phase7_requirements():
     # 1. CUDA Check
     if not torch.cuda.is_available():
         print("\n" + "="*60)
-        print("❌ ERROR: Phase 7 requires NVIDIA CUDA GPU")
+        print("ERROR: Phase 7 requires NVIDIA CUDA GPU")
         print("="*60)
         print("\nPhase 7のハイブリッド双曲アテンションは、")
         print("Tritonカーネルによる高速化が必須です。")
@@ -60,10 +67,10 @@ def check_phase7_requirements():
         import triton
         import triton.language as tl
         triton_version = getattr(triton, '__version__', 'unknown')
-        print(f"✓ Triton {triton_version} detected")
+        print(f"OK: Triton {triton_version} detected")
     except ImportError:
         print("\n" + "="*60)
-        print("❌ ERROR: Phase 7 requires Triton")
+        print("ERROR: Phase 7 requires Triton")
         print("="*60)
         print("\nTritonがインストールされていません。")
         print("\nインストール方法:")
@@ -112,6 +119,8 @@ import yaml
 warnings.filterwarnings("ignore", message=".*_register_pytree_node is deprecated.*")
 warnings.filterwarnings("ignore", message=".*torch.utils._pytree.*deprecated.*")
 warnings.filterwarnings("ignore", category=UserWarning, message=".*Triton kernel failed.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*use_reentrant.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*CuDNN issue.*nvrtc.so.*")
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -142,6 +151,7 @@ class Phase7TrainingConfig:
     weight_decay: float = 0.01
     grad_clip: float = 1.0
     warmup_steps: int = 1000
+    max_steps: Optional[int] = None  # If set, stop training after this many steps
     
     # Mixed Precision & Memory
     use_mixed_precision: bool = True
@@ -192,6 +202,7 @@ def parse_args() -> Phase7TrainingConfig:
     parser.add_argument("--weight-decay", type=float, default=0.01, help="Weight decay")
     parser.add_argument("--grad-clip", type=float, default=1.0, help="Gradient clipping")
     parser.add_argument("--warmup-steps", type=int, default=1000, help="Warmup steps")
+    parser.add_argument("--max-steps", type=int, default=None, help="Maximum training steps (overrides epochs)")
     
     # Memory Optimization
     parser.add_argument("--no-mixed-precision", action="store_true", help="Disable mixed precision")
@@ -219,7 +230,31 @@ def parse_args() -> Phase7TrainingConfig:
     # Resume
     parser.add_argument("--resume-from", type=str, default=None, help="Resume from checkpoint")
     
+    # Config file
+    parser.add_argument("--config", type=str, default=None, help="Load config from YAML file")
+    
+    # Dry run
+    parser.add_argument("--dry-run", action="store_true", help="Test with dummy data (no dataset required)")
+    
     args = parser.parse_args()
+    
+    # Load config from YAML if specified
+    if args.config:
+        config_path = Path(args.config)
+        if not config_path.exists():
+            print(f"Error: Config file not found: {args.config}")
+            sys.exit(1)
+        
+        print(f"📄 Loading config from: {args.config}")
+        with open(config_path, 'r') as f:
+            yaml_config = yaml.safe_load(f)
+        
+        # Override defaults with YAML config
+        for key, value in yaml_config.items():
+            # Convert YAML keys to arg names (e.g., d_model -> d_model)
+            arg_name = key.replace('-', '_')
+            if hasattr(args, arg_name) and getattr(args, arg_name) == parser.get_default(arg_name):
+                setattr(args, arg_name, value)
     
     config = Phase7TrainingConfig(
         d_model=args.d_model,
@@ -234,6 +269,7 @@ def parse_args() -> Phase7TrainingConfig:
         weight_decay=args.weight_decay,
         grad_clip=args.grad_clip,
         warmup_steps=args.warmup_steps,
+        max_steps=args.max_steps,
         use_mixed_precision=not args.no_mixed_precision,
         use_gradient_checkpointing=not args.no_gradient_checkpointing,
         use_triton_kernel=not args.no_triton,
@@ -248,9 +284,10 @@ def parse_args() -> Phase7TrainingConfig:
         seed=args.seed,
     )
     
-    # Store dataset path and resume path
+    # Store dataset path, resume path, and dry-run flag
     config.dataset_path = args.dataset
     config.resume_from = args.resume_from
+    config.dry_run = args.dry_run
     
     return config
 
@@ -343,12 +380,28 @@ def train_phase7():
                 print(f"   New config: batch_size={config.batch_size}, d_model={config.d_model}, n_seq={config.n_seq}")
     
     # Load data
-    print(f"\n📊 Loading data from: {config.dataset_path}")
+    print(f"\n📊 Loading data...")
     
-    dataset_path = Path(config.dataset_path)
-    if dataset_path.exists() and dataset_path.suffix in ['.yaml', '.yml']:
-        # Mixed dataset
-        mixed_loader, vocab, steps_per_epoch = get_mixed_data_loader(
+    # Dry run mode: use dummy data
+    if config.dry_run:
+        print("   Dry-run mode: Using dummy data for testing")
+        actual_vocab_size = config.vocab_size
+        steps_per_epoch = 100  # Small number for testing
+        use_mixed = False
+        
+        # Create dummy data generator
+        def get_dummy_batch():
+            x = torch.randint(0, actual_vocab_size, (config.batch_size, config.n_seq), device=device)
+            y = torch.randint(0, actual_vocab_size, (config.batch_size * config.n_seq,), device=device)
+            return x, y
+        
+        batch_iter_func = lambda epoch: [get_dummy_batch() for _ in range(steps_per_epoch)]
+    else:
+        print(f"   Loading from: {config.dataset_path}")
+        dataset_path = Path(config.dataset_path)
+        if dataset_path.exists() and dataset_path.suffix in ['.yaml', '.yml']:
+            # Mixed dataset
+            mixed_loader, vocab, steps_per_epoch = get_mixed_data_loader(
             config_path=str(dataset_path),
             batch_size=config.batch_size,
             n_seq=config.n_seq,
@@ -356,22 +409,22 @@ def train_phase7():
             seed=config.seed,
             vocab_size=config.vocab_size,
             split='train'
-        )
-        actual_vocab_size = vocab['vocab_size']
-        use_mixed = True
-        print(f"   Mixed dataset loaded. Steps per epoch: {steps_per_epoch}")
-    else:
-        # Fallback to wikitext-2
-        print("   Dataset config not found. Using wikitext-2 for testing...")
-        train_data, vocab, get_batch = get_data_loader(
+            )
+            actual_vocab_size = vocab['vocab_size']
+            use_mixed = True
+            print(f"   Mixed dataset loaded. Steps per epoch: {steps_per_epoch}")
+        else:
+            # Fallback to wikitext-2
+            print("   Dataset config not found. Using wikitext-2 for testing...")
+            train_data, vocab, get_batch = get_data_loader(
             batch_size=config.batch_size,
             n_seq=config.n_seq,
             dataset_name='wikitext-2',
             data_limit=config.data_limit
-        )
-        actual_vocab_size = vocab['vocab_size']
-        steps_per_epoch = train_data.size(0) // config.n_seq
-        use_mixed = False
+            )
+            actual_vocab_size = vocab['vocab_size']
+            steps_per_epoch = train_data.size(0) // config.n_seq
+            use_mixed = False
     
     print(f"   Vocabulary size: {actual_vocab_size}")
     
@@ -396,7 +449,15 @@ def train_phase7():
         weight_decay=config.weight_decay
     )
     
+    # Calculate total steps considering max_steps limit
     total_steps = steps_per_epoch * config.epochs
+    if config.max_steps is not None:
+        total_steps = min(total_steps, config.max_steps)
+        # Also adjust steps_per_epoch for display purposes
+        effective_steps_per_epoch = min(steps_per_epoch, config.max_steps)
+    else:
+        effective_steps_per_epoch = steps_per_epoch
+    
     scheduler = CosineAnnealingLR(
         optimizer,
         T_max=total_steps,
@@ -429,10 +490,18 @@ def train_phase7():
     save_dir = Path(config.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
     
+    # Create JSON log file
+    json_log_file = save_dir / 'training_log.json'
+    print(f"📝 Training log: {json_log_file}")
+    
     # Training loop
     print(f"\n🚀 Starting training...")
     print(f"   Epochs: {config.epochs}")
-    print(f"   Steps per epoch: {steps_per_epoch}")
+    if config.max_steps is not None:
+        print(f"   Steps per epoch: {steps_per_epoch} (limited to {effective_steps_per_epoch} by max_steps)")
+        print(f"   Max steps: {config.max_steps} ⚠️  Will stop early")
+    else:
+        print(f"   Steps per epoch: {steps_per_epoch}")
     print(f"   Total steps: {total_steps}")
     print(f"   Mixed precision: {use_amp}")
     print(f"   Gradient checkpointing: {config.use_gradient_checkpointing}")
@@ -446,17 +515,55 @@ def train_phase7():
         epoch_start = time.time()
         epoch_loss = 0.0
         num_batches = 0
+        epoch_step_times = []  # Track step times for ETA calculation
         
-        if use_mixed:
+        if config.dry_run:
+            batch_iter = batch_iter_func(epoch)
+        elif use_mixed:
             batch_iter = mixed_loader.iter_epoch(epoch)
         else:
             batch_iter = range(0, train_data.size(0) - 1, config.n_seq)
         
-        for step_idx, batch_item in enumerate(batch_iter, start=1):
+        # Create progress bar
+        if TQDM_AVAILABLE:
+            # Calculate remaining steps for this epoch
+            if config.max_steps is not None:
+                remaining_steps = config.max_steps - global_step
+                epoch_total = min(steps_per_epoch, remaining_steps)
+            else:
+                epoch_total = steps_per_epoch
+            
+            pbar = tqdm(
+                total=epoch_total,
+                desc=f"Epoch {epoch}/{config.epochs}",
+                ncols=100,
+                unit='step',
+                bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}',
+            )
+            use_pbar = True
+        else:
+            use_pbar = False
+        
+        # Track steps in this epoch for max_steps limit
+        epoch_step_count = 0
+        
+        batch_iterator = enumerate(batch_iter, start=1)
+        
+        for step_idx, batch_item in batch_iterator:
+            # Check if we've reached max_steps before processing this batch
+            if config.max_steps is not None and global_step >= config.max_steps:
+                if use_pbar:
+                    pbar.write(f"\n✅ Reached max_steps={config.max_steps}. Stopping training.")
+                else:
+                    print(f"\n✅ Reached max_steps={config.max_steps}. Stopping training.")
+                break
+            
             step_start = time.time()
             
             # Get batch
-            if use_mixed:
+            if config.dry_run:
+                x_batch, y_batch = batch_item
+            elif use_mixed:
                 x_batch, y_batch = batch_item
             else:
                 x_batch, y_batch = get_batch(train_data, batch_item)
@@ -501,30 +608,90 @@ def train_phase7():
                 raise
             
             global_step += 1
+            epoch_step_count += 1
             epoch_loss += loss.item()
             num_batches += 1
             step_time = time.time() - step_start
+            epoch_step_times.append(step_time)
             
-            # Logging
+            # Calculate ETA and metrics
+            avg_loss = epoch_loss / num_batches
+            perplexity = math.exp(min(avg_loss, 20))
+            lr = scheduler.get_last_lr()[0]
+            
+            if len(epoch_step_times) > 0:
+                avg_step_time = sum(epoch_step_times) / len(epoch_step_times)
+                
+                # Calculate remaining steps considering max_steps
+                if config.max_steps is not None:
+                    remaining_steps_total = config.max_steps - global_step
+                    remaining_steps_in_epoch = min(steps_per_epoch - step_idx, remaining_steps_total)
+                    eta_epoch = remaining_steps_in_epoch * avg_step_time
+                    eta_total = remaining_steps_total * avg_step_time
+                else:
+                    remaining_steps_in_epoch = steps_per_epoch - step_idx
+                    eta_epoch = remaining_steps_in_epoch * avg_step_time
+                    remaining_epochs = config.epochs - epoch
+                    eta_total = eta_epoch + (remaining_epochs * steps_per_epoch * avg_step_time)
+            else:
+                avg_step_time = step_time
+                eta_epoch = 0
+                eta_total = 0
+            
+            # Update progress bar every step
+            if use_pbar:
+                pbar.update(1)
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'ppl': f'{perplexity:.1f}',
+                    'lr': f'{lr:.2e}',
+                    'grad': f'{grad_norm:.2f}' if isinstance(grad_norm, torch.Tensor) else f'{grad_norm:.2f}',
+                    'eta': f'{int(eta_epoch//60)}m'
+                })
+            
+            # Detailed logging to file
             if global_step % config.log_interval == 0:
-                avg_loss = epoch_loss / num_batches
-                perplexity = math.exp(min(avg_loss, 20))
-                lr = scheduler.get_last_lr()[0]
+                # Get memory usage
+                if torch.cuda.is_available():
+                    memory_allocated = torch.cuda.memory_allocated() / 1024**3
+                    memory_reserved = torch.cuda.memory_reserved() / 1024**3
+                else:
+                    memory_allocated = 0
+                    memory_reserved = 0
                 
                 log_entry = {
+                    'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
                     'step': global_step,
                     'epoch': epoch,
+                    'batch': step_idx,
+                    'steps_per_epoch': steps_per_epoch,
                     'loss': loss.item(),
                     'avg_loss': avg_loss,
                     'perplexity': perplexity,
                     'lr': lr,
                     'grad_norm': grad_norm.item() if isinstance(grad_norm, torch.Tensor) else grad_norm,
                     'step_time': step_time,
+                    'avg_step_time': avg_step_time if len(epoch_step_times) > 0 else step_time,
+                    'eta_epoch_seconds': eta_epoch,
+                    'eta_total_seconds': eta_total,
+                    'eta_epoch_formatted': f"{int(eta_epoch//3600):02d}:{int((eta_epoch%3600)//60):02d}:{int(eta_epoch%60):02d}",
+                    'eta_total_formatted': f"{int(eta_total//3600):02d}:{int((eta_total%3600)//60):02d}:{int(eta_total%60):02d}",
+                    'memory_allocated_gb': memory_allocated,
+                    'memory_reserved_gb': memory_reserved,
                 }
                 training_log.append(log_entry)
                 
-                print(f"  Step {global_step:6d} | Loss: {loss.item():.4f} | PPL: {perplexity:.2f} | "
-                      f"LR: {lr:.2e} | Grad: {grad_norm:.3f} | Time: {step_time:.2f}s")
+                # Write to JSON log file (append mode)
+                with open(json_log_file, 'a') as f:
+                    f.write(json.dumps(log_entry) + '\n')
+                
+                # Print detailed log if no progress bar
+                if not use_pbar:
+                    eta_str = f"{int(eta_epoch//3600):02d}:{int((eta_epoch%3600)//60):02d}:{int(eta_epoch%60):02d}"
+                    print(f"  Step {global_step:6d}/{total_steps} | Epoch {step_idx}/{steps_per_epoch} | "
+                          f"Loss: {loss.item():.4f} | PPL: {perplexity:.2f} | "
+                          f"LR: {lr:.2e} | Grad: {grad_norm:.3f} | "
+                          f"Time: {step_time:.2f}s | ETA: {eta_str}")
             
             # Save checkpoint
             if global_step % config.save_interval == 0:
@@ -537,12 +704,38 @@ def train_phase7():
                     'config': config.__dict__,
                     'loss': loss.item(),
                 }, checkpoint_path)
-                print(f"  💾 Checkpoint saved: {checkpoint_path}")
+                if use_pbar:
+                    pbar.write(f"  💾 Checkpoint saved: {checkpoint_path}")
+                else:
+                    print(f"  💾 Checkpoint saved: {checkpoint_path}")
+        
+        # Close progress bar
+        if use_pbar:
+            pbar.close()
+        
+        # Check if we stopped early due to max_steps
+        if config.max_steps is not None and global_step >= config.max_steps:
+            print(f"\n✅ Training stopped at step {global_step} (max_steps={config.max_steps})")
+            break
         
         # Epoch summary
         epoch_time = time.time() - epoch_start
         avg_epoch_loss = epoch_loss / max(1, num_batches)
         epoch_ppl = math.exp(min(avg_epoch_loss, 20))
+        
+        # Log epoch summary to JSON
+        epoch_summary = {
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'type': 'epoch_summary',
+            'epoch': epoch,
+            'step': global_step,
+            'avg_loss': avg_epoch_loss,
+            'perplexity': epoch_ppl,
+            'epoch_time': epoch_time,
+            'num_batches': num_batches,
+        }
+        with open(json_log_file, 'a') as f:
+            f.write(json.dumps(epoch_summary) + '\n')
         
         print(f"\n📈 Epoch {epoch}/{config.epochs} Summary:")
         print(f"   Time: {epoch_time:.1f}s")

@@ -189,12 +189,16 @@ class BKCoreFunction(torch.autograd.Function):
             features: (B, N, 2) [real(G_ii), imag(G_ii)]
         """
         # --- Input Sanitization ---
+        # Clamp inputs to prevent NaN/Inf propagation
+        he_diag = torch.clamp(he_diag, min=-100.0, max=100.0)
+        h0_super = torch.clamp(h0_super, min=-10.0, max=10.0)
+        h0_sub = torch.clamp(h0_sub, min=-10.0, max=10.0)
+        
         if not torch.isfinite(he_diag).all():
-            msg = "BKCoreFunction forward: 'he_diag' contains NaN or Inf."
-            warnings.warn(msg, RuntimeWarning)
-            logger.warning(msg)
-            # Attempt to sanitize
+            # Sanitize if still contains NaN/Inf
             he_diag = torch.nan_to_num(he_diag, nan=0.0, posinf=100.0, neginf=-100.0)
+            h0_super = torch.nan_to_num(h0_super, nan=1.0, posinf=10.0, neginf=-10.0)
+            h0_sub = torch.nan_to_num(h0_sub, nan=1.0, posinf=10.0, neginf=-10.0)
 
         # Auto-detect Triton availability on first use
         if use_triton is None:
@@ -226,30 +230,43 @@ class BKCoreFunction(torch.autograd.Function):
         return output_features, G_ii
 
     @staticmethod
-    def backward(ctx, grad_output_features):
+    def backward(ctx, grad_output_features, grad_G_ii):
         """
         Backward pass: hybrid analytic gradient.
         
         Args:
             grad_output_features: (B, N, 2) gradient w.r.t. output features
+            grad_G_ii: gradient w.r.t. G_ii (complex tensor)
         
         Returns:
             grad_he_diag: (B, N) gradient w.r.t. effective Hamiltonian diagonal
+            grad_h0_super: None
+            grad_h0_sub: None
+            grad_z: None
+            grad_use_triton: None
         """
         (G_ii,) = ctx.saved_tensors  # (B, N) complex
         
         # Check if incoming gradient is valid
-        if not torch.isfinite(grad_output_features).all():
+        if grad_output_features is not None and not torch.isfinite(grad_output_features).all():
              msg = "BKCoreFunction backward: Incoming 'grad_output_features' contains NaN or Inf."
              warnings.warn(msg, RuntimeWarning)
              logger.warning(msg)
              grad_output_features = torch.nan_to_num(grad_output_features)
 
-        # dL/dG = dL/dRe(G) + i*dL/dIm(G)
-        grad_G = torch.complex(
-            grad_output_features[..., 0],
-            grad_output_features[..., 1],
-        )
+        # Combine gradients from both outputs
+        # dL/dG = dL/dRe(G) + i*dL/dIm(G) from features
+        if grad_output_features is not None:
+            grad_G = torch.complex(
+                grad_output_features[..., 0],
+                grad_output_features[..., 1],
+            )
+        else:
+            grad_G = torch.zeros_like(G_ii)
+        
+        # Add gradient from G_ii output if present
+        if grad_G_ii is not None:
+            grad_G = grad_G + grad_G_ii
         # We need dL/dv = Re( grad_G.conj() * dG/dv )
         # dG/dv = -G^2
         # So dL/dv = - Re( grad_G.conj() * G^2 )
