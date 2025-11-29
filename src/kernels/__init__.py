@@ -35,6 +35,20 @@ except ImportError:
     bk_scan_triton_backward = None
     is_triton_available = None
 
+# Phase 8: Flash Hyperbolic Attention
+try:
+    from .flash_hyperbolic_triton import (
+        flash_hyperbolic_attention,
+        FlashHyperbolicAttentionModule,
+        FlashHyperbolicConfig,
+    )
+    _FLASH_HYPERBOLIC_AVAILABLE = True
+except ImportError:
+    _FLASH_HYPERBOLIC_AVAILABLE = False
+    flash_hyperbolic_attention = None
+    FlashHyperbolicAttentionModule = None
+    FlashHyperbolicConfig = None
+
 __all__ = [
     'fused_associative_scan',
     'lns_matmul',
@@ -47,4 +61,11 @@ if _BK_SCAN_AVAILABLE:
         'bk_scan_triton_forward',
         'bk_scan_triton_backward',
         'is_triton_available',
+    ])
+
+if _FLASH_HYPERBOLIC_AVAILABLE:
+    __all__.extend([
+        'flash_hyperbolic_attention',
+        'FlashHyperbolicAttentionModule',
+        'FlashHyperbolicConfig',
     ])

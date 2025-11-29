@@ -1,0 +1,102 @@
+{
+  "timestamp": "2025-11-29 13:28:23",
+  "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
+  "total_memory_gb": 8.0,
+  "phase8_available": true,
+  "optimization_settings": {
+    "gradient_checkpointing": true,
+    "mixed_precision": "FP16",
+    "low_rank_embedding": "75% compression (d_model/4)",
+    "low_rank_ffn": "87.5% compression (d_model/8)"
+  },
+  "results": [
+    {
+      "name": "Phase 7 - Maximum (1.83B)",
+      "d_model": 4096,
+      "n_layers": 32,
+      "parameters_millions": 3080.61,
+      "parameters_billions": 3.081,
+      "model_memory_gb": 5.74,
+      "peak_memory_gb": 5.809,
+      "activation_memory_gb": 0.068,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 8 - Maximum (1.83B)",
+      "d_model": 4096,
+      "n_layers": 32,
+      "parameters_millions": 3080.61,
+      "parameters_billions": 3.081,
+      "model_memory_gb": 5.748,
+      "peak_memory_gb": 5.811,
+      "activation_memory_gb": 0.063,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 7 - Large (1.54B)",
+      "d_model": 3072,
+      "n_layers": 48,
+      "parameters_millions": 2574.11,
+      "parameters_billions": 2.574,
+      "model_memory_gb": 4.806,
+      "peak_memory_gb": 4.863,
+      "activation_memory_gb": 0.058,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 8 - Large (1.54B)",
+      "d_model": 3072,
+      "n_layers": 48,
+      "parameters_millions": 2574.11,
+      "parameters_billions": 2.574,
+      "model_memory_gb": 4.806,
+      "peak_memory_gb": 4.863,
+      "activation_memory_gb": 0.058,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 7 - Deep (0.92B)",
+      "d_model": 2048,
+      "n_layers": 64,
+      "parameters_millions": 1539.52,
+      "parameters_billions": 1.54,
+      "model_memory_gb": 2.879,
+      "peak_memory_gb": 2.933,
+      "activation_memory_gb": 0.055,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 8 - Deep (0.92B)",
+      "d_model": 2048,
+      "n_layers": 64,
+      "parameters_millions": 1539.52,
+      "parameters_billions": 1.54,
+      "model_memory_gb": 2.879,
+      "peak_memory_gb": 2.933,
+      "activation_memory_gb": 0.055,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 7 - Standard (0.70B)",
+      "d_model": 2048,
+      "n_layers": 48,
+      "parameters_millions": 1187.06,
+      "parameters_billions": 1.187,
+      "model_memory_gb": 2.222,
+      "peak_memory_gb": 2.276,
+      "activation_memory_gb": 0.055,
+      "status": "SUCCESS"
+    },
+    {
+      "name": "Phase 8 - Standard (0.70B)",
+      "d_model": 2048,
+      "n_layers": 48,
+      "parameters_millions": 1187.06,
+      "parameters_billions": 1.187,
+      "model_memory_gb": 2.222,
+      "peak_memory_gb": 2.276,
+      "activation_memory_gb": 0.055,
+      "status": "SUCCESS"
+    }
+  ]
+}

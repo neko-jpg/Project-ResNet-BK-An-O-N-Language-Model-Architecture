@@ -1,0 +1,147 @@
+{
+  "timestamp": "2025-11-28T22:41:49.233474",
+  "pytorch_version": "2.2.0+cu118",
+  "cuda_available": true,
+  "tasks": [
+    {
+      "task": "10",
+      "name": "Tangent-Space Linear Attention",
+      "timestamp": "2025-11-28T22:41:49.233550",
+      "tests": [
+        {
+          "name": "complexity_scaling",
+          "seq_lengths": [
+            128,
+            256,
+            512,
+            1024
+          ],
+          "times_ms": [
+            0.5102872848510742,
+            0.43027400970458984,
+            0.6207942962646484,
+            0.8059501647949219
+          ],
+          "scaling_ratios": [
+            0.42159977573237395,
+            0.7213941375297833,
+            0.6491281972501728
+          ],
+          "avg_scaling": 0.5973740368374433,
+          "is_linear": true,
+          "passed": true
+        },
+        {
+          "name": "mode_switching",
+          "tests": [
+            {
+              "curvature": 0.05,
+              "expected_mode": "linear",
+              "actual_mode": "linear",
+              "passed": true
+            },
+            {
+              "curvature": 0.5,
+              "expected_mode": "hybrid",
+              "actual_mode": "hybrid",
+              "passed": true
+            },
+            {
+              "curvature": 1.5,
+              "expected_mode": "exact",
+              "actual_mode": "exact",
+              "passed": true
+            }
+          ],
+          "passed": true
+        },
+        {
+          "name": "correlation_with_exact",
+          "correlation": 0.986974835395813,
+          "threshold": 0.7,
+          "passed": true
+        }
+      ],
+      "overall_passed": true
+    },
+    {
+      "task": "11",
+      "name": "Hybrid Precision Strategy",
+      "timestamp": "2025-11-28T22:41:49.500748",
+      "tests": [
+        {
+          "name": "curvature_precision",
+          "input_dtype": "float16",
+          "output_dtype": "torch.float32",
+          "expected_dtype": "float32",
+          "passed": true
+        },
+        {
+          "name": "boundary_detection",
+          "boundary_tokens_count": 2,
+          "expected_count": 2,
+          "passed": true
+        },
+        {
+          "name": "boundary_collapse_prevention",
+          "max_norm_after": 0.9900000691413879,
+          "threshold": 0.99,
+          "passed": true
+        },
+        {
+          "name": "overflow_recovery",
+          "recovered": true,
+          "output_dtype": "torch.float32",
+          "passed": true
+        }
+      ],
+      "overall_passed": true
+    },
+    {
+      "task": "13",
+      "name": "Block-wise Distance Computation",
+      "timestamp": "2025-11-28T22:41:49.516302",
+      "tests": [
+        {
+          "name": "memory_scaling",
+          "seq_lengths": [
+            128,
+            256,
+            512,
+            1024
+          ],
+          "memories_mb": [
+            0.12890625,
+            0.25390625,
+            0.50390625,
+            1.00390625
+          ],
+          "scaling_ratios": [
+            0.9848484848484849,
+            0.9923076923076923,
+            0.9961240310077519
+          ],
+          "avg_scaling": 0.9910934027213097,
+          "is_linear": true,
+          "passed": true
+        },
+        {
+          "name": "causal_block_skipping",
+          "blocks_skipped": 6,
+          "blocks_computed": 10,
+          "expected_skipped": 6,
+          "expected_computed": 10,
+          "passed": true
+        },
+        {
+          "name": "correctness",
+          "output_finite": true,
+          "correct_shape": true,
+          "passed": true
+        }
+      ],
+      "overall_passed": true
+    }
+  ],
+  "overall_passed": true
+}

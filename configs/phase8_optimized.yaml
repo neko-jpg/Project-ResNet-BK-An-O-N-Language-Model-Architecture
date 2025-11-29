@@ -1,0 +1,47 @@
+# Phase 8 Optimized Configuration
+# Hyperbolic Transcendence - O(N) Language Model
+# RTX 3080 (8GB) Optimized
+
+model:
+  d_model: 512
+  n_layers: 12
+  num_heads: 8
+  max_seq_len: 512
+  curvature: 0.01  # Low curvature for O(N) linear attention
+  dropout: 0.1
+  use_hyperbolic_ssm: false  # SSM is heavy, disable for memory efficiency
+
+training:
+  batch_size: 8
+  gradient_accumulation_steps: 4  # Effective batch size: 32
+  epochs: 10
+  learning_rate: 3.0e-4
+  warmup_steps: 1000
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  
+  # Mixed Precision
+  mixed_precision: true
+  fp16: true
+  
+  # Gradient Checkpointing
+  gradient_checkpointing: true
+
+optimization:
+  # Low-Rank Compression
+  low_rank_embedding: true  # 75% compression
+  low_rank_ffn: true        # 87.5% compression
+  
+  # Memory Optimization
+  use_flash_attention: false  # Use linear attention instead
+  use_triton_kernels: true
+  
+checkpoint:
+  save_dir: checkpoints/phase8
+  save_every: 1000
+  keep_last_n: 3
+
+logging:
+  log_every: 100
+  eval_every: 500
+  wandb: false

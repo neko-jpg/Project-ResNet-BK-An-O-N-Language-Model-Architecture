@@ -1,0 +1,160 @@
+{
+  "timestamp": "2025-11-29 00:29:40",
+  "tasks": [
+    {
+      "task": "19",
+      "name": "Hyperbolic SSM",
+      "tests": [
+        {
+          "seq_len": 256,
+          "tokens_per_sec": 56700.8101346704,
+          "avg_time_ms": 18.059706687927246,
+          "output_shape": [
+            4,
+            256,
+            256
+          ]
+        },
+        {
+          "seq_len": 512,
+          "tokens_per_sec": 81248.97933857719,
+          "avg_time_ms": 25.206470489501953,
+          "output_shape": [
+            4,
+            512,
+            256
+          ]
+        },
+        {
+          "seq_len": 1024,
+          "tokens_per_sec": 92624.08613350801,
+          "avg_time_ms": 44.22175884246826,
+          "output_shape": [
+            4,
+            1024,
+            256
+          ]
+        }
+      ],
+      "diagnostics": {
+        "state_utilization": 1.0,
+        "scan_efficiency": 1.0,
+        "hierarchy_preservation": 2.5898438252625056e-05,
+        "state_norms_mean": 0.9899964928627014,
+        "state_norms_std": 2.5639388695708476e-05,
+        "throughput_tokens_per_sec": 101436.35194785258
+      }
+    },
+    {
+      "task": "24",
+      "name": "KV Cache Compression",
+      "tests": [
+        {
+          "use_quantization": true,
+          "compression_ratio": 0.5,
+          "stats": {
+            "original_size_bytes": 163840,
+            "compressed_size_bytes": 10240.0,
+            "compression_ratio": 16.0,
+            "cache_length": 160,
+            "d_model": 256,
+            "d_compressed": 128
+          }
+        },
+        {
+          "use_quantization": true,
+          "compression_ratio": 0.25,
+          "stats": {
+            "original_size_bytes": 163840,
+            "compressed_size_bytes": 5120.0,
+            "compression_ratio": 32.0,
+            "cache_length": 160,
+            "d_model": 256,
+            "d_compressed": 64
+          }
+        },
+        {
+          "use_quantization": false,
+          "compression_ratio": 0.5,
+          "stats": {
+            "original_size_bytes": 163840,
+            "compressed_size_bytes": 81920,
+            "compression_ratio": 2.0,
+            "cache_length": 160,
+            "d_model": 256,
+            "d_compressed": 128
+          }
+        },
+        {
+          "use_quantization": false,
+          "compression_ratio": 0.25,
+          "stats": {
+            "original_size_bytes": 163840,
+            "compressed_size_bytes": 40960,
+            "compression_ratio": 4.0,
+            "cache_length": 160,
+            "d_model": 256,
+            "d_compressed": 64
+          }
+        }
+      ]
+    },
+    {
+      "task": "26",
+      "name": "Curvature Adapter",
+      "tests": [
+        {
+          "input_scale": 0.1,
+          "curvature": 0.5686806440353394
+        },
+        {
+          "input_scale": 0.5,
+          "curvature": 0.5686078071594238
+        },
+        {
+          "input_scale": 1.0,
+          "curvature": 0.5686331987380981
+        },
+        {
+          "input_scale": 2.0,
+          "curvature": 0.5691418051719666
+        }
+      ]
+    },
+    {
+      "task": "27",
+      "name": "Koopman Bridge",
+      "tests": [
+        {
+          "input_shape": [
+            4,
+            32,
+            64
+          ],
+          "output_shape": [
+            4,
+            32,
+            64
+          ],
+          "time_ms": 1.7673969268798828,
+          "output_norm_mean": 0.9496866464614868,
+          "output_max_norm": 0.9499949216842651
+        }
+      ]
+    },
+    {
+      "task": "28",
+      "name": "Numerical Guard",
+      "tests": [
+        {
+          "safe_input_norm": 2.3985979557037354,
+          "safe_output_norm": 0.9899901151657104,
+          "boundary_input_norm": 11.855677604675293,
+          "boundary_output_norm": 0.9899901151657104,
+          "boundary_clamped": 1.0,
+          "collapse_count": 256
+        }
+      ]
+    }
+  ]
+}

@@ -61,6 +61,13 @@ help:
 		echo "make train-phase7-small - テスト用小規模設定で学習"; \
 		echo "make test-phase7        - Phase 7統合テスト実行"; \
 		echo "make triton-attn        - Tritonカーネル動作確認"; \
+		echo ""; \
+		echo "Phase 8 (双曲超越 - O(N)複雑度):"; \
+		echo "make train-phase8       - Phase 8モデルの学習 (O(N)線形アテンション)"; \
+		echo "make train-phase8-small - テスト用小規模設定で学習"; \
+		echo "make train-phase8-max   - 最大設定で学習 (3B params, 8GB VRAM)"; \
+		echo "make train-phase8-test  - ダミーデータでテスト"; \
+		echo "make bench-phase8-vs-phase7 - Phase 7とPhase 8の性能比較"; \
 	else \
 		echo "MUSE (ResNet-BK) Development Commands"; \
 		echo "======================================"; \
@@ -94,6 +101,13 @@ help:
 		echo "make train-phase7-small - Train with small config for testing"; \
 		echo "make test-phase7        - Run Phase 7 integration tests"; \
 		echo "make triton-attn        - Verify Triton kernel"; \
+		echo ""; \
+		echo "Phase 8 (Hyperbolic Transcendence - O(N) Complexity):"; \
+		echo "make train-phase8       - Train Phase 8 model (O(N) linear attention)"; \
+		echo "make train-phase8-small - Train with small config for testing"; \
+		echo "make train-phase8-max   - Train with maximum config (3B params, 8GB VRAM)"; \
+		echo "make train-phase8-test  - Test with dummy data"; \
+		echo "make bench-phase8-vs-phase7 - Benchmark Phase 7 vs Phase 8"; \
 	fi'
 
 setup:
@@ -268,6 +282,56 @@ test-phase7:
 # Phase 7 Benchmark - Full validation suite
 bench-phase7:
 	$(PYTHON) benchmarks/phase7_validation.py
+
+# ============================================================================
+# Phase 8 Training Commands (Hyperbolic Transcendence)
+# ============================================================================
+
+# Phase 8 Training - Default configuration (RTX 3080 optimized)
+train-phase8:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Error: Recipe not found. Please run 'make recipe' first."; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_optimized.yaml --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+# Phase 8 Training - Small configuration for testing
+train-phase8-small:
+	$(PYTHON) scripts/train_phase8.py --d-model 256 --n-layers 4 --n-seq 256 --batch-size 8 --epochs 1 --dry-run $(TRAIN_OVERRIDES)
+
+# Phase 8 Training - Maximum configuration (3B parameters, 8GB VRAM)
+train-phase8-max:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Warning: Recipe not found. Using dry-run mode."; \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_max_push.yaml --dry-run; \
+	else \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_max_push.yaml --dataset configs/dataset_mixing.yaml; \
+	fi
+
+# Phase 8 Training - Maximum with SSM (heavier, experimental)
+train-phase8-max-ssm:
+	@if [ ! -f configs/dataset_mixing.yaml ]; then \
+		echo "Warning: Recipe not found. Using dry-run mode."; \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_max_push.yaml --use-ssm --dry-run; \
+	else \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_max_push.yaml --use-ssm --dataset configs/dataset_mixing.yaml; \
+	fi
+
+# Phase 8 Training - Dry run test
+train-phase8-test:
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_max_push.yaml --dry-run
+
+# Phase 8 Training - Resume from checkpoint
+train-phase8-resume:
+	@if [ -z "$(CHECKPOINT)" ]; then \
+		echo "Error: Please specify CHECKPOINT=path/to/model.pt"; \
+		exit 1; \
+	fi
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_optimized.yaml --dataset configs/dataset_mixing.yaml --resume-from $(CHECKPOINT) $(TRAIN_OVERRIDES)
+
+# Phase 8 vs Phase 7 Benchmark
+bench-phase8-vs-phase7:
+	$(PYTHON) scripts/benchmark_phase7_vs_phase8.py
 
 # ============================================================================
 # Phase 7 Maximum Parameters (1.8B Monster)

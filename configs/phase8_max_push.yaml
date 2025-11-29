@@ -1,0 +1,62 @@
+# Phase 8 Maximum Configuration
+# Hyperbolic Transcendence - 8GB VRAM対応
+# 現実的な最大サイズ: ~500M-1B parameters
+
+model:
+  d_model: 768       # 1024 -> 768 (さらに削減)
+  n_layers: 16       # 24 -> 16 (レイヤー数も削減)
+  num_heads: 12      # 16 -> 12
+  max_seq_len: 512
+  curvature: 0.01    # Low curvature for O(N) linear attention
+  dropout: 0.1
+  use_hyperbolic_ssm: false  # Disable SSM for memory efficiency
+
+training:
+  batch_size: 2      # 1 -> 2 (小さいモデルなので増やせる)
+  gradient_accumulation_steps: 16  # Effective batch size: 32
+  epochs: 10
+  learning_rate: 5.0e-5  # 2e-4 -> 5e-5 (より安全な学習率)
+  warmup_steps: 4000     # 2000 -> 4000 (より長いウォームアップ)
+  weight_decay: 0.01
+  max_grad_norm: 0.5     # 1.0 -> 0.5 (より厳しいクリッピング)
+  
+  # Mixed Precision (必須)
+  mixed_precision: true
+  fp16: true
+  
+  # Gradient Checkpointing (メモリ削減のため通常は有効だが、NaN問題があるため一時的に無効化)
+  gradient_checkpointing: false
+  
+  # 8-bit Optimizer (メモリ削減) - bitsandbytesが必要
+  use_8bit_adam: false  # 標準AdamWを使用
+
+optimization:
+  # Low-Rank Compression (必須)
+  low_rank_embedding: true  # 75% compression (d_model/4)
+  low_rank_ffn: true        # 87.5% compression (d_model/8)
+  
+  # Memory Optimization
+  use_flash_attention: false  # Use O(N) linear attention
+  use_triton_kernels: true
+  empty_cache_every: 5  # より頻繁にキャッシュクリア
+  
+  # Adaptive Computation
+  adaptive_computation: true
+  early_exit_threshold: 0.5
+
+checkpoint:
+  save_dir: checkpoints/phase8_max
+  save_every: 1000
+  keep_last_n: 2
+
+logging:
+  log_every: 50
+  eval_every: 500
+  wandb: false
+
+# Expected Memory Usage (8GB VRAM対応)
+# Model Parameters: ~500M-1B
+# Model (FP16): ~1-2 GB
+# Optimizer States: ~2-4 GB
+# Activations (with gradient checkpointing): ~2-3 GB
+# Peak: ~6-7 GB (8GB以内に収まる)

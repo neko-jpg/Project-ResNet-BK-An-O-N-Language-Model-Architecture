@@ -1,0 +1,26 @@
+{
+  "test_name": "Property 22: Adaptive Computation Savings",
+  "validates": "Requirements 80.4",
+  "timestamp": "2025-11-28T20:51:36.426885",
+  "configuration": {
+    "d_model": 64,
+    "num_iterations": 100,
+    "total_layers": 12,
+    "exit_threshold": 0.5,
+    "min_savings_threshold": 0.3
+  },
+  "results": {
+    "average_savings": 0.9166666666666665,
+    "min_savings": 0.9166666666666666,
+    "max_savings": 0.9166666666666666,
+    "savings_by_origin_ratio": {
+      "0.1": 0.9166666666666666,
+      "0.3": 0.9166666666666666,
+      "0.5": 0.9166666666666666,
+      "0.7": 0.9166666666666666,
+      "0.9": 0.9166666666666666
+    }
+  },
+  "property_verified": true,
+  "conclusion": "Average compute savings 91.67% meets 30% threshold"
+}

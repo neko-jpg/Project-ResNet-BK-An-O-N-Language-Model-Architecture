@@ -1,3 +1,4 @@
+git commit -m "Phase3 Stage2実装完了: Koopman線形化とベンチマーク追加"
 """
 Symplectic Adjoint Method のユニットテスト
 

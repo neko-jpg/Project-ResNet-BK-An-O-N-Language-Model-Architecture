@@ -1,0 +1,83 @@
+{
+  "timestamp": "2025-11-28T23:29:18.945649",
+  "device": "cuda",
+  "pytorch_version": "2.2.0+cu118",
+  "cuda_available": true,
+  "cuda_device": "NVIDIA GeForce RTX 3080 Laptop GPU",
+  "task_14": {
+    "module": "BK-Core Hyperbolic Integration",
+    "task": 14,
+    "batch_size": 2,
+    "seq_len": 512,
+    "d_model": 256,
+    "device": "cuda",
+    "tokens_per_second": 4581.6019343788,
+    "elapsed_time": 2.2350261211395264,
+    "iterations": 10,
+    "diagnostics": {
+      "G_ii_mean": 18.678062438964844,
+      "gate_mean": 0.7310585379600525,
+      "resonance_strength": 11.44171142578125
+    },
+    "status": "PASSED"
+  },
+  "task_15": {
+    "module": "Checkpoint",
+    "task": 15,
+    "status": "PASSED",
+    "note": "All tests for Task 14 passed"
+  },
+  "task_16": {
+    "module": "AR-SSM Hyperbolic Fusion",
+    "task": 16,
+    "batch_size": 2,
+    "seq_len": 512,
+    "d_model": 256,
+    "device": "cuda",
+    "tokens_per_second": 17354.462013642045,
+    "elapsed_time": 0.5900499820709229,
+    "iterations": 10,
+    "diagnostics": {
+      "distance_mean": 14.495465278625488,
+      "effective_rank_mean": 5.497698783874512,
+      "state_norm_mean": 0.54173743724823
+    },
+    "status": "PASSED"
+  },
+  "task_17": {
+    "module": "Enhanced Hyperbolic Kernel",
+    "task": 17,
+    "batch_size": 2,
+    "d_model": 256,
+    "num_heads": 8,
+    "device": "cuda",
+    "iterations": 10,
+    "results_by_seq": {
+      "seq_256": {
+        "tokens_per_second": 564251.2015554797,
+        "elapsed_time": 0.009073972702026367
+      },
+      "seq_512": {
+        "tokens_per_second": 1425478.6910056423,
+        "elapsed_time": 0.007183551788330078
+      },
+      "seq_1024": {
+        "tokens_per_second": 2828427.5903852484,
+        "elapsed_time": 0.007240772247314453
+      }
+    },
+    "features": {
+      "taylor_expansion": true,
+      "asymptotic_approximation": true,
+      "tensor_core_acceleration": true,
+      "hierarchical_block_decomposition": true
+    },
+    "status": "PASSED"
+  },
+  "task_18": {
+    "module": "Checkpoint",
+    "task": 18,
+    "status": "PASSED",
+    "note": "All tests for Tasks 14-17 passed"
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "metadata": {
+    "timestamp": "2025-11-28T21:12:46.212378",
+    "device": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "cuda_version": "11.8",
+    "pytorch_version": "2.2.0+cu118",
+    "batch_size": 2,
+    "num_heads": 8,
+    "d_head": 64,
+    "num_warmup": 10,
+    "num_iterations": 50
+  },
+  "seq_lengths": [
+    512,
+    1024,
+    2048
+  ],
+  "flash_hyperbolic": {
+    "512": {
+      "avg_time_ms": 0.20053567886352539,
+      "tokens_per_sec": 5106323.252815693,
+      "peak_memory_mb": 4.0634765625
+    },
+    "1024": {
+      "avg_time_ms": 0.3461529541015625,
+      "tokens_per_sec": 5916459.691397318,
+      "peak_memory_mb": 8.1259765625
+    },
+    "2048": {
+      "avg_time_ms": 1.1764940643310546,
+      "tokens_per_sec": 3481530.527167558,
+      "peak_memory_mb": 16.2509765625
+    }
+  },
+  "phase7_hyperbolic": {
+    "512": {
+      "avg_time_ms": 0.2044723129272461,
+      "tokens_per_sec": 5008012.993741371,
+      "peak_memory_mb": 4.0322265625
+    },
+    "1024": {
+      "avg_time_ms": 0.5402828979492188,
+      "tokens_per_sec": 3790606.7502297508,
+      "peak_memory_mb": 8.0634765625
+    },
+    "2048": {
+      "avg_time_ms": 2.1127781677246094,
+      "tokens_per_sec": 1938679.6316677455,
+      "peak_memory_mb": 16.1259765625
+    }
+  },
+  "fast_hyperbolic": {
+    "512": {
+      "avg_time_ms": 0.5547212982177734,
+      "tokens_per_sec": 1845972.0282778766,
+      "peak_memory_mb": 4.0009765625
+    },
+    "1024": {
+      "avg_time_ms": 0.2952396774291992,
+      "tokens_per_sec": 6936737.0193361845,
+      "peak_memory_mb": 8.0009765625
+    },
+    "2048": {
+      "avg_time_ms": 0.9479167938232422,
+      "tokens_per_sec": 4321054.365414883,
+      "peak_memory_mb": 16.0009765625
+    }
+  },
+  "speedup": {
+    "512": 1.0196305918529331,
+    "1024": 1.5608212830409585,
+    "2048": 1.795825607438078
+  },
+  "memory_reduction": {
+    "512": -0.007750060547347948,
+    "1024": -0.007750999152234428,
+    "2048": -0.007751468539938244
+  },
+  "memory_scaling": {
+    "seq_lengths": [
+      512,
+      1024,
+      2048
+    ],
+    "memory_mb": [
+      4.0634765625,
+      9.1259765625,
+      18.2509765625
+    ],
+    "memory_per_token_kb": [
+      4.0634765625,
+      4.56298828125,
+      4.562744140625
+    ],
+    "is_linear": true,
+    "variance_ratio": 1.1229271809661139
+  },
+  "summary": {
+    "avg_speedup": 1.4587591607773234,
+    "target_speedup": 2.0,
+    "speedup_achieved": false
+  }
+}

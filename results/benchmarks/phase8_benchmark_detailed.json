@@ -1,0 +1,149 @@
+{
+  "timestamp": "2025-11-29T10:07:59.666842",
+  "gpu_info": {
+    "name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "total_memory_gb": 7.99951171875,
+    "compute_capability": "8.6"
+  },
+  "benchmarks": {
+    "linear_attention_seq512": {
+      "tokens_per_sec": 138317.97267673558,
+      "memory_mb": 1049.13037109375,
+      "seq_len": 512
+    },
+    "linear_attention_seq1024": {
+      "tokens_per_sec": 83491.15832506126,
+      "memory_mb": 4153.13037109375,
+      "seq_len": 1024
+    },
+    "linear_attention_seq2048": {
+      "tokens_per_sec": 845.0933241876872,
+      "memory_mb": 16553.13037109375,
+      "seq_len": 2048
+    },
+    "hyperbolic_ssm_seq512": {
+      "tokens_per_sec": 53957.172390192616,
+      "memory_mb": 13.94140625,
+      "seq_len": 512
+    },
+    "hyperbolic_ssm_seq1024": {
+      "tokens_per_sec": 136029.9635219405,
+      "memory_mb": 18.44140625,
+      "seq_len": 1024
+    },
+    "hyperbolic_ssm_seq2048": {
+      "tokens_per_sec": 179676.73667846105,
+      "memory_mb": 27.44140625,
+      "seq_len": 2048
+    },
+    "block_distance_seq512": {
+      "tokens_per_sec": 79644.29612906235,
+      "memory_mb": 78.89990234375,
+      "seq_len": 512
+    },
+    "block_distance_seq1024": {
+      "tokens_per_sec": 54067.55674422522,
+      "memory_mb": 83.91552734375,
+      "seq_len": 1024
+    },
+    "block_distance_seq2048": {
+      "tokens_per_sec": 27458.64710232841,
+      "memory_mb": 93.94677734375,
+      "seq_len": 2048
+    },
+    "sheaf_attention_seq512": {
+      "tokens_per_sec": 320436.2489189316,
+      "memory_mb": 33.22509765625,
+      "seq_len": 512
+    },
+    "sheaf_attention_seq1024": {
+      "tokens_per_sec": 1140657.9390731063,
+      "memory_mb": 88.22509765625,
+      "seq_len": 1024
+    },
+    "quantizer_seq512": {
+      "tokens_per_sec": 1423945.195906754,
+      "memory_mb": 11.15087890625,
+      "seq_len": 512
+    },
+    "quantizer_seq1024": {
+      "tokens_per_sec": 4127311.1027612346,
+      "memory_mb": 14.17431640625,
+      "seq_len": 1024
+    },
+    "quantizer_seq2048": {
+      "tokens_per_sec": 15921035.395897524,
+      "memory_mb": 20.22119140625,
+      "seq_len": 2048
+    }
+  },
+  "targets": {
+    "throughput_improvement": "2x over Phase 7",
+    "memory_reduction": "50-80%",
+    "max_memory_8192": "<3GB",
+    "flops_utilization": "70%+",
+    "linear_scaling": "O(N)"
+  },
+  "memory_scaling_hyperbolic_ssm": [
+    {
+      "seq_len": 256,
+      "memory_mb": 16.94140625
+    },
+    {
+      "seq_len": 512,
+      "memory_mb": 14.44140625
+    },
+    {
+      "seq_len": 1024,
+      "memory_mb": 19.44140625
+    },
+    {
+      "seq_len": 2048,
+      "memory_mb": 29.94140625
+    },
+    {
+      "seq_len": 4096,
+      "memory_mb": 49.44140625
+    },
+    {
+      "seq_len": 8192,
+      "memory_mb": 89.44140625
+    }
+  ],
+  "is_linear_scaling_ssm": true,
+  "memory_scaling_ratio_ssm": 0.7199054107913766,
+  "long_context_8192_ssm": {
+    "memory_mb": 61.44140625,
+    "target_met": true
+  },
+  "memory_scaling_block_distance": [
+    {
+      "seq_len": 256,
+      "memory_mb": 84.39208984375
+    },
+    {
+      "seq_len": 512,
+      "memory_mb": 79.39990234375
+    },
+    {
+      "seq_len": 1024,
+      "memory_mb": 84.91552734375
+    },
+    {
+      "seq_len": 2048,
+      "memory_mb": 95.94677734375
+    },
+    {
+      "seq_len": 4096,
+      "memory_mb": 118.00927734375
+    }
+  ],
+  "is_linear_scaling_block": true,
+  "memory_scaling_ratio_block": 0.5462706768799577,
+  "targets_met": {
+    "linear_scaling_ssm": true,
+    "linear_scaling_block": true,
+    "long_context_8192": true
+  },
+  "overall_status": "PASS"
+}

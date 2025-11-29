@@ -1,0 +1,56 @@
+# Phase 8 - 8GB GPU Safe Configuration
+# RTX 3080 Laptop (8GB VRAM) 対応
+# メモリ効率を最優先した設定
+
+model:
+  d_model: 512          # 小さめのモデル次元
+  n_layers: 8           # レイヤー数を削減
+  num_heads: 8
+  max_seq_len: 512
+  curvature: 0.01       # 低曲率でO(N)を保証
+  dropout: 0.1
+  use_hyperbolic_ssm: false  # SSMは重いので無効化
+
+training:
+  batch_size: 1         # 最小バッチサイズ
+  gradient_accumulation_steps: 16  # 実効バッチサイズ: 16
+  epochs: 10
+  learning_rate: 2.0e-4
+  warmup_steps: 2000
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  
+  # Mixed Precision (必須)
+  mixed_precision: true
+  fp16: true
+  
+  # Gradient Checkpointing (必須)
+  gradient_checkpointing: true
+  
+  # CPU Offloading
+  cpu_offload: false  # 必要に応じて有効化
+
+optimization:
+  # Low-Rank Compression (必須)
+  low_rank_embedding: true   # 75% compression
+  low_rank_ffn: true         # 87.5% compression
+  
+  # Memory Optimization
+  use_flash_attention: false  # Linear attentionを使用
+  use_triton_kernels: true
+  empty_cache_every: 10       # 定期的にキャッシュクリア
+
+checkpoint:
+  save_dir: checkpoints/phase8_8gb
+  save_every: 2000
+  keep_last_n: 2
+
+logging:
+  log_every: 50
+  eval_every: 500
+  wandb: false
+
+# Dataset
+dataset:
+  max_samples: 10000  # テスト用に制限
+  num_workers: 0      # メモリ節約

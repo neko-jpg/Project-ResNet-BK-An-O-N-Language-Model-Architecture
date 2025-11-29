@@ -1,0 +1,23 @@
+[
+  {
+    "batch_size": 4,
+    "seq_len": 512,
+    "avg_time_ms": 14.168500900268555,
+    "tokens_per_sec": 144545.99074494757,
+    "throughput_ktok_per_sec": 144.54599074494757
+  },
+  {
+    "batch_size": 4,
+    "seq_len": 1024,
+    "avg_time_ms": 18.377017974853516,
+    "tokens_per_sec": 222887.08677353564,
+    "throughput_ktok_per_sec": 222.88708677353566
+  },
+  {
+    "batch_size": 4,
+    "seq_len": 2048,
+    "avg_time_ms": 16.924047470092773,
+    "tokens_per_sec": 484044.9670491909,
+    "throughput_ktok_per_sec": 484.0449670491909
+  }
+]

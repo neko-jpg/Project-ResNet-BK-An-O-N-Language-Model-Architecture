@@ -1,0 +1,22 @@
+{
+  "timestamp": "2025-11-29T10:19:02.336463",
+  "gpu_info": {
+    "name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+    "total_memory_gb": 7.99951171875,
+    "compute_capability": "8.6"
+  },
+  "modules_status": {
+    "TangentSpaceLinearAttention": "OK",
+    "HyperbolicSSM": "OK",
+    "BlockWiseDistanceComputation": "OK",
+    "EntailmentCones": "OK",
+    "SheafAttentionModule": "OK",
+    "LogarithmicQuantizer": "OK"
+  },
+  "summary": {
+    "passed": 6,
+    "total": 6,
+    "success_rate": 1.0
+  },
+  "overall_status": "PASS"
+}
