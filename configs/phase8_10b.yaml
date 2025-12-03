@@ -1,0 +1,36 @@
+# Phase 8: 10B Parameter Model Configuration (CALIBRATED)
+# Designed for Extreme Compression Training on Consumer GPUs (e.g., RTX 3080/4090)
+#
+# Target Parameters: 10,009,072,640 (10.01 Billion)
+# Calculated Configuration: d_model=5120, n_layers=31
+#
+# Compressed Size: ~150-200 MB (Storage for Embedding) + ~2GB (BitNet Layers) = ~2.3GB Total
+# VRAM Usage (Training): ~6-8 GB (Fits in RTX 3080)
+
+# --- Model Architecture (The "Brain" Size) ---
+vocab_size: 50257
+d_model: 5120       # Wide model for high capacity
+n_layers: 31        # Optimized depth for stability
+n_seq: 512          # Context window
+
+# --- Compression & Memory Strategy ---
+use_htt_embedding: true
+htt_rank: 128       # High rank for fidelity
+quantized_htt: true # Enable Manifold-Aware Logarithmic Quantization
+use_bitnet: true    # Enable 1.58-bit quantization for layers
+
+# --- Physics Core ---
+use_birman_schwinger: true
+use_mourre: true
+use_lap: true
+
+# --- Training Dynamics ---
+batch_size: 1               # Keep micro-batch small
+gradient_accumulation_steps: 32 # Accumulate to simulate large batch size
+learning_rate: 1e-4         # Lower LR for larger model
+max_steps: 100000
+
+# --- Advanced Features ---
+use_hybrid_attention: true  # Phase 7 Hyperbolic Attention
+use_gradient_checkpointing: true # Essential for 10B on 8GB VRAM
+use_mixed_precision: true   # FP16/BF16 training
