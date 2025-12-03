@@ -1,0 +1,94 @@
+# Phase 8 - 10B Parameter Model with Ultra Compression
+# Target: RTX 3080 8GB VRAM
+# Compression: 95-97% (rank=8-16)
+# Expected memory: ~2.7GB total
+
+# ====== Model Architecture ======
+d_model: 4096
+n_layers: 48
+n_seq: 512
+num_heads: 32
+htt_rank: 16
+hyperbolic_window_size: 64
+
+# ====== Ultra Compression (96-97%) ======
+low_rank_ffn: true
+low_rank_attention: true
+low_rank_rank: 16  # Use 8 for 97%+ compression, 16 for 96% with better quality
+use_bitnet: true
+
+# ====== Memory Optimization ======
+use_gradient_checkpointing: true
+gradient_checkpointing_segments: 12  # Checkpoint every 4 layers (48/12=4)
+use_mixed_precision: true
+mixed_precision_dtype: "bfloat16"  # Better stability than fp16
+
+# ====== Optimizer (8-bit for memory efficiency) ======
+optimizer_type: "adamw"  # Will use 8-bit if bitsandbytes available
+optimizer_eps: 1.0e-6  # Increased epsilon for stability
+beta1: 0.9
+beta2: 0.999
+weight_decay: 0.01  
+
+# ====== Gradient Accumulation ======
+gradient_accumulation_steps: 32  # Effective batch size = 1 * 32 = 32
+effective_batch_size: 32
+
+# ====== Training Stability ======
+learning_rate: 5.0e-5  # Lower LR for ultra-low rank
+warmup_steps: 2000
+max_grad_norm: 0.5  # Aggressive clipping for stability
+warmup_min_lr: 1.0e-6
+
+# ====== Phase 8 Components ======
+use_bk_hyperbolic: true
+use_ar_ssm_fusion: true
+enable_numerical_guards: true
+
+# Optional components (disable for speed/memory)
+enable_entailment_cones: false
+enable_persistent_homology: false
+enable_sheaf_attention: false
+enable_adaptive_computation: false
+
+# ====== Speed Optimizations ======
+use_triton_kernel: true
+triton_kernel_version: "fast"
+use_fused_kernels: true
+
+# torch.compile (PyTorch 2.0+)
+use_torch_compile: true
+compile_mode: "max-autotune"  # Options: "default", "reduce-overhead", "max-autotune"
+compile_fullgraph: false  # Set to true for maximum speed (may fail on complex models)
+
+# Flash Attention 2 (install: pip install flash-attn)
+use_flash_attention_2: true  # Automatically falls back if not available
+
+# DataLoader settings
+num_workers: 8
+pin_memory: true
+prefetch_factor: 4  # Prefetch 4 batches ahead
+persistent_workers: true
+
+dataloader_num_workers: 8
+dataloader_pin_memory: true
+dataloader_prefetch_factor: 4
+dataloader_persistent_workers: true
+
+# ====== Logging & Checkpointing ======
+log_interval: 10
+save_interval: 1000
+eval_interval: 500
+save_dir: "checkpoints/phase8_10b_ultra"
+
+# ====== Numerical Stability ======
+max_norm: 0.99  # Hyperbolic space boundary
+numerical_epsilon: 1.0e-8
+scale_epsilon: 1.0e-3  # BitNet scale epsilon
+
+# ====== Memory Budget Estimate (RTX 3080 8GB) ======
+# Model Parameters (BitNet): ~0.07 GB
+# Activations (checkpointed): ~1.5 GB  
+# Optimizer States (8-bit): ~0.36 GB
+# Gradients (FP16): ~0.72 GB
+# TOTAL: ~2.7 GB (5.3GB headroom!)

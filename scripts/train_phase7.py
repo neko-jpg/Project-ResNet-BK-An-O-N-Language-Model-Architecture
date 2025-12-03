@@ -160,6 +160,7 @@ class Phase7TrainingConfig:
     # Triton Kernels
     use_triton_kernel: bool = True
     triton_kernel_version: str = 'fast'  # 'fast', 'v2', 'v1'
+    use_bitnet: bool = False
     
     # Curvature Scheduler
     curvature_warmup_steps: int = 5000
@@ -211,6 +212,7 @@ def parse_args() -> Phase7TrainingConfig:
     # Triton
     parser.add_argument("--no-triton", action="store_true", help="Disable Triton kernels")
     parser.add_argument("--triton-kernel", type=str, default="fast", choices=["fast", "v2", "v1"], help="Triton kernel version")
+    parser.add_argument("--use-bitnet", action="store_true", help="Enable BitNet 1.58-bit quantization")
     
     # Data
     parser.add_argument("--dataset", type=str, default="configs/dataset_mixing.yaml", help="Dataset config path")
@@ -274,6 +276,7 @@ def parse_args() -> Phase7TrainingConfig:
         use_gradient_checkpointing=not args.no_gradient_checkpointing,
         use_triton_kernel=not args.no_triton,
         triton_kernel_version=args.triton_kernel,
+        use_bitnet=args.use_bitnet,
         data_limit=args.data_limit,
         vocab_size=args.vocab_size,
         log_interval=args.log_interval,
@@ -309,6 +312,7 @@ def create_model(config: Phase7TrainingConfig, vocab_size: int, device: torch.de
         triton_kernel_version=config.triton_kernel_version,
         use_gradient_checkpointing=config.use_gradient_checkpointing,
         use_mixed_precision=config.use_mixed_precision,
+        use_bitnet=config.use_bitnet,
     )
     
     model = Phase7IntegratedModel(model_config)

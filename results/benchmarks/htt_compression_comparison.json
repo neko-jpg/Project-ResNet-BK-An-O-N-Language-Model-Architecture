@@ -1,0 +1,206 @@
+[
+  {
+    "config": {
+      "vocab_size": 50257,
+      "d_model": 256,
+      "rank": 16
+    },
+    "phase1": {
+      "phase": "Phase 1",
+      "vocab_size": 50257,
+      "d_model": 256,
+      "rank": 16,
+      "standard_params": 12865792,
+      "htt_params": 114960,
+      "actual_params": 114960,
+      "compression_ratio": 0.008935322442644805,
+      "compression_percentage": 99.10646775573552,
+      "memory_standard_mb": 49.0791015625,
+      "memory_htt_mb": 0.43853759765625,
+      "memory_saved_mb": 48.64056396484375,
+      "memory_saved_percentage": 99.10646775573552
+    },
+    "phase8": {
+      "phase": "Phase 8 (via Phase 7)",
+      "vocab_size": 50257,
+      "d_model": 256,
+      "rank": 16,
+      "standard_params": 12865792,
+      "htt_params": 114960,
+      "actual_params": 114960,
+      "compression_ratio": 0.008935322442644805,
+      "compression_percentage": 99.10646775573552,
+      "memory_standard_mb": 49.0791015625,
+      "memory_htt_mb": 0.43853759765625,
+      "memory_saved_mb": 48.64056396484375,
+      "memory_saved_percentage": 99.10646775573552,
+      "total_model_params": 456823,
+      "phase7_params": 456823,
+      "phase8_extension_params": 0
+    },
+    "comparison": {
+      "compression_ratio_match": true,
+      "compression_ratio_diff": 0.0,
+      "params_match": true,
+      "params_diff": 0,
+      "actual_params_match": true,
+      "actual_params_diff": 0,
+      "memory_match": true,
+      "memory_diff": 0.0,
+      "all_match": true
+    }
+  },
+  {
+    "config": {
+      "vocab_size": 50257,
+      "d_model": 512,
+      "rank": 16
+    },
+    "phase1": {
+      "phase": "Phase 1",
+      "vocab_size": 50257,
+      "d_model": 512,
+      "rank": 16,
+      "standard_params": 25731584,
+      "htt_params": 165248,
+      "actual_params": 165248,
+      "compression_ratio": 0.006421990966432537,
+      "compression_percentage": 99.35780090335675,
+      "memory_standard_mb": 98.158203125,
+      "memory_htt_mb": 0.63037109375,
+      "memory_saved_mb": 97.52783203125,
+      "memory_saved_percentage": 99.35780090335675
+    },
+    "phase8": {
+      "phase": "Phase 8 (via Phase 7)",
+      "vocab_size": 50257,
+      "d_model": 512,
+      "rank": 16,
+      "standard_params": 25731584,
+      "htt_params": 165248,
+      "actual_params": 165248,
+      "compression_ratio": 0.006421990966432537,
+      "compression_percentage": 99.35780090335675,
+      "memory_standard_mb": 98.158203125,
+      "memory_htt_mb": 0.63037109375,
+      "memory_saved_mb": 97.52783203125,
+      "memory_saved_percentage": 99.35780090335675,
+      "total_model_params": 1405991,
+      "phase7_params": 1405991,
+      "phase8_extension_params": 0
+    },
+    "comparison": {
+      "compression_ratio_match": true,
+      "compression_ratio_diff": 0.0,
+      "params_match": true,
+      "params_diff": 0,
+      "actual_params_match": true,
+      "actual_params_diff": 0,
+      "memory_match": true,
+      "memory_diff": 0.0,
+      "all_match": true
+    }
+  },
+  {
+    "config": {
+      "vocab_size": 50257,
+      "d_model": 1024,
+      "rank": 16
+    },
+    "phase1": {
+      "phase": "Phase 1",
+      "vocab_size": 50257,
+      "d_model": 1024,
+      "rank": 16,
+      "standard_params": 51463168,
+      "htt_params": 229904,
+      "actual_params": 229904,
+      "compression_ratio": 0.004467350319358497,
+      "compression_percentage": 99.55326496806414,
+      "memory_standard_mb": 196.31640625,
+      "memory_htt_mb": 0.87701416015625,
+      "memory_saved_mb": 195.43939208984375,
+      "memory_saved_percentage": 99.55326496806414
+    },
+    "phase8": {
+      "phase": "Phase 8 (via Phase 7)",
+      "vocab_size": 50257,
+      "d_model": 1024,
+      "rank": 16,
+      "standard_params": 51463168,
+      "htt_params": 229904,
+      "actual_params": 229904,
+      "compression_ratio": 0.004467350319358497,
+      "compression_percentage": 99.55326496806414,
+      "memory_standard_mb": 196.31640625,
+      "memory_htt_mb": 0.87701416015625,
+      "memory_saved_mb": 195.43939208984375,
+      "memory_saved_percentage": 99.55326496806414,
+      "total_model_params": 4939575,
+      "phase7_params": 4939575,
+      "phase8_extension_params": 0
+    },
+    "comparison": {
+      "compression_ratio_match": true,
+      "compression_ratio_diff": 0.0,
+      "params_match": true,
+      "params_diff": 0,
+      "actual_params_match": true,
+      "actual_params_diff": 0,
+      "memory_match": true,
+      "memory_diff": 0.0,
+      "all_match": true
+    }
+  },
+  {
+    "config": {
+      "vocab_size": 32000,
+      "d_model": 256,
+      "rank": 8
+    },
+    "phase1": {
+      "phase": "Phase 1",
+      "vocab_size": 32000,
+      "d_model": 256,
+      "rank": 8,
+      "standard_params": 8192000,
+      "htt_params": 45832,
+      "actual_params": 45832,
+      "compression_ratio": 0.0055947265625,
+      "compression_percentage": 99.44052734374999,
+      "memory_standard_mb": 31.25,
+      "memory_htt_mb": 0.174835205078125,
+      "memory_saved_mb": 31.075164794921875,
+      "memory_saved_percentage": 99.44052734374999
+    },
+    "phase8": {
+      "phase": "Phase 8 (via Phase 7)",
+      "vocab_size": 32000,
+      "d_model": 256,
+      "rank": 8,
+      "standard_params": 8192000,
+      "htt_params": 45832,
+      "actual_params": 45832,
+      "compression_ratio": 0.0055947265625,
+      "compression_percentage": 99.44052734374999,
+      "memory_standard_mb": 31.25,
+      "memory_htt_mb": 0.174835205078125,
+      "memory_saved_mb": 31.075164794921875,
+      "memory_saved_percentage": 99.44052734374999,
+      "total_model_params": 387695,
+      "phase7_params": 387695,
+      "phase8_extension_params": 0
+    },
+    "comparison": {
+      "compression_ratio_match": true,
+      "compression_ratio_diff": 0.0,
+      "params_match": true,
+      "params_diff": 0,
+      "actual_params_match": true,
+      "actual_params_diff": 0,
+      "memory_match": true,
+      "memory_diff": 0.0,
+      "all_match": true
+    }
+  }
+]

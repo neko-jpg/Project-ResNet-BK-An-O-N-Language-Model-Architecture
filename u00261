@@ -1,0 +1,18 @@
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/models/phase4/topological_memory/sparse_tensor_rep.py:22: UserWarning: zarr not found. Persistence will be disabled.
+  warnings.warn("zarr not found. Persistence will be disabled.")
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/venv_ubuntu/lib/python3.12/site-packages/transformers/utils/generic.py:441: UserWarning: torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.
+  _torch_pytree._register_pytree_node(
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/venv_ubuntu/lib/python3.12/site-packages/transformers/utils/generic.py:309: UserWarning: torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.
+  _torch_pytree._register_pytree_node(
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/venv_ubuntu/lib/python3.12/site-packages/transformers/utils/generic.py:309: UserWarning: torch.utils._pytree._register_pytree_node is deprecated. Please use torch.utils._pytree.register_pytree_node instead.
+  _torch_pytree._register_pytree_node(
+Traceback (most recent call last):
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/scripts/benchmark_phase8_speed.py", line 177, in <module>
+    main()
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/scripts/benchmark_phase8_speed.py", line 117, in main
+    model = Phase8IntegratedModel(config).to(device)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/models/phase8/integrated_model.py", line 94, in __init__
+    phase7_config = Phase7Config(**phase7_config_dict)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Phase7Config.__init__() got an unexpected keyword argument 'use_torch_compile'

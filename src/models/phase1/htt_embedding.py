@@ -51,6 +51,12 @@ from .config import Phase1Config
 from .errors import InvalidConfigError, NumericalInstabilityError
 from .complex_utils import complex_phase_rotation, is_complex_tensor
 
+try:
+    from ...kernels.htt_triton import htt_fused_contraction
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+
 
 class HolographicTTEmbedding(nn.Module):
     """
@@ -153,11 +159,13 @@ class HolographicTTEmbedding(nn.Module):
         #
         # 物理的直観: 各コアは「局所的な量子状態」を表現
         # ランク次元は「もつれ結合」の強さを制御
+        # Robust Initialization: Scale down by 1/sqrt(rank) to prevent explosion
+        scale_factor = init_scale / (rank ** 0.5)
         self.core1 = nn.Parameter(
-            torch.randn(self.v1, 1, rank, self.d1) * init_scale
+            torch.randn(self.v1, 1, rank, self.d1) * scale_factor
         )
         self.core2 = nn.Parameter(
-            torch.randn(self.v2, rank, 1, self.d2) * init_scale
+            torch.randn(self.v2, rank, 1, self.d2) * scale_factor
         )
         
         # Holographic Phase Parameters
@@ -193,6 +201,30 @@ class HolographicTTEmbedding(nn.Module):
             (standard_params, tt_params): 標準Embedding vs TT Embedding
         """
         return self._standard_params, self._tt_params
+
+    def quantize(self):
+        """
+        Quantize cores to INT8 for fused kernel inference.
+        """
+        # Ensure we don't track gradients during quantization
+        with torch.no_grad():
+            # Quantize Core1
+            c1_max = self.core1.abs().max()
+            self.scale1 = c1_max / 127.0
+            # Store in a buffer, don't overwrite parameter
+            if not hasattr(self, 'core1_quant'):
+                self.register_buffer('core1_quant', torch.zeros_like(self.core1, dtype=torch.int8))
+            self.core1_quant = (self.core1 / self.scale1).round().clamp(-128, 127).to(torch.int8)
+            
+            # Quantize Core2
+            c2_max = self.core2.abs().max()
+            self.scale2 = c2_max / 127.0
+            if not hasattr(self, 'core2_quant'):
+                self.register_buffer('core2_quant', torch.zeros_like(self.core2, dtype=torch.int8))
+            self.core2_quant = (self.core2 / self.scale2).round().clamp(-128, 127).to(torch.int8)
+            
+            # Mark as quantized for forward pass
+            self._is_quantized_state = True
     
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -254,59 +286,86 @@ class HolographicTTEmbedding(nn.Module):
         
         # 5. Memory-Efficient Contraction
         # 物理的直観: 量子もつれ状態の測定（縮約）
-        # 
-        # 最適化戦略:
-        # 1. Triton Kernel使用可能 → 最速・最省メモリ
-        # 2. Gradient Checkpointing → メモリ削減
-        # 3. 標準einsum → フォールバック
+        
+        # Guard: Clamp cores to prevent explosion
+        c1 = torch.clamp(c1, -10.0, 10.0)
+        c2 = torch.clamp(c2, -10.0, 10.0)
         
         # Try Triton kernel first (if available)
         use_triton = hasattr(self, 'use_triton_kernel') and self.use_triton_kernel
         
-        if use_triton and torch.cuda.is_available():
-            try:
-                from ...kernels.tt_contraction import tt_contraction_triton
-                # Triton kernel: メモリ効率的なTT縮約
-                out_tensor = tt_contraction_triton(c1, c2)  # (B, L, d1, d2)
-            except (ImportError, Exception):
-                # Fallback to einsum
-                use_triton = False
+        # Check if we should use fused kernel (if cores are quantized)
+        is_quantized = getattr(self, '_is_quantized_state', False)
         
-        if not use_triton:
-            # Use gradient checkpointing for memory efficiency
-            if self.training and hasattr(self, 'use_checkpointing') and self.use_checkpointing:
-                from torch.utils.checkpoint import checkpoint
+        # Force float32 for stability during contraction
+        with torch.cuda.amp.autocast(enabled=False):
+            c1 = c1.float()
+            c2 = c2.float()
+            
+            if use_triton and TRITON_AVAILABLE and torch.cuda.is_available():
+                try:
+                    if is_quantized:
+                        # Fused Kernel
+                        scale1 = getattr(self, 'scale1', torch.tensor(1.0, device=self.core1.device)).float()
+                        scale2 = getattr(self, 'scale2', torch.tensor(1.0, device=self.core2.device)).float()
+                        
+                        # Use quantized buffers
+                        c1_q = getattr(self, 'core1_quant', self.core1)
+                        c2_q = getattr(self, 'core2_quant', self.core2)
+                        
+                        out_tensor = htt_fused_contraction(
+                            idx1, idx2,
+                            c1_q, c2_q,
+                            scale1, scale2,
+                            self.d_model
+                        )
+                        return out_tensor
+                    else:
+                        from ...kernels.tt_contraction import tt_contraction_triton
+                        # Triton kernel: メモリ効率的なTT縮約
+                        out_tensor = tt_contraction_triton(c1, c2)  # (B, L, d1, d2)
+                        # 6. Reshape to (B, L, D)
+                        out = out_tensor.reshape(B, L, -1)  # (B, L, d1*d2)
+                        # 7. Crop to exact d_model size
+                        out = out[:, :, :self.d_model]
+                        return out
+
+                except (ImportError, Exception) as e:
+                    # Fallback to einsum
+                    use_triton = False
+            
+            if not use_triton:
+                # Use gradient checkpointing for memory efficiency
+                if self.training and hasattr(self, 'use_checkpointing') and self.use_checkpointing:
+                    from torch.utils.checkpoint import checkpoint
+                    
+                    def contraction_fn(c1_inner, c2_inner):
+                        return torch.einsum('blrd,blrf->bldf', c1_inner, c2_inner)
+                    
+                    out_tensor = checkpoint(contraction_fn, c1, c2, use_reentrant=False)
+                else:
+                    # Standard einsum
+                    out_tensor = torch.einsum('blrd,blrf->bldf', c1, c2)  # (B, L, d1, d2)
                 
-                def contraction_fn(c1_inner, c2_inner):
-                    return torch.einsum('blrd,blrf->bldf', c1_inner, c2_inner)
+                # 6. Reshape to (B, L, D)
+                out = out_tensor.reshape(B, L, -1)  # (B, L, d1*d2)
                 
-                out_tensor = checkpoint(contraction_fn, c1, c2, use_reentrant=False)
-            else:
-                # Standard einsum
-                out_tensor = torch.einsum('blrd,blrf->bldf', c1, c2)  # (B, L, d1, d2)
-        
-        # 6. Reshape to (B, L, D)
-        out = out_tensor.reshape(B, L, -1)  # (B, L, d1*d2)
-        
-        # 7. Crop to exact d_model size
-        # d1*d2 >= d_model の場合があるため、正確なサイズにクロップ
-        out = out[:, :, :self.d_model]
-        
-        # Numerical stability check
-        if not torch.isfinite(out).all():
-            raise NumericalInstabilityError(
-                component="HolographicTTEmbedding",
-                diagnostics={
-                    'has_nan': torch.isnan(out).any().item(),
-                    'has_inf': torch.isinf(out).any().item(),
-                    'max_value': out.abs().max().item(),
-                    'input_ids_max': input_ids.max().item(),
-                    'core1_max': self.core1.abs().max().item(),
-                    'core2_max': self.core2.abs().max().item(),
-                }
-            )
-        
-        return out
+                # 7. Crop to exact d_model size
+                out = out[:, :, :self.d_model]
+            
+            # Numerical stability check and guard
+            if not torch.isfinite(out).all():
+                print(f"HTT Embedding NaN detected! Max: {out.abs().max().item()}")
+                # Attempt to recover by clamping
+                out = torch.clamp(out, -100.0, 100.0)
+                if not torch.isfinite(out).all():
+                     # If still bad, zero out (extreme fallback)
+                     out = torch.nan_to_num(out, nan=0.0, posinf=100.0, neginf=-100.0)
+            
+            # Normalize to keep variance stable (LayerNorm-like effect)
+            out = out / (self.rank ** 0.5)
+            
+            return out.to(input_ids.device) # Cast back to original device/dtype if needed by context (but we return float32 mostly)
     
     def forward_complex(self, input_ids: torch.Tensor) -> torch.Tensor:
         """

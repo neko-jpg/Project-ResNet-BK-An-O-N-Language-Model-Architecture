@@ -33,6 +33,9 @@ class HybridHyperbolicAttention(nn.Module):
             num_heads=config.num_heads,
             use_triton_kernel=config.use_triton_kernel,
             kernel_version=kernel_version,
+            use_bitnet=config.use_bitnet,
+            low_rank_attention=config.low_rank_attention,
+            low_rank_rank=config.low_rank_rank,
         )
 
         # 2. Global SSM module, configured from the main config object

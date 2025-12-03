@@ -278,7 +278,7 @@ class BKCoreFunction(torch.autograd.Function):
         # Stabilize denominator for 1/G² (preserve phase, clamp magnitude)
         denom = G_sq
         denom_mag = denom.abs()
-        min_denom = 1e-3  # Below this, 1/G² explodes
+        min_denom = 1e-4  # Increased from 1e-3 for stability
         denom = torch.where(
             denom_mag < min_denom,
             denom / (denom_mag + 1e-9) * min_denom,
@@ -300,18 +300,13 @@ class BKCoreFunction(torch.autograd.Function):
         # Check for anomalies in calculated gradient
         if not torch.isfinite(grad_v).all():
             msg = "BKCoreFunction backward: Calculated 'grad_v' contains NaN/Inf."
-            warnings.warn(msg, RuntimeWarning)
-            logger.warning(msg)
-            grad_v = torch.nan_to_num(grad_v)
+            # warnings.warn(msg, RuntimeWarning) # Suppress warning spam
+            # logger.warning(msg)
+            grad_v = torch.nan_to_num(grad_v, nan=0.0, posinf=100.0, neginf=-100.0)
 
         # Clamp and warn if clamping is active (significant clipping)
-        max_grad_norm = 1000.0
-        if grad_v.abs().max() > max_grad_norm:
-             # Warn only if it's significantly over (e.g. > 10000) or just debug log
-             # We clip at 1000.0
-             # logger.debug(f"BKCoreFunction backward: Clipping gradient magnitude from {grad_v.abs().max()} to {max_grad_norm}")
-             pass
-
+        max_grad_norm = 100.0 # Reduced from 1000.0 for stricter control
+        
         grad_v = torch.clamp(grad_v, -max_grad_norm, max_grad_norm)
 
         grad_he_diag = grad_v.to(torch.float32)

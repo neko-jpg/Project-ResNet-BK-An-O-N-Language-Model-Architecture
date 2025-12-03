@@ -6,6 +6,7 @@ Combines BK-Core with MoE for O(N) language modeling.
 import torch
 import torch.nn as nn
 from typing import Optional, Dict
+import sys
 
 from .bk_core import BKCoreFunction
 from .moe import SparseMoELayer
@@ -17,6 +18,25 @@ from src.models.phase7.hybrid_attention import HybridHyperbolicAttention
 
 
 from .config import ResNetBKConfig
+from src.models.bitnet import LowRankLinear
+
+class LowRankFFN(nn.Module):
+    """
+    Feed-Forward Network with Low-Rank Linear Layers.
+    """
+    def __init__(self, config: ResNetBKConfig):
+        super().__init__()
+        self.d_model = config.d_model
+        self.rank = config.low_rank_rank
+        self.expansion_factor = 4
+        d_ff = self.d_model * self.expansion_factor
+        
+        self.up_proj = LowRankLinear(self.d_model, d_ff, self.rank, use_bitnet=config.use_bitnet)
+        self.down_proj = LowRankLinear(d_ff, self.d_model, self.rank, use_bitnet=config.use_bitnet)
+        self.act = nn.GELU()
+
+    def forward(self, x):
+        return self.down_proj(self.act(self.up_proj(x)))
 
 class MoEResNetBKLayer(nn.Module):
     def __init__(self, config: ResNetBKConfig):
@@ -28,10 +48,16 @@ class MoEResNetBKLayer(nn.Module):
 
         if self.use_hybrid_attention:
             self.hybrid_attn = HybridHyperbolicAttention(config)
-            self.moe_ffn = None
         else:
             self.hybrid_attn = None
-            self.moe_ffn = SparseMoELayer(
+
+        # FFN Selection
+        self.ffn = None
+        if config.low_rank_ffn:
+            self.ffn = LowRankFFN(config)
+        elif not self.use_hybrid_attention:
+            # Only use MoE if not hybrid and not low_rank (legacy behavior)
+            self.ffn = SparseMoELayer(
                 config.d_model,
                 config.num_experts,
                 config.top_k,
@@ -75,15 +101,16 @@ class MoEResNetBKLayer(nn.Module):
             self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
             self.bk_core = BKCoreFunction.apply
 
-        self.v_max = 3.0
-        self.feature_clamp = 10.0
+        self.v_max = 1.0  # Reduced from 3.0 for stability
+        self.feature_clamp = 5.0  # Reduced from 10.0 for stability
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, D = x.shape
         assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
         
         v_prelim = self.v_proj(x).squeeze(-1)
-        v_prelim = torch.clamp(v_prelim, -self.v_max, self.v_max)
+        # Use tanh for smoother saturation instead of hard clamp
+        v_prelim = self.v_max * torch.tanh(v_prelim / self.v_max)
         gamma_val = self.gamma
 
         features, G_ii = None, None
@@ -91,6 +118,8 @@ class MoEResNetBKLayer(nn.Module):
             features, diagnostics = self.birman_schwinger_core(v_prelim, z=1.0j, gamma=gamma_val)
             self.last_bs_diagnostics = diagnostics
             G_ii = torch.complex(features[..., 0], features[..., 1]).unsqueeze(-1)
+            if torch.isnan(G_ii).any():
+                print(f"🚨 NaN in G_ii! Max: {G_ii.abs().max().item()}", flush=True)
         else:
             h0_diag  = self.h0_diag_base.expand(B, -1)
             h0_sub   = self.h0_sub_base.expand(B, -1)
@@ -99,8 +128,19 @@ class MoEResNetBKLayer(nn.Module):
             epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-6
             z = 1.0j * epsilon + 1j * gamma_val
             z = z.to(dtype=torch.complex64, device=he_diag.device)
-            features, g_ii_scalar = self.bk_core(he_diag, h0_super, h0_sub, z)
+            
+            # Force float32 for BK-Core stability
+            with torch.cuda.amp.autocast(enabled=False):
+                he_diag_f = he_diag.float()
+                h0_super_f = h0_super.float()
+                h0_sub_f = h0_sub.float()
+                z_f = z # z is complex64, which is compatible with float32 logic usually
+                
+                features, g_ii_scalar = self.bk_core(he_diag_f, h0_super_f, h0_sub_f, z_f)
+                
             G_ii = g_ii_scalar.unsqueeze(-1)
+            if torch.isnan(G_ii).any():
+                print(f"🚨 NaN in G_ii! Max: {G_ii.abs().max().item()}", flush=True)
 
         # 物理的に重要な Green 関数の対角成分を保持してハイブリッド注意に渡す
         self.last_g_ii = G_ii
@@ -112,15 +152,50 @@ class MoEResNetBKLayer(nn.Module):
                 self.last_hybrid_diagnostics = diagnostics
             else:
                 output = out_tuple
+            
+            if torch.isnan(output).any() or torch.isinf(output).any():
+                print(f"🚨 NaN/Inf detected after HybridAttention! Max: {output.abs().max().item()}", flush=True)
+            
+            # Apply FFN if present (Sequential: Attn -> FFN)
+            if self.ffn is not None:
+                ffn_out = self.ffn(output)
+                if torch.isnan(ffn_out).any() or torch.isinf(ffn_out).any():
+                    print(f"🚨 NaN/Inf detected after FFN! Max: {ffn_out.abs().max().item()}", flush=True)
+                output = output + ffn_out 
+                
+            if torch.isnan(output).any() or torch.isinf(output).any():
+                print(f"🚨 NaN/Inf detected after FFN Addition! Max: {output.abs().max().item()}", flush=True) # Residual connection for FFN? 
+                # Wait, the block has one residual. Usually it's x + Attn + FFN or x + Layer(x).
+                # If Layer = Attn -> FFN, then it's x + FFN(Attn(x)).
+                # Let's just chain them.
+                # output = self.ffn(output) 
+                pass
+
         else:
             epsilon = self.birman_schwinger_core.epsilon if self.use_birman_schwinger else 1.0
-            ffn_out, routing_entropy, routing_diagnostics = self.moe_ffn(x, G_ii=G_ii, epsilon=epsilon)
-            self.last_routing_diagnostics = routing_diagnostics
+            if self.ffn is not None:
+                # MoE or LowRank FFN
+                if isinstance(self.ffn, SparseMoELayer):
+                    ffn_out, routing_entropy, routing_diagnostics = self.ffn(x, G_ii=G_ii, epsilon=epsilon)
+                    self.last_routing_diagnostics = routing_diagnostics
+                else:
+                    ffn_out = self.ffn(x)
+            else:
+                ffn_out = torch.zeros_like(x)
+
             if self.feature_clamp is not None:
                 features = torch.clamp(features, -self.feature_clamp, self.feature_clamp)
             spec_out = self.output_proj(features)
             output = ffn_out + self.bk_scale * spec_out
-
+        
+        # Unified FFN application for Hybrid mode if not handled above
+        if self.use_hybrid_attention and self.ffn is not None:
+             # Already handled above? No, the original code had:
+             # output = output + self.ffn(output)
+             # But I modified it above to be explicit.
+             # Let's remove the duplicate call below if I added it above.
+             pass
+             
         return output
 
 class ResNetBKBlock(nn.Module):
@@ -134,7 +209,15 @@ class ResNetBKBlock(nn.Module):
 
     def forward(self, x):
         """Pre-Norm residual structure."""
-        out = self.bk_layer(self.layer_norm(x))
+        if torch.isnan(x).any():
+             print(f"🚨 NaN detected in ResNetBKBlock Input!")
+             
+        norm_x = self.layer_norm(x)
+        out = self.bk_layer(norm_x)
+        
+        if torch.isnan(out).any():
+             print(f"🚨 NaN detected in ResNetBKBlock Output (before residual)!")
+             
         return x + out
 
 
@@ -300,16 +383,16 @@ class LanguageModel(nn.Module):
 
     def _reset_parameters(self, prime_bump_init: bool, prime_bump_scale: float):
         # Use smaller std for embeddings to prevent NaN
-        embed_std = min(prime_bump_scale, 0.02)
+        embed_std = 0.001  # Reduced from min(prime_bump_scale, 0.02) for stability
         nn.init.normal_(self.token_embedding.weight, mean=0.0, std=embed_std)
         nn.init.normal_(self.position_embedding.weight, mean=0.0, std=embed_std)
 
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                # Use smaller initialization for stability
+                # Use much smaller initialization for stability
                 # Especially important for v_proj which feeds into BK Core
                 fan_in = module.weight.size(1)
-                std = (1.0 / fan_in) ** 0.5  # Smaller than xavier
+                std = min(0.001, (1.0 / fan_in) ** 0.5)  # Cap at 0.001 for ultra-stability
                 nn.init.normal_(module.weight, mean=0.0, std=std)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)

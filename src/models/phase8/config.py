@@ -89,6 +89,28 @@ class Phase8Config(Phase7Config):
     use_mixed_precision: bool = True  # Always use for speed
     use_triton_kernel: bool = True  # Use optimized Triton kernels
     triton_kernel_version: str = 'fast'  # Use fast kernel by default
+    
+    # Low-Rank Compression Settings
+    low_rank_embedding: bool = True  # Use low-rank compression for embeddings
+    low_rank_ffn: bool = True  # Use low-rank compression for FFN layers
+    
+    # ========== Speed Optimizations (NEW) ==========
+    # torch.compile settings
+    use_torch_compile: bool = False  # Enable torch.compile (experimental)
+    compile_mode: str = "default"  # Options: "default", "reduce-overhead", "max-autotune"
+    compile_fullgraph: bool = False  # Try to compile entire model as one graph
+    
+    # Flash Attention 2
+    use_flash_attention_2: bool = False  # Use Flash Attention 2 if available
+    
+    # Data loading optimizations
+    dataloader_num_workers: int = 8  # Number of dataloader workers
+    dataloader_pin_memory: bool = True  # Pin memory for faster H2D transfer
+    dataloader_prefetch_factor: int = 4  # Prefetch factor
+    dataloader_persistent_workers: bool = True  # Keep workers alive
+    
+    # Gradient accumulation
+    gradient_accumulation_steps: int = 1  # Number of steps to accumulate gradients
 
 @dataclass
 class Phase8Diagnostics:

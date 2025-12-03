@@ -282,7 +282,7 @@ class AdaptiveRankSSM(nn.Module):
         
         diagnostics = {
             'state_norm_mean': h.norm(dim=-1).mean(),
-            'A_spectral_norm': torch.linalg.matrix_norm(A, ord=2),
+            'A_spectral_norm': torch.linalg.matrix_norm(A.float(), ord=2),
         }
         
         return output, diagnostics

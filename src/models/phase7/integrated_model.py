@@ -64,6 +64,7 @@ class Phase7IntegratedModel(nn.Module):
             d_model=config.d_model,
             rank=config.htt_rank
         )
+        self.htt_embedding.use_triton_kernel = config.use_triton_kernel
 
         # 3. Replace the standard embedding layer with our HTT embedding
         self.model.token_embedding = self.htt_embedding

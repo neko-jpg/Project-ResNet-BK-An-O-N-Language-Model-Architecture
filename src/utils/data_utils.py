@@ -222,6 +222,7 @@ def get_wikitext2_dataloaders(batch_size=32, seq_len=128, num_workers=2, vocab_s
     return train_loader, val_loader, vocab_size
 
 
+
 class BinaryIndexedDataset:
     """
     Memory-mapped reader for .bin/.idx pairs produced by prepare_datasets.py.
@@ -234,37 +235,58 @@ class BinaryIndexedDataset:
     """
 
     def __init__(self, path: str, split: str = "train"):
-        root = Path(path)
-        bin_path = root / f"{split}.bin"
-        idx_path = root / f"{split}.idx"
+        self.use_rust = False
+        try:
+            import rust_loader
+            self.rust_loader = rust_loader.RustDataLoader(str(path), split)
+            self.use_rust = True
+            # We still need some properties if accessed directly, but let's rely on rust loader methods
+        except ImportError:
+            # Fallback to Python implementation
+            pass
 
-        if not bin_path.exists() or not idx_path.exists():
-            # Fallback for legacy setups where only 'train' might exist if split is validation,
-            # but strictly we should raise error.
-            # However, to be nice during transition:
-            if split == "validation" and not bin_path.exists():
-                 raise FileNotFoundError(f"Validation split not found at {bin_path}")
-            raise FileNotFoundError(f"Missing bin/idx files under {root} for split '{split}'")
+        if not self.use_rust:
+            root = Path(path)
+            bin_path = root / f"{split}.bin"
+            idx_path = root / f"{split}.idx"
 
-        with open(idx_path, "rb") as f:
-            magic = f.read(4)
-            if magic != b"MUSE":
-                raise ValueError(f"Invalid magic in {idx_path}: {magic}")
-            _version = struct.unpack("<I", f.read(4))[0]
-            idx_data = np.fromfile(f, dtype=np.uint64)
+            if not bin_path.exists() or not idx_path.exists():
+                if split == "validation" and not bin_path.exists():
+                     raise FileNotFoundError(f"Validation split not found at {bin_path}")
+                raise FileNotFoundError(f"Missing bin/idx files under {root} for split '{split}'")
 
-        if idx_data.size % 2 != 0:
-            raise ValueError(f"Corrupted idx file: {idx_path}")
+            with open(idx_path, "rb") as f:
+                magic = f.read(4)
+                if magic != b"MUSE":
+                    raise ValueError(f"Invalid magic in {idx_path}: {magic}")
+                _version = struct.unpack("<I", f.read(4))[0]
+                idx_data = np.fromfile(f, dtype=np.uint64)
 
-        self.index = idx_data.reshape(-1, 2)  # (num_docs, 2): offset, length
-        self.tokens = np.memmap(bin_path, dtype=np.uint32, mode="r")
+            if idx_data.size % 2 != 0:
+                raise ValueError(f"Corrupted idx file: {idx_path}")
+
+            self.index = idx_data.reshape(-1, 2)  # (num_docs, 2): offset, length
+            self.tokens = np.memmap(bin_path, dtype=np.uint32, mode="r")
 
     @property
     def num_docs(self) -> int:
+        if self.use_rust:
+            return self.rust_loader.num_docs()
         return self.index.shape[0]
 
     def sample_sequence(self, seq_len: int, rng: random.Random) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Sample a (input, target) pair of length seq_len from a random doc."""
+        if self.use_rust:
+            # Use Rust implementation
+            # Note: Rust implementation uses its own internal RNG for now.
+            # If we want to sync RNG, we need to pass seed or state, but for performance internal is fine.
+            res = self.rust_loader.sample_sequence(seq_len)
+            if res is None:
+                return None
+            x, y = res
+            # Rust returns numpy arrays (via pyo3-numpy)
+            return x, y
+
         for _ in range(8):  # retry a few times for short docs
             doc_id = rng.randrange(self.num_docs)
             offset, length = self.index[doc_id]

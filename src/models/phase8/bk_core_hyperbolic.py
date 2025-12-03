@@ -307,25 +307,31 @@ class BKCoreHyperbolicIntegration(nn.Module):
         """
         batch_size, seq_len, d_model = x.shape
         
-        # 有効ハミルトニアン対角成分
-        he_diag = self.he_diag_proj(x).mean(dim=-1)  # [B, N]
-        
-        # 三重対角行列の非対角成分
-        h0_super = self.h0_super_proj(x[:, :-1]).mean(dim=-1)  # [B, N-1]
-        h0_sub = self.h0_sub_proj(x[:, 1:]).mean(dim=-1)  # [B, N-1]
-        
-        # BK-Coreを使用してG_iiを計算
-        try:
-            from src.models.bk_core import BKCoreFunction
-            features, G_ii = BKCoreFunction.apply(
-                he_diag, h0_super, h0_sub, self.z, False
-            )
-        except ImportError:
-            # フォールバック: 簡易計算
-            G_ii = self._simple_green_function(he_diag, h0_super, h0_sub)
-            features = torch.stack([G_ii.real, G_ii.imag], dim=-1)
-        
-        return G_ii, features
+        # Force float32 for stability in Green function calculation
+        with torch.cuda.amp.autocast(enabled=False):
+            x_f32 = x.float()
+            
+            # 有効ハミルトニアン対角成分
+            he_diag = self.he_diag_proj(x_f32).mean(dim=-1)  # [B, N]
+            
+            # 三重対角行列の非対角成分
+            h0_super = self.h0_super_proj(x_f32[:, :-1]).mean(dim=-1)  # [B, N-1]
+            h0_sub = self.h0_sub_proj(x_f32[:, 1:]).mean(dim=-1)  # [B, N-1]
+            
+            # BK-Coreを使用してG_iiを計算
+            try:
+                from src.models.bk_core import BKCoreFunction
+                # Ensure z is on the correct device
+                z_dev = self.z.to(device=x.device)
+                features, G_ii = BKCoreFunction.apply(
+                    he_diag, h0_super, h0_sub, z_dev, False
+                )
+            except ImportError:
+                # フォールバック: 簡易計算
+                G_ii = self._simple_green_function(he_diag, h0_super, h0_sub)
+                features = torch.stack([G_ii.real, G_ii.imag], dim=-1)
+            
+            return G_ii, features
     
     def _simple_green_function(
         self,

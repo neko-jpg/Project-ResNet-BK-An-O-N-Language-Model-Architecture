@@ -365,28 +365,28 @@ class TangentSpaceLinearAttention(nn.Module):
             diagnostics: 診断情報（オプション）
         """
         B, N, D = x.shape
-        c = self.curvature.abs().clamp(min=1e-6)
+        c = self.curvature.abs()
         
-        # 接空間に写像
-        x_tan = log_map_at_origin(x, c)
-        
-        # Q, K, V投影
-        q = self.q_proj(x_tan).reshape(B, N, self.num_heads, self.d_head).transpose(1, 2)
-        k = self.k_proj(x_tan).reshape(B, N, self.num_heads, self.d_head).transpose(1, 2)
-        v = self.v_proj(x_tan).reshape(B, N, self.num_heads, self.d_head).transpose(1, 2)
-        
-        # モード決定
-        mode = self._get_mode(c)
-        
-        if mode == "linear":
+        # curvature=0の場合は双曲幾何学をスキップ（ユークリッド空間）
+        if c.item() < 1e-8:
+            # 標準的なLinear Attention
+            q = self.q_proj(x).reshape(B, N, self.num_heads, self.d_head).transpose(1, 2)
+            k = self.k_proj(x).reshape(B, N, self.num_heads, self.d_head).transpose(1, 2)
+            v = self.v_proj(x).reshape(B, N, self.num_heads, self.d_head).transpose(1, 2)
+            
             output = self._linear_attention(q, k, v, mask)
+            output = output.transpose(1, 2).reshape(B, N, D)
+            output = self.out_proj(output)
+            mode = "euclidean"
             alpha = 0.0
-        elif mode == "exact":
-            output = self._exact_hyperbolic_attention(q, k, v, c, mask)
-            alpha = 1.0
         else:
-            output, alpha = self._hybrid_attention(q, k, v, c, mask)
-        
+            # 双曲幾何学を使用
+            c = c.clamp(min=1e-6)
+            
+            # 接空間に写像
+            x_tan = log_map_at_origin(x, c)
+            
+            # Q, K,
         # 形状を戻す
         output = output.transpose(1, 2).reshape(B, N, D)
         output = self.out_proj(output)

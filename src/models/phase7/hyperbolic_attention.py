@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+from src.models.bitnet import BitNetLinear, LowRankLinear
+
 # ##############################################################################
 # # HYPERBOLIC UTILITY FUNCTIONS
 # ##############################################################################
@@ -156,7 +158,8 @@ class HyperbolicMultiHeadAttention(nn.Module):
     - 'v2': 最適化版（正確な双曲距離、事前計算で高速化）
     - 'v1': 従来版（完全な双曲距離計算）
     """
-    def __init__(self, d_model: int, num_heads: int, use_triton_kernel: bool = True, kernel_version: str = 'fast'):
+    def __init__(self, d_model: int, num_heads: int, use_triton_kernel: bool = True, kernel_version: str = 'fast',
+                 use_bitnet: bool = False, low_rank_attention: bool = False, low_rank_rank: int = 64):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -165,6 +168,9 @@ class HyperbolicMultiHeadAttention(nn.Module):
         self.d_head = d_model // num_heads
         self.use_triton_kernel = use_triton_kernel
         self.kernel_version = kernel_version
+        self.use_bitnet = use_bitnet
+        self.low_rank_attention = low_rank_attention
+        self.low_rank_rank = low_rank_rank
 
         self.triton_kernel_function = None
         if self.use_triton_kernel:
@@ -190,9 +196,21 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 self.triton_kernel_function = None
 
         # Linear projections for Q, K, V. These project from Euclidean to the tangent space.
-        self.W_q = nn.Linear(d_model, d_model, bias=False)
-        self.W_k = nn.Linear(d_model, d_model, bias=False)
-        self.W_v = nn.Linear(d_model, d_model, bias=False)
+        if self.low_rank_attention:
+            self.W_q = LowRankLinear(d_model, d_model, self.low_rank_rank, bias=False, use_bitnet=self.use_bitnet)
+            self.W_k = LowRankLinear(d_model, d_model, self.low_rank_rank, bias=False, use_bitnet=self.use_bitnet)
+            self.W_v = LowRankLinear(d_model, d_model, self.low_rank_rank, bias=False, use_bitnet=self.use_bitnet)
+            self.W_o = LowRankLinear(d_model, d_model, self.low_rank_rank, bias=False, use_bitnet=self.use_bitnet)
+        elif self.use_bitnet:
+            self.W_q = BitNetLinear(d_model, d_model, bias=False)
+            self.W_k = BitNetLinear(d_model, d_model, bias=False)
+            self.W_v = BitNetLinear(d_model, d_model, bias=False)
+            self.W_o = BitNetLinear(d_model, d_model, bias=False)
+        else:
+            self.W_q = nn.Linear(d_model, d_model, bias=False)
+            self.W_k = nn.Linear(d_model, d_model, bias=False)
+            self.W_v = nn.Linear(d_model, d_model, bias=False)
+            self.W_o = nn.Linear(d_model, d_model, bias=False)
 
         # The core hyperbolic attention mechanism
         # We can reuse the single-head implementation across all heads.
@@ -202,16 +220,24 @@ class HyperbolicMultiHeadAttention(nn.Module):
         self.log_c = nn.Parameter(torch.tensor(0.0))
 
         # Final output projection
-        self.W_o = nn.Linear(d_model, d_model, bias=False)
+        # self.W_o is initialized above
 
         self._init_weights()
 
     def _init_weights(self):
         from src.utils.prime_init import prime_bump_init_
-        prime_bump_init_(self.W_q.weight)
-        prime_bump_init_(self.W_k.weight)
-        prime_bump_init_(self.W_v.weight)
-        prime_bump_init_(self.W_o.weight)
+        
+        def init_layer(layer):
+            if isinstance(layer, LowRankLinear):
+                prime_bump_init_(layer.U.weight)
+                prime_bump_init_(layer.V.weight)
+            elif hasattr(layer, 'weight'):
+                prime_bump_init_(layer.weight)
+                
+        init_layer(self.W_q)
+        init_layer(self.W_k)
+        init_layer(self.W_v)
+        init_layer(self.W_o)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None, return_diagnostics: bool = True):
         """

@@ -26,6 +26,12 @@ import torch.nn as nn
 from typing import Tuple, Optional
 import math
 
+try:
+    from ..kernels.bitnet_triton import bitnet_matmul
+    TRITON_AVAILABLE = True
+except ImportError:
+    TRITON_AVAILABLE = False
+
 
 class SemiseparableMatrix(nn.Module):
     """
@@ -86,9 +92,26 @@ class SemiseparableMatrix(nn.Module):
         
         # Low-rank factors: U (N × r), V (N × r)
         # Storage: O(N log N)
-        # Changed to nn.Parameter to allow learning (Option A)
-        self.U = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
-        self.V = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
+        if self.use_bitnet:
+            # BitNet: Store FP32 masters for U and V
+            self.U_master = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
+            self.V_master = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
+            # Register buffers for quantized versions (optional, for inference caching)
+            # For now, we'll quantize on the fly or use the masters
+            # We need to register U and V as buffers or properties so they can be accessed
+            # But to keep compatibility with existing code that uses self.U, we might need a property.
+            # However, nn.Module properties are tricky with parameters.
+            # Let's just use U_master and V_master and compute U/V in forward.
+            # But wait, existing code expects self.U and self.V to exist?
+            # The existing code uses self.U and self.V in matvec.
+            # We will update matvec.
+            # But what about external access?
+            # Let's define self.U and self.V as properties?
+            # Or just keep them as None and handle it.
+            pass
+        else:
+            self.U = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
+            self.V = nn.Parameter(torch.randn(n_seq, self.rank, dtype=dtype, device=device) * 0.01)
         
         # Checkpointing state
         self._checkpointing_enabled = False
@@ -127,6 +150,7 @@ class SemiseparableMatrix(nn.Module):
         # 4. Straight-Through Estimator (STE)
         # Forward: use w_out
         # Backward: pass gradient to w
+        # Ensure w_out has gradients enabled if w does
         return (w_out - w).detach() + w
     
     def _get_tridiagonal_components(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -230,6 +254,31 @@ class SemiseparableMatrix(nn.Module):
         
         return T, U, V
     
+    def _get_quantized_uv(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Get U and V. If BitNet, returns quantized versions (float) and optionally int8 versions + scales.
+        """
+        if self.use_bitnet:
+            # Quantize U
+            scale_u = self.U_master.abs().mean()
+            scale_u = torch.clamp(scale_u, min=1e-6)
+            u_scaled = self.U_master / scale_u
+            u_quant_float = torch.clamp(torch.round(u_scaled), -1, 1)
+            U = u_quant_float * scale_u
+            U = (U - self.U_master).detach() + self.U_master # STE
+            
+            # Quantize V
+            scale_v = self.V_master.abs().mean()
+            scale_v = torch.clamp(scale_v, min=1e-6)
+            v_scaled = self.V_master / scale_v
+            v_quant_float = torch.clamp(torch.round(v_scaled), -1, 1)
+            V = v_quant_float * scale_v
+            V = (V - self.V_master).detach() + self.V_master # STE
+            
+            return U, V, (u_quant_float, scale_u), (v_quant_float, scale_v)
+        else:
+            return self.U, self.V, None, None
+
     def matvec(self, x: torch.Tensor) -> torch.Tensor:
         """
         O(N) matrix-vector product: y = H·x = T·x + U·(V^T·x)
@@ -253,6 +302,7 @@ class SemiseparableMatrix(nn.Module):
         
         # Get effective components (quantized if BitNet)
         main_diag, super_diag, sub_diag = self._get_tridiagonal_components()
+        U, V, u_info, v_info = self._get_quantized_uv()
 
         # Tridiagonal part: T·x
         # T·x = main_diag * x + super_diag * x[1:] (shifted) + sub_diag * x[:-1] (shifted)
@@ -266,11 +316,48 @@ class SemiseparableMatrix(nn.Module):
             y_tridiag[:, 1:] += sub_diag.unsqueeze(0) * x[:, :-1]
         
         # Low-rank part: U·(V^T·x)
-        # V^T·x: (r, N) @ (B, N)^T = (r, B) -> (B, r)
-        Vt_x = torch.matmul(x, self.V)  # (B, r)
         
-        # U·(V^T·x): (B, N) @ (N, r) @ (B, r)^T = (B, N)
-        y_lowrank = torch.matmul(Vt_x, self.U.T)  # (B, N)
+        if self.use_bitnet and TRITON_AVAILABLE and x.is_cuda:
+            # Use Triton Kernel
+            # V^T·x = (x @ V)
+            # x: (B, N), V: (N, r)
+            # v_info = (v_quant_float, scale_v)
+            # We need int8 weights. v_quant_float is {-1, 0, 1} float.
+            v_int8 = v_info[0].to(torch.int8)
+            v_scale = v_info[1]
+            # scale needs to be (r,) tensor for the kernel?
+            # The kernel expects scale_ptr (K,).
+            # Here scale_v is a scalar (mean of abs).
+            # We can expand it.
+            v_scale_vec = torch.full((self.rank,), v_scale.item(), device=x.device, dtype=x.dtype)
+            
+            Vt_x = bitnet_matmul(x, v_int8, v_scale_vec) # (B, r)
+            
+            # U·(Vt_x) = Vt_x @ U.T
+            # Vt_x: (B, r). U.T: (r, N).
+            # We need U.T weights.
+            # U is (N, r). U.T is (r, N).
+            # u_info = (u_quant_float, scale_u)
+            # u_quant_float is (N, r).
+            # We need weights for (B, r) @ (r, N).
+            # So weights are (r, N).
+            # bitnet_matmul expects (B, K) @ (K, N_out).
+            # Here K=r, N_out=N.
+            # Weights should be (r, N).
+            # u_int8 = u_info[0].T.to(torch.int8)
+            # u_scale = u_info[1]
+            u_int8 = u_info[0].T.to(torch.int8).contiguous()
+            u_scale_vec = torch.full((N,), u_info[1].item(), device=x.device, dtype=x.dtype)
+            
+            y_lowrank = bitnet_matmul(Vt_x, u_int8, u_scale_vec) # (B, N)
+            
+        else:
+            # Standard PyTorch
+            # V^T·x: (r, N) @ (B, N)^T = (r, B) -> (B, r)
+            Vt_x = torch.matmul(x, V)  # (B, r)
+            
+            # U·(V^T·x): (B, N) @ (N, r) @ (B, r)^T = (B, N)
+            y_lowrank = torch.matmul(Vt_x, U.T)  # (B, N)
         
         # Total: H·x = T·x + U·V^T·x
         y = y_tridiag + y_lowrank
@@ -316,6 +403,7 @@ class SemiseparableMatrix(nn.Module):
         
         # Get effective components (quantized if BitNet)
         main_diag, super_diag, sub_diag = self._get_tridiagonal_components()
+        U, V, _, _ = self._get_quantized_uv()
 
         # Store tridiagonal components only (O(N) memory)
         self._stored_tridiag = {
@@ -326,7 +414,7 @@ class SemiseparableMatrix(nn.Module):
         
         # Use custom autograd function for checkpointing
         return SemiseparableCheckpointFunction.apply(
-            x, main_diag, super_diag, sub_diag, self.U, self.V
+            x, main_diag, super_diag, sub_diag, U, V
         )
     
     def get_memory_usage(self) -> dict:
@@ -376,6 +464,7 @@ class SemiseparableMatrix(nn.Module):
         
         # Get effective components
         main_diag, super_diag, sub_diag = self._get_tridiagonal_components()
+        U, V, _, _ = self._get_quantized_uv()
 
         # Reconstruct T
         T = torch.zeros_like(H)
@@ -385,7 +474,7 @@ class SemiseparableMatrix(nn.Module):
             T.diagonal(-1).copy_(sub_diag)
         
         # Reconstruct UV^T
-        UVt = torch.matmul(self.U, self.V.T)
+        UVt = torch.matmul(U, V.T)
         
         # Reconstructed matrix
         H_reconstructed = T + UVt

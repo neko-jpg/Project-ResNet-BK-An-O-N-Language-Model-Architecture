@@ -1,6 +1,9 @@
 """
 Hyperbolic State Space Model (SSM) Implementation
 
+This module implements state space models in hyperbolic space,
+enabling O(N) sequential processing while preserving hierarchical structure.
+
 Requirements: 69.1, 69.2, 69.3, 69.4, 69.5, 69.6
 """
 
@@ -28,14 +31,21 @@ class HyperbolicSSMConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "d_model": self.d_model, "d_state": self.d_state, "curvature": self.curvature,
-            "dt_min": self.dt_min, "dt_max": self.dt_max, "dt_init": self.dt_init,
-            "use_associative_scan": self.use_associative_scan, "eps": self.eps, "max_norm": self.max_norm,
+            "d_model": self.d_model,
+            "d_state": self.d_state,
+            "curvature": self.curvature,
+            "dt_min": self.dt_min,
+            "dt_max": self.dt_max,
+            "dt_init": self.dt_init,
+            "use_associative_scan": self.use_associative_scan,
+            "eps": self.eps,
+            "max_norm": self.max_norm,
         }
     
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "HyperbolicSSMConfig":
         return cls(**d)
+
 
 
 @dataclass
@@ -50,9 +60,12 @@ class HyperbolicSSMDiagnostics:
     
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "state_utilization": self.state_utilization, "scan_efficiency": self.scan_efficiency,
-            "hierarchy_preservation": self.hierarchy_preservation, "state_norms_mean": self.state_norms_mean,
-            "state_norms_std": self.state_norms_std, "throughput_tokens_per_sec": self.throughput_tokens_per_sec,
+            "state_utilization": self.state_utilization,
+            "scan_efficiency": self.scan_efficiency,
+            "hierarchy_preservation": self.hierarchy_preservation,
+            "state_norms_mean": self.state_norms_mean,
+            "state_norms_std": self.state_norms_std,
+            "throughput_tokens_per_sec": self.throughput_tokens_per_sec,
         }
 
 
@@ -61,6 +74,7 @@ class MobiusOperations:
     
     @staticmethod
     def mobius_add(x: torch.Tensor, y: torch.Tensor, c: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
+        """Mobius addition in the Poincare ball."""
         x_sq = torch.sum(x * x, dim=-1, keepdim=True).clamp(min=eps)
         y_sq = torch.sum(y * y, dim=-1, keepdim=True).clamp(min=eps)
         xy = torch.sum(x * y, dim=-1, keepdim=True)
@@ -70,6 +84,7 @@ class MobiusOperations:
     
     @staticmethod
     def mobius_scalar_mul(r: torch.Tensor, x: torch.Tensor, c: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
+        """Mobius scalar multiplication."""
         sqrt_c = math.sqrt(c)
         x_norm = torch.norm(x, dim=-1, keepdim=True).clamp(min=eps)
         scaled_norm = (sqrt_c * x_norm).clamp(max=1.0 - eps)
@@ -79,12 +94,14 @@ class MobiusOperations:
     
     @staticmethod
     def exp_map(v: torch.Tensor, c: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
+        """Exponential map from tangent space at origin to Poincare ball."""
         sqrt_c = math.sqrt(c)
         v_norm = torch.norm(v, dim=-1, keepdim=True).clamp(min=eps)
         return torch.tanh(sqrt_c * v_norm) * (v / (sqrt_c * v_norm))
     
     @staticmethod
     def log_map(x: torch.Tensor, c: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
+        """Logarithmic map from Poincare ball to tangent space at origin."""
         sqrt_c = math.sqrt(c)
         x_norm = torch.norm(x, dim=-1, keepdim=True).clamp(min=eps)
         scaled_norm = (sqrt_c * x_norm).clamp(max=1.0 - eps)
@@ -93,14 +110,16 @@ class MobiusOperations:
     
     @staticmethod
     def project_to_ball(x: torch.Tensor, max_norm: float = 0.99, eps: float = 1e-6) -> torch.Tensor:
+        """Project point to inside the Poincare ball."""
         x_norm = torch.norm(x, dim=-1, keepdim=True)
         clamped_norm = x_norm.clamp(min=eps)
         scale = torch.where(x_norm > max_norm, max_norm / clamped_norm, torch.ones_like(clamped_norm))
         return x * scale
 
 
+
 class HyperbolicAssociativeScan(nn.Module):
-    """Associative scan in hyperbolic space."""
+    """Associative scan in hyperbolic space using Mobius operations."""
     
     def __init__(self, config: HyperbolicSSMConfig):
         super().__init__()
@@ -110,14 +129,18 @@ class HyperbolicAssociativeScan(nn.Module):
         self.max_norm = config.max_norm
         self.mobius = MobiusOperations()
     
-    def _hyperbolic_combine(self, a1, b1, a2, b2):
+    def _hyperbolic_combine(self, a1: torch.Tensor, b1: torch.Tensor, 
+                            a2: torch.Tensor, b2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Combine two (a, b) pairs for associative scan."""
         a_combined = a1 * a2
         scaled_b1 = self.mobius.mobius_scalar_mul(a2, b1, self.c, self.eps)
         b_combined = self.mobius.mobius_add(scaled_b1, b2, self.c, self.eps)
         b_combined = self.mobius.project_to_ball(b_combined, self.max_norm, self.eps)
         return a_combined, b_combined
     
-    def forward(self, A, B_x, initial_state=None):
+    def forward(self, A: torch.Tensor, B_x: torch.Tensor, 
+                initial_state: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Perform associative scan in hyperbolic space."""
         B, L, D = B_x.shape
         device = B_x.device
         dtype = B_x.dtype
@@ -127,7 +150,9 @@ class HyperbolicAssociativeScan(nn.Module):
             return self._parallel_scan(A, B_x, initial_state)
         return self._sequential_scan(A, B_x, initial_state)
     
-    def _sequential_scan(self, A, B_x, initial_state):
+    def _sequential_scan(self, A: torch.Tensor, B_x: torch.Tensor, 
+                         initial_state: torch.Tensor) -> torch.Tensor:
+        """Sequential scan for reference/small sequences."""
         B, L, D = B_x.shape
         states = []
         h = initial_state
@@ -140,7 +165,9 @@ class HyperbolicAssociativeScan(nn.Module):
             states.append(h)
         return torch.stack(states, dim=1)
     
-    def _parallel_scan(self, A, B_x, initial_state):
+    def _parallel_scan(self, A: torch.Tensor, B_x: torch.Tensor, 
+                       initial_state: torch.Tensor) -> torch.Tensor:
+        """Parallel associative scan using work-efficient algorithm."""
         B, L, D = B_x.shape
         device = B_x.device
         L_padded = 1 << (L - 1).bit_length()
@@ -177,8 +204,9 @@ class HyperbolicAssociativeScan(nn.Module):
         return b_arr[:, :L]
 
 
+
 class HyperbolicSSM(nn.Module):
-    """Hyperbolic State Space Model."""
+    """Hyperbolic State Space Model with Mobius state transitions."""
     
     def __init__(self, config: HyperbolicSSMConfig):
         super().__init__()
@@ -200,9 +228,11 @@ class HyperbolicSSM(nn.Module):
         self.scan = HyperbolicAssociativeScan(config)
         self.mobius = MobiusOperations()
         self.norm = nn.LayerNorm(config.d_state)
-        self._last_diagnostics = None
+        self._last_diagnostics: Optional[HyperbolicSSMDiagnostics] = None
     
-    def forward(self, x, initial_state=None, return_state=False):
+    def forward(self, x: torch.Tensor, initial_state: Optional[torch.Tensor] = None,
+                return_state: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Forward pass of Hyperbolic SSM."""
         B, L, D = x.shape
         start_time = time.time()
         proj = self.in_proj(x)
@@ -229,14 +259,15 @@ class HyperbolicSSM(nn.Module):
             return output, states[:, -1]
         return output, None
     
-    def get_diagnostics(self):
+    def get_diagnostics(self) -> HyperbolicSSMDiagnostics:
+        """Get diagnostics from last forward pass."""
         if self._last_diagnostics is None:
             return HyperbolicSSMDiagnostics()
         return self._last_diagnostics
 
 
 class HyperbolicSSMBlock(nn.Module):
-    """Hyperbolic SSM block with residual."""
+    """Complete Hyperbolic SSM block with residual connection."""
     
     def __init__(self, config: HyperbolicSSMConfig):
         super().__init__()
@@ -245,24 +276,31 @@ class HyperbolicSSMBlock(nn.Module):
         self.ssm = HyperbolicSSM(config)
         self.dropout = nn.Dropout(0.1)
     
-    def forward(self, x, initial_state=None):
+    def forward(self, x: torch.Tensor, initial_state: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Forward pass with residual connection."""
         residual = x
         x = self.norm(x)
         output, state = self.ssm(x, initial_state, return_state=True)
         output = self.dropout(output)
         return residual + output, state
     
-    def get_diagnostics(self):
+    def get_diagnostics(self) -> HyperbolicSSMDiagnostics:
+        """Get diagnostics from SSM."""
         return self.ssm.get_diagnostics()
 
 
-def create_hyperbolic_ssm(d_model=256, d_state=64, curvature=1.0, use_associative_scan=True, **kwargs):
+def create_hyperbolic_ssm(d_model: int = 256, d_state: int = 64, curvature: float = 1.0,
+                          use_associative_scan: bool = True, **kwargs) -> HyperbolicSSM:
+    """Factory function to create Hyperbolic SSM."""
     config = HyperbolicSSMConfig(d_model=d_model, d_state=d_state, curvature=curvature,
                                   use_associative_scan=use_associative_scan, **kwargs)
     return HyperbolicSSM(config)
 
 
-def measure_throughput(model, batch_size=8, seq_len=1024, num_warmup=3, num_runs=10, device="cuda"):
+def measure_throughput(model: HyperbolicSSM, batch_size: int = 8, seq_len: int = 1024,
+                       num_warmup: int = 3, num_runs: int = 10, device: str = "cuda") -> Dict[str, float]:
+    """Measure throughput of Hyperbolic SSM."""
     model = model.to(device)
     model.eval()
     x = torch.randn(batch_size, seq_len, model.d_model, device=device)

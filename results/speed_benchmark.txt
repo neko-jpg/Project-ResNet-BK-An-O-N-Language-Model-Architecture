@@ -1,0 +1,13 @@
+Could not import cythonised chelpers, using Python alternative. This will give the same result, but is slower.
+============================================================
+Phase 8 Speed Benchmark
+============================================================
+Configuration:
+  d_model: 512
+  n_layers: 4
+  n_seq: 256
+  batch_size: 1
+  low_rank_rank: 16
+  use_compile: False
+  use_flash_attn2: False
+

@@ -1,0 +1,79 @@
+# Phase 8 Maximum Configuration - Ultra Compressed Version
+# Hyperbolic Transcendence - 8GB VRAM対応
+# 目標: ~3B parameters before compression, ~30M after ultra compression
+
+model:
+  d_model: 3072      # 3B設定
+  n_layers: 40       # 深いネットワーク
+  num_heads: 24      # d_model/128
+  n_seq: 512         # メモリ効率のため512に抑える
+  dropout_p: 0.1
+  vocab_size: 50257  # GPT-2 vocab size
+  
+  # Phase 8 specific
+  use_bk_hyperbolic: true
+  use_ar_ssm_fusion: true
+  curvature_initial: 0.01    # Low curvature for O(N) linear attention
+
+training:
+  batch_size: 1      # 3Bモデルなので1に戻す
+  gradient_accumulation_steps: 32  # Effective batch size: 32
+  epochs: 10
+  learning_rate: 3.0e-5  # 大きいモデルなので学習率を下げる
+  warmup_steps: 5000     # より長いウォームアップ
+  weight_decay: 0.01
+  max_grad_norm: 0.5
+  
+  # Mixed Precision (必須)
+  mixed_precision: true
+  fp16: true
+  
+  # Gradient Checkpointing (3Bモデルには必須)
+  gradient_checkpointing: true
+  
+  # 8-bit Optimizer (メモリ削減) - 3Bモデルには推奨
+  use_8bit_adam: true  # bitsandbytes使用
+
+optimization:
+  # Ultra Low-Rank Compression (必須 - 30Mを目指すため)
+  low_rank_embedding: true  # 95% compression (d_model/20)
+  low_rank_ffn: true        # 98% compression (d_model/50)
+  ultra_compression_mode: true  # 超圧縮モード
+  
+  # HTT Compression (Phase 7から継承)
+  htt_rank: 4  # 極小ランク (通常16→4)
+  
+  # Memory Optimization
+  use_flash_attention: false  # Use O(N) linear attention
+  use_triton_kernels: true
+  empty_cache_every: 3  # 3Bモデルなのでより頻繁に
+  
+  # Adaptive Computation
+  adaptive_computation: true
+  early_exit_threshold: 0.5
+  
+  # Quantization (推論時)
+  enable_quantization: true
+  quantization_bits: 4  # 4-bit quantization
+
+checkpoint:
+  save_dir: checkpoints/phase8_max_ultra_compressed
+  save_every: 1000
+  keep_last_n: 2
+
+logging:
+  log_every: 50
+  eval_every: 500
+  wandb: false
+
+# Expected Memory Usage (8GB VRAM対応)
+# Model Parameters: ~4.8B (4,800M) before compression
+# After Ultra Low-Rank Compression: ~30-50M effective parameters
+# Model (FP16): ~9 GB (圧縮前)
+# With ultra compression: ~100 MB (圧縮後)
+# Optimizer States (8-bit): ~50 MB
+# Activations (with gradient checkpointing): ~2 GB
+# Peak: ~3-4 GB (8GB VRAM 余裕あり)
+
+# Note: この設定は極端な圧縮を行うため、精度が低下する可能性があります。
+# 実験的な設定として使用してください。

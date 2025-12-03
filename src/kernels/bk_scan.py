@@ -152,30 +152,38 @@ def scan_op_packed(a, b):
 # ============================================================================
 
 @triton.jit
-def bk_scan_fwd_kernel_packed(
-    # Input: Packed Matrices (B, N, 8)
-    matrices_ptr,
+def bk_scan_fused_kernel(
+    # Input pointers (Real, Imag)
+    a_r_ptr, a_i_ptr,
+    b_r_ptr, b_i_ptr,
+    c_r_ptr, c_i_ptr,
     # Output pointers
     theta_r_ptr, theta_i_ptr,
+    # Scalar z
+    z_r, z_i,
     # Dimensions
     B, N,
     # Strides
-    stride_b_mat, stride_n_mat,
+    stride_b_a, stride_n_a,
+    stride_b_b, stride_n_b,
+    stride_b_c, stride_n_c,
     stride_b_theta, stride_n_theta,
     # Block size
     BLOCK_SIZE: tl.constexpr,
+    # Direction (0: Forward, 1: Backward)
+    IS_BACKWARD: tl.constexpr,
 ):
     """
-    Parallel Forward Scan using Packed Tensors.
+    Fused Parallel Scan Kernel.
+    Computes alpha, beta on the fly and performs scan.
     """
     pid = tl.program_id(0)
 
     # Pointers
-    m_ptr_base = matrices_ptr + pid * stride_b_mat
     theta_r = theta_r_ptr + pid * stride_b_theta
     theta_i = theta_i_ptr + pid * stride_b_theta
     
-    # Initialize Theta[0]=1, Theta[1]=alpha[0] (which is M[0]_11 if packed correctly)
+    # Initialize Theta[0]=1, Theta[1]=alpha[0]
     tl.store(theta_r, 1.0)
     tl.store(theta_i, 0.0)
     
@@ -187,20 +195,168 @@ def bk_scan_fwd_kernel_packed(
         ks = off + tl.arange(0, BLOCK_SIZE)
         mask = ks < N
 
-        # Load M chunk: (BLOCK, 8)
-        # Using simple pointer arithmetic + broadcasting for indices
-        cols = tl.arange(0, 8)
-        # ptrs: (BLOCK, 8)
-        ptrs = m_ptr_base + ks[:, None] * stride_n_mat + cols[None, :]
+        # Compute M on the fly
+        # M_k = [[alpha[k], beta[k-1]], [1, 0]]
+        
+        # Load alpha[k] = a[k] - z
+        # Handle strides for backward (if IS_BACKWARD, pointers are adjusted outside or strides are negative)
+        # We assume strides are passed correctly.
+        
+        # Load a[k]
+        a_off = ks * stride_n_a
+        ar = tl.load(a_r_ptr + pid * stride_b_a + a_off, mask=mask, other=0.0)
+        ai = tl.load(a_i_ptr + pid * stride_b_a + a_off, mask=mask, other=0.0)
+        
+        alpha_r = ar - z_r
+        alpha_i = ai - z_i
+        
+        # Load beta[k-1] = -c[k-1] * b[k-1]
+        # For k=0 (global), beta is 0.
+        # If IS_BACKWARD, logic might differ?
+        # In backward: beta_rev[k-1]. beta_rev is flipped beta.
+        # beta[k] = -c[k]*b[k].
+        # beta_rev[0] = beta[N-2].
+        # beta_rev[k] = beta[N-2-k].
+        # So we need to load c, b at index N-2-(k-1) = N-1-k?
+        # If we use negative strides for a, b, c, we get a[N-1-k].
+        # But beta needs shift.
+        
+        # Let's handle beta logic:
+        # We need beta_val for each k.
+        # If k=0, beta_val=0.
+        # Else, load b, c.
+        
+        # We can use a trick: Load b, c at k-1 (or appropriate index).
+        # If stride is negative, k-1 moves in the other direction.
+        
+        # Let's compute indices for b, c.
+        # Forward: k -> k-1.
+        # Backward: k -> k-1 (in reversed sequence).
+        # If we set pointer to start at end, and stride -1.
+        # a_ptr points to a[N-1]. stride -1.
+        # a[k] (kernel) -> a[N-1-k] (memory). Correct.
+        
+        # For beta:
+        # Forward: beta[k-1] -> -c[k-1]*b[k-1].
+        # Backward: beta_rev[k-1] -> beta[N-2-(k-1)] = beta[N-1-k].
+        # beta[j] = -c[j]*b[j].
+        # So we need -c[N-1-k]*b[N-1-k].
+        # This is exactly accessing c, b at the SAME index as a!
+        # Wait, beta[k-1] in forward uses index k-1.
+        # beta_rev[k-1] in backward uses index N-1-k.
+        # a_rev[k] uses index N-1-k.
+        # So in backward, beta uses the SAME index as alpha?
+        # Let's check:
+        # M_k (backward) uses beta_rev[k-1].
+        # beta_rev[0] = beta[N-2]. (index N-2).
+        # a_rev[1] = a[N-2]. (index N-2).
+        # So M_1 uses beta corresponding to index N-2.
+        # M_1 uses alpha corresponding to index N-2.
+        # So yes, in backward, beta and alpha are aligned!
+        # But in Forward, M_k uses alpha[k] and beta[k-1]. Misaligned by 1.
+        
+        # So:
+        # Forward: Load b, c at k-1.
+        # Backward: Load b, c at k (aligned with a).
+        
+        # We can use `tl.where` to handle k=0.
+        
+        beta_r = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+        beta_i = tl.zeros((BLOCK_SIZE,), dtype=tl.float32)
+        
+        # Indices for b, c
+        if IS_BACKWARD:
+            # Aligned with k
+            bc_idx = ks
+            valid_bc = (ks < N) & (ks < N - 1) # beta is size N-1?
+            # Actually beta is defined for 0..N-2.
+            # In backward, we access N-2..0.
+            # At k=0 (kernel), we need beta[N-2].
+            # a[0] (kernel) is a[N-1].
+            # a[1] (kernel) is a[N-2].
+            # So at k=1, we need beta[N-2].
+            # So beta is aligned with a[k]!
+            # But wait, M_0 uses 0.
+            # M_1 uses beta_rev[0] = beta[N-2].
+            # a_rev[1] = a[N-2].
+            # So yes, aligned.
+            # But at k=0, beta is 0.
+            
+            # Load b, c at bc_idx
+            # We need to handle the fact that b, c might be size N-1 or N.
+            # Usually b, c are size N-1.
+            # If size N-1, they correspond to 0..N-2.
+            # In backward, we access N-2 down to 0.
+            # This corresponds to a indices N-2 down to 0.
+            # So valid when k >= 1.
+            
+            # Adjust pointers for backward:
+            # a_ptr starts at N-1.
+            # b_ptr starts at N-2.
+            # stride -1.
+            # At k=1: b_ptr + 1*(-1) = N-3? No.
+            # We need b[N-2] at k=1.
+            # If b_ptr starts at N-2. b_ptr + (1-1)*(-1) = N-2.
+            # So we need offset k-1.
+            pass
+        else:
+            # Forward: k-1.
+            pass
 
-        # Load with mask. Note: Inputs are padded with Identity, so OOB masking logic is implicit.
-        # But we still use mask for safety if padding wasn't enough (though we force padding).
-        packed_m = tl.load(ptrs, mask=mask[:, None], other=0.0)
-
+        # Unified logic:
+        # We need to load from (k-1) relative to the direction.
+        # If Forward: ptr + (k-1)*stride.
+        # If Backward: ptr + (k-1)*stride.
+        # And handle k=0 case (beta=0).
+        
+        # Load b, c
+        # We use a shift of -1.
+        shift = -1
+        bc_ks = ks + shift
+        
+        # Mask for valid b, c read
+        # k=0 -> bc_ks=-1 -> Invalid.
+        mask_bc = (bc_ks >= 0) & (bc_ks < N - 1) & mask
+        
+        # Calculate offsets
+        b_off = bc_ks * stride_n_b
+        c_off = bc_ks * stride_n_c
+        
+        br = tl.load(b_r_ptr + pid * stride_b_b + b_off, mask=mask_bc, other=0.0)
+        bi = tl.load(b_i_ptr + pid * stride_b_b + b_off, mask=mask_bc, other=0.0)
+        cr = tl.load(c_r_ptr + pid * stride_b_c + c_off, mask=mask_bc, other=0.0)
+        ci = tl.load(c_i_ptr + pid * stride_b_c + c_off, mask=mask_bc, other=0.0)
+        
+        # beta = -c * b
+        # -(cr + ici)*(br + ibi) = -((cr*br - ci*bi) + i(cr*bi + ci*br))
+        beta_real = -(cr * br - ci * bi)
+        beta_imag = -(cr * bi + ci * br)
+        
+        # If k=0, beta is 0.
+        is_first = ks == 0
+        beta_real = tl.where(is_first, 0.0, beta_real)
+        beta_imag = tl.where(is_first, 0.0, beta_imag)
+        
+        # Pack M
+        # M = [[alpha, beta], [1, 0]]
+        # We construct a (BLOCK, 8) tensor for scan_op_packed
+        # Layout: m11r, m11i, m12r, m12i, m21r, m21i, m22r, m22i
+        
+        packed_m = tl.zeros((BLOCK_SIZE, 8), dtype=tl.float32)
+        # m11 = alpha
+        packed_m = packed_m + tl.where(mask[:, None], alpha_r[:, None], 0.0) * (tl.arange(0, 8) == 0)
+        packed_m = packed_m + tl.where(mask[:, None], alpha_i[:, None], 0.0) * (tl.arange(0, 8) == 1)
+        # m12 = beta
+        packed_m = packed_m + tl.where(mask[:, None], beta_real[:, None], 0.0) * (tl.arange(0, 8) == 2)
+        packed_m = packed_m + tl.where(mask[:, None], beta_imag[:, None], 0.0) * (tl.arange(0, 8) == 3)
+        # m21 = 1
+        packed_m = packed_m + tl.where(mask[:, None], 1.0, 0.0) * (tl.arange(0, 8) == 4)
+        # m22 = 0 (already zero)
+        
         # Run Scan
         accumulated_m = tl.associative_scan(packed_m, 0, scan_op_packed)
 
-        # Unpack accumulated M
+        # Unpack and update state (same as before)
         p11r, p11i, p12r, p12i, p21r, p21i, p22r, p22i = (
             accumulated_m[:, 0], accumulated_m[:, 1],
             accumulated_m[:, 2], accumulated_m[:, 3],
@@ -208,13 +364,11 @@ def bk_scan_fwd_kernel_packed(
             accumulated_m[:, 6], accumulated_m[:, 7]
         )
 
-        # Matrix-Vector Mul: P @ v_prev
         t1r, t1i = complex_mul(p11r, p11i, cur_r, cur_i)
         t2r, t2i = complex_mul(p12r, p12i, prev_r, prev_i)
         new_cur_r = t1r + t2r
         new_cur_i = t1i + t2i
 
-        # Store theta
         store_idx = ks + 1
         mask_store = store_idx <= N
 
@@ -223,11 +377,7 @@ def bk_scan_fwd_kernel_packed(
         
         tl.debug_barrier()
 
-        # Load state for next iteration
-        # Read from the LAST computed element in the chunk.
-        # Since we padded, we can read at off + BLOCK_SIZE even if it's padding region.
         last_idx = off + BLOCK_SIZE
-
         cur_r = tl.load(theta_r + last_idx * stride_n_theta)
         cur_i = tl.load(theta_i + last_idx * stride_n_theta)
         prev_r = tl.load(theta_r + (last_idx - 1) * stride_n_theta)
@@ -235,159 +385,9 @@ def bk_scan_fwd_kernel_packed(
 
         tl.debug_barrier()
 
-
-# ============================================================================
-# Python Interface Functions
-# ============================================================================
-
-def pack_scan_input(alpha, beta):
-    """
-    Pack alpha, beta into (B, N, 8) transition matrices for Forward Scan.
-    M_k = [[alpha[k], beta[k-1]], [1, 0]]
-    """
-    B, N = alpha.shape
-    device = alpha.device
-    
-    # Prepare beta with shift (beta[-1] -> 0, beta[0] -> beta[0])
-    # alpha: 0..N-1. beta: 0..N-2 (size N-1).
-    # M_k uses beta[k-1].
-    # M_0 uses beta[-1] (0).
-    if beta.shape[1] == N - 1:
-        zero_col = torch.zeros(B, 1, dtype=beta.dtype, device=device)
-        beta_shifted = torch.cat([zero_col, beta], dim=1) # (B, N)
-    else:
-        beta_shifted = beta
-
-    # Construct (B, N, 8)
-    M = torch.zeros(B, N, 8, dtype=torch.float32, device=device)
-    
-    M[..., 0] = alpha.real
-    M[..., 1] = alpha.imag
-    M[..., 2] = beta_shifted.real
-    M[..., 3] = beta_shifted.imag
-    M[..., 4] = 1.0
-    M[..., 5] = 0.0
-    M[..., 6] = 0.0
-    M[..., 7] = 0.0
-    
-    return M
-
-def pack_scan_input_backward(alpha, beta):
-    """
-    Pack for Backward Scan by reversing inputs.
-    """
-    N = alpha.shape[1]
-    # Reverse Alpha
-    alpha_rev = alpha.flip(1)
-
-    # Reverse Beta
-    if beta.shape[1] == N - 1:
-        beta_rev = beta.flip(1)
-    else:
-        beta_rev = beta.flip(1)
-        
-    return pack_scan_input(alpha_rev, beta_rev)
-
-
-def bk_scan_triton_forward(alpha, beta):
-    if not TRITON_AVAILABLE:
-        raise ImportError("Triton is not available.")
-
-    B, N = alpha.shape
-    device = alpha.device
-    
-    # 1. Pack
-    M = pack_scan_input(alpha, beta) # (B, N, 8)
-    
-    # 2. Pad to BLOCK_SIZE
-    BLOCK_SIZE = 128
-    if N >= 1024: BLOCK_SIZE = 1024
-    elif N >= 512: BLOCK_SIZE = 512
-    elif N >= 256: BLOCK_SIZE = 256
-    
-    remainder = N % BLOCK_SIZE
-    if remainder != 0:
-        pad_len = BLOCK_SIZE - remainder
-        pad = torch.zeros(B, pad_len, 8, dtype=M.dtype, device=device)
-        pad[..., 0] = 1.0 # m11r
-        pad[..., 6] = 1.0 # m22r
-        M_padded = torch.cat([M, pad], dim=1)
-        N_padded = N + pad_len
-    else:
-        M_padded = M
-        N_padded = N
-
-    # 3. Output buffers
-    theta_r = torch.empty(B, N_padded + 1, dtype=torch.float32, device=device)
-    theta_i = torch.empty(B, N_padded + 1, dtype=torch.float32, device=device)
-
-    # 4. Run Kernel
-    grid = (B,)
-    bk_scan_fwd_kernel_packed[grid](
-        M_padded,
-        theta_r, theta_i,
-        B, N_padded,
-        M_padded.stride(0), M_padded.stride(1),
-        theta_r.stride(0), theta_r.stride(1),
-        BLOCK_SIZE=BLOCK_SIZE,
-    )
-    
-    res = torch.complex(theta_r[:, :N+1], theta_i[:, :N+1])
-    return res
-
-
-def bk_scan_triton_backward(alpha, beta, N):
-    if not TRITON_AVAILABLE:
-        raise ImportError("Triton is not available.")
-
-    B = alpha.shape[0]
-    device = alpha.device
-
-    # 1. Pack Reverse
-    M = pack_scan_input_backward(alpha, beta)
-    
-    # 2. Pad
-    BLOCK_SIZE = 128
-    if N >= 1024: BLOCK_SIZE = 1024
-    elif N >= 512: BLOCK_SIZE = 512
-    elif N >= 256: BLOCK_SIZE = 256
-    
-    remainder = N % BLOCK_SIZE
-    if remainder != 0:
-        pad_len = BLOCK_SIZE - remainder
-        pad = torch.zeros(B, pad_len, 8, dtype=M.dtype, device=device)
-        pad[..., 0] = 1.0
-        pad[..., 6] = 1.0
-        M_padded = torch.cat([M, pad], dim=1)
-        N_padded = N + pad_len
-    else:
-        M_padded = M
-        N_padded = N
-
-    # 3. Run Forward Kernel
-    theta_r = torch.empty(B, N_padded + 1, dtype=torch.float32, device=device)
-    theta_i = torch.empty(B, N_padded + 1, dtype=torch.float32, device=device)
-
-    grid = (B,)
-    bk_scan_fwd_kernel_packed[grid](
-        M_padded,
-        theta_r, theta_i,
-        B, N_padded,
-        M_padded.stride(0), M_padded.stride(1),
-        theta_r.stride(0), theta_r.stride(1),
-        BLOCK_SIZE=BLOCK_SIZE,
-    )
-    
-    # 4. Extract and Reverse Back
-    res_psi = torch.complex(theta_r[:, :N], theta_i[:, :N])
-    phi = res_psi.flip(1)
-
-    return phi
-
-
 def bk_scan_triton(a, b, c, z):
     """
-    Complete Triton-accelerated BK-Core computation.
+    Complete Triton-accelerated BK-Core computation (Fused).
     """
     if not TRITON_AVAILABLE:
         raise ImportError("Triton is not available.")
@@ -395,21 +395,138 @@ def bk_scan_triton(a, b, c, z):
     B, N = a.shape
     device = a.device
     
-    a_c = a.to(torch.complex64)
-    b_c = b.to(torch.complex64)
-    c_c = c.to(torch.complex64)
-
-    # Fix: use detach to avoid warnings
+    # Ensure inputs are contiguous or handle strides
+    a = a.contiguous()
+    b = b.contiguous()
+    c = c.contiguous()
+    
+    # Prepare z
     if isinstance(z, torch.Tensor):
-        z_c = z.clone().detach().to(dtype=torch.complex64, device=device)
+        z_val = z.detach().cpu().numpy() if z.numel() == 1 else z.item()
     else:
-        z_c = torch.tensor(z, dtype=torch.complex64, device=device)
+        z_val = z
     
-    alpha = a_c - z_c
-    beta = -c_c * b_c
+    # Handle complex z
+    if isinstance(z_val, complex):
+        z_r, z_i = z_val.real, z_val.imag
+    else:
+        z_r, z_i = float(z_val), 0.0
+
+    # Output buffers
+    theta_r = torch.empty(B, N + 1, dtype=torch.float32, device=device)
+    theta_i = torch.empty(B, N + 1, dtype=torch.float32, device=device)
     
-    theta = bk_scan_triton_forward(alpha, beta) # Size N+1
-    phi = bk_scan_triton_backward(alpha, beta, N) # Size N
+    # Forward Scan
+    grid = (B,)
+    BLOCK_SIZE = 128 # Tune this
+    
+    # Forward Pointers
+    # a, b, c are real/imag separated?
+    # Input a, b, c are complex tensors.
+    # We need to pass pointers to real and imag parts.
+    # Since they are complex64 (or 128), real and imag are interleaved.
+    # We can cast to float and use stride 2.
+    
+    a_float = torch.view_as_real(a.to(torch.complex64)) # (B, N, 2)
+    b_float = torch.view_as_real(b.to(torch.complex64))
+    c_float = torch.view_as_real(c.to(torch.complex64))
+    
+    # Strides for float view
+    # stride_n_a for real part is stride(1) * 2? No, stride(1) of complex is 1 (element).
+    # stride(1) of float view is 2.
+    # stride(2) is 1.
+    # Real part: ptr + 0. Imag part: ptr + 1.
+    
+    # We pass base pointers and strides.
+    # a_r_ptr = a_float.data_ptr()
+    # a_i_ptr = a_float.data_ptr() + 4 (sizeof float)
+    
+    # Or we can just load as float2? Triton supports pointer arithmetic.
+    # Let's pass separate pointers for simplicity in python wrapper.
+    
+    bk_scan_fused_kernel[grid](
+        a_float.data_ptr(), a_float.data_ptr() + 4,
+        b_float.data_ptr(), b_float.data_ptr() + 4,
+        c_float.data_ptr(), c_float.data_ptr() + 4,
+        theta_r, theta_i,
+        z_r, z_i,
+        B, N,
+        a_float.stride(0), a_float.stride(1),
+        b_float.stride(0), b_float.stride(1),
+        c_float.stride(0), c_float.stride(1),
+        theta_r.stride(0), theta_r.stride(1),
+        BLOCK_SIZE=BLOCK_SIZE,
+        IS_BACKWARD=0
+    )
+    
+    theta = torch.complex(theta_r, theta_i)
+    
+    # Backward Scan
+    # We need to reverse inputs.
+    # We can use negative strides or adjust pointers.
+    # a_rev[k] = a[N-1-k].
+    # Ptr should point to a[N-1]. Stride should be -stride.
+    
+    # Adjust pointers to end
+    # a_float is (B, N, 2).
+    # End of row i: a_float[i, N-1, 0].
+    # Offset = i * stride_b + (N-1) * stride_n.
+    # But we pass base ptr + pid * stride_b.
+    # So we need to adjust base ptr to point to N-1 column.
+    # And set stride_n to negative.
+    
+    offset_last = (N - 1) * a_float.stride(1) * 4 # bytes
+    
+    phi_r = torch.empty(B, N + 1, dtype=torch.float32, device=device)
+    phi_i = torch.empty(B, N + 1, dtype=torch.float32, device=device)
+    
+    bk_scan_fused_kernel[grid](
+        a_float.data_ptr() + offset_last, a_float.data_ptr() + offset_last + 4,
+        b_float.data_ptr() + offset_last, b_float.data_ptr() + offset_last + 4,
+        c_float.data_ptr() + offset_last, c_float.data_ptr() + offset_last + 4,
+        phi_r, phi_i,
+        z_r, z_i,
+        B, N,
+        a_float.stride(0), -a_float.stride(1),
+        b_float.stride(0), -b_float.stride(1),
+        c_float.stride(0), -c_float.stride(1),
+        phi_r.stride(0), phi_r.stride(1),
+        BLOCK_SIZE=BLOCK_SIZE,
+        IS_BACKWARD=1
+    )
+    
+    phi_raw = torch.complex(phi_r, phi_i)
+    # phi_raw is theta of reversed input.
+    # We need to reverse it back to get phi.
+    # And phi is size N (0..N-1).
+    # phi_raw is size N+1.
+    # phi[k] corresponds to suffix k..N-1.
+    # phi_raw[k] corresponds to prefix 0..k of reversed.
+    # prefix 0..k of reversed is suffix N-1-k..N-1.
+    # So phi_raw[k] is phi[N-1-k]?
+    # Let's check sizes.
+    # phi_raw has N+1 elements.
+    # phi_raw[0] = 1.
+    # phi_raw[1] = M_rev[0].
+    # ...
+    # We want phi[k].
+    # phi = phi_raw.flip(1)
+    # phi[0] should be phi_raw[N]?
+    # Yes.
+    
+    phi = phi_raw[:, :N].flip(1) # Take first N and flip?
+    # phi_raw is 0..N.
+    # phi_raw[0] is identity.
+    # phi_raw[N] is total product.
+    # We want phi[0]..phi[N-1].
+    # phi[k] is product from k to N-1.
+    # phi[N-1] is M_{N-1}.
+    # phi_raw[1] is M_rev[0] = M_{N-1}.
+    # So phi[N-1] = phi_raw[1].
+    # phi[0] = M_0...M_{N-1} = phi_raw[N].
+    # So phi = phi_raw[1:N+1].flip(1).
+    
+    phi = phi_raw[:, 1:].flip(1)
 
     # Combine
     det_T = theta[:, -1:] # (B, 1)
@@ -419,6 +536,9 @@ def bk_scan_triton(a, b, c, z):
     diag_inv = theta_trunc * phi / (det_T + eps)
     
     return diag_inv
+
+def is_triton_available():
+    return TRITON_AVAILABLE
 
 def is_triton_available():
     return TRITON_AVAILABLE

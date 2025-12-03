@@ -63,3 +63,6 @@ sympy==1.12
 # UI / Dashboard
 streamlit>=1.24.0
 plotly>=5.18.0
+
+# Rust Extension Build
+maturin>=1.0.0

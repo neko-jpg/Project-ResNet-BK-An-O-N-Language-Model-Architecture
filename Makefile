@@ -1,12 +1,13 @@
-.PHONY: help setup install data data-lite data-ja data-ja-lite test demo clean up down doctor import recipe train-user phase4
+.PHONY: help setup install data data-lite data-ja data-ja-lite test demo clean up down doctor import recipe train-user phase4 build-rust bench-optimization
 
 # Default shell
 SHELL := /bin/bash
 VENV := venv_ubuntu
 export PYTHONPATH := .
-PYTHON := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
-PYTEST := $(VENV)/bin/pytest
+# Try to detect if we are in the venv or need to use the path
+PYTHON := $(shell if [ -f $(VENV)/bin/python ]; then echo $(VENV)/bin/python; else echo python3; fi)
+PIP := $(shell if [ -f $(VENV)/bin/pip ]; then echo $(VENV)/bin/pip; else echo pip; fi)
+PYTEST := $(shell if [ -f $(VENV)/bin/pytest ]; then echo $(VENV)/bin/pytest; else echo pytest; fi)
 
 # Optional CLI overrides for training (set via `make train-user N_SEQ=512 BATCH_SIZE=8 ...`)
 TRAIN_OVERRIDES :=
@@ -31,7 +32,8 @@ help:
 	if [ "$$MUSE_LANG" = "2" ]; then \
 		echo "MUSE (ResNet-BK) 開発コマンド"; \
 		echo "======================================"; \
-		echo "make setup      - 完全セットアップ (仮想環境, 依存関係, Liteデータ)"; \
+		echo "make setup      - 完全セットアップ (仮想環境, 依存関係, Liteデータ, Rustビルド)"; \
+		echo "make build-rust - Rustデータローダーのビルド"; \
 		echo "make install    - 依存関係のみインストール"; \
 		echo "make doctor     - システム診断とトラブルシューティング"; \
 		echo "make import     - 独自データのインポート (data/import/ から)"; \
@@ -55,6 +57,8 @@ help:
 		echo "make restore    - 現在の状態をバックアップ"; \
 		echo "make up         - Docker環境の起動"; \
 		echo "make down       - Docker環境の停止"; \
+		echo "make compress-10b - 🚀 100億(10B)パラメータモデルの初期化と圧縮"; \
+		echo "make train-10b    - 🚀 10B圧縮モデルでの訓練開始 (RTX 3080動作)"; \
 		echo ""; \
 		echo "Phase 7 (ハイブリッド双曲アテンション - Triton必須):"; \
 		echo "make check-phase7-env       - Phase 7環境チェック (CUDA+Triton確認)"; \
@@ -78,10 +82,12 @@ help:
 		echo "make train-phase8-max   - 最大設定で学習 (3B params, 8GB VRAM)"; \
 		echo "make train-phase8-test  - ダミーデータでテスト"; \
 		echo "make bench-phase8-vs-phase7 - Phase 7とPhase 8の性能比較"; \
+		echo "make bench-optimization     - 今回実装した最適化のベンチマーク"; \
 	else \
 		echo "MUSE (ResNet-BK) Development Commands"; \
 		echo "======================================"; \
-		echo "make setup      - Full setup (venv, deps, lite data)"; \
+		echo "make setup      - Full setup (venv, deps, lite data, rust build)"; \
+		echo "make build-rust - Build Rust data loader"; \
 		echo "make install    - Install dependencies only"; \
 		echo "make doctor     - Run system diagnostics"; \
 		echo "make import     - Import user data from data/import/"; \
@@ -105,6 +111,8 @@ help:
 		echo "make restore    - Backup current state"; \
 		echo "make up         - Start Docker environment"; \
 		echo "make down       - Stop Docker environment"; \
+		echo "make compress-10b - 🚀 Initialize and Compress 10B Parameter Model"; \
+		echo "make train-10b    - 🚀 Train 10B Compressed Model (RTX 3080 Ready)"; \
 		echo ""; \
 		echo "Phase 7 (Hybrid Hyperbolic Attention - Triton Required):"; \
 		echo "make check-phase7-env       - Check Phase 7 environment (CUDA+Triton)"; \
@@ -128,17 +136,28 @@ help:
 		echo "make train-phase8-max   - Train with maximum config (3B params, 8GB VRAM)"; \
 		echo "make train-phase8-test  - Test with dummy data"; \
 		echo "make bench-phase8-vs-phase7 - Benchmark Phase 7 vs Phase 8"; \
+		echo "make bench-optimization     - Benchmark new optimizations"; \
 	fi'
 
 setup:
-	@chmod +x scripts/easy_setup.sh
-	@./scripts/easy_setup.sh
+	@if [ -f scripts/easy_setup.sh ]; then \
+		chmod +x scripts/easy_setup.sh && ./scripts/easy_setup.sh; \
+	else \
+		$(MAKE) install; \
+	fi
+	$(MAKE) build-rust
 
 install:
 	test -d $(VENV) || python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip setuptools wheel
 	$(PIP) install -r requirements.txt
 	$(PIP) install -e .
+
+build-rust:
+	cd rust_loader && maturin develop --release
+
+bench-optimization:
+	$(PYTHON) src/benchmarks/optimization_benchmark.py
 
 data-lite:
 	$(PYTHON) scripts/prepare_datasets.py --datasets cosmopedia --max_samples 1000
@@ -166,6 +185,7 @@ clean:
 	rm -rf build dist *.egg-info
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 	find . -name "*.pyc" -delete
+	cd rust_loader && cargo clean
 
 up:
 	docker-compose up -d
@@ -350,7 +370,7 @@ train-phase8:
 train-phase8-small:
 	$(PYTHON) scripts/train_phase8.py --d-model 256 --n-layers 4 --n-seq 256 --batch-size 8 --epochs 1 --dry-run $(TRAIN_OVERRIDES)
 
-# Phase 8 Training - Maximum configuration (3B parameters, 8GB VRAM)
+# Phase 8 Training - Maximum configuration (3B params, 8GB VRAM)
 train-phase8-max:
 	@if [ ! -f configs/dataset_mixing.yaml ]; then \
 		echo "Warning: Recipe not found. Using dry-run mode."; \
@@ -551,3 +571,29 @@ chat-ai:
 		echo "========================================"; \
 		$(PYTHON) scripts/chat_inference.py --checkpoint $(CHECKPOINT); \
 	fi
+
+# ============================================================================
+# Phase 8 Extreme Compression (1B -> 10B)
+# ============================================================================
+
+compress-10b:
+	@echo "=========================================="
+	@echo "🗜️  Compressing 10B (100.1 Billion) Parameter Model"
+	@echo "=========================================="
+	$(PYTHON) scripts/compress_model.py --output_dir checkpoints/compressed_10b_start --d_model 5120 --n_layers 31
+
+train-10b:
+	@if [ ! -f checkpoints/compressed_10b_start/compressed_model.pt ]; then \
+		echo "Error: Compressed model not found. Please run 'make compress-10b' first."; \
+		exit 1; \
+	fi
+	@echo "=========================================="
+	@echo "🚀 Starting Training on 10B Compressed Model (RTX 3080 Ready)"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b.yaml --resume-from checkpoints/compressed_10b_start/compressed_model.pt --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+train-10b-8gb:
+	@echo "=========================================="
+	@echo "🚀 Starting Extreme Optimization Training (RTX 3080 8GB)"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase8.py --d-model 4096 --n-layers 48 --extreme-compression --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)

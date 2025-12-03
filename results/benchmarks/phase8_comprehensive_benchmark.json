@@ -1,0 +1,236 @@
+{
+  "timestamp": "2025-11-29T20:17:29.213166",
+  "device": "cuda",
+  "gpu_name": "NVIDIA GeForce RTX 3080 Laptop GPU",
+  "cuda_version": "11.8",
+  "pytorch_version": "2.2.0+cu118",
+  "triton_available": true,
+  "triton_version": "2.2.0",
+  "configs": [
+    {
+      "config_name": "Phase8_Small_83M",
+      "config": {
+        "d_model": 512,
+        "n_layers": 8,
+        "num_heads": 8,
+        "vocab_size": 50257,
+        "use_bk_hyperbolic": true,
+        "use_ar_ssm_fusion": true,
+        "enable_entailment_cones": false,
+        "enable_persistent_homology": false,
+        "enable_sheaf_attention": false
+      },
+      "benchmarks": [
+        {
+          "batch_size": 1,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        }
+      ],
+      "total_params": 10553759,
+      "total_params_millions": 10.553759,
+      "trainable_params": 10553759,
+      "triton_enabled": true,
+      "status": "SUCCESS"
+    },
+    {
+      "config_name": "Phase8_Medium_357M",
+      "config": {
+        "d_model": 1024,
+        "n_layers": 16,
+        "num_heads": 16,
+        "vocab_size": 50257,
+        "use_bk_hyperbolic": true,
+        "use_ar_ssm_fusion": true,
+        "enable_entailment_cones": false,
+        "enable_persistent_homology": false,
+        "enable_sheaf_attention": false
+      },
+      "benchmarks": [
+        {
+          "batch_size": 1,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 2048,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 2048"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 2048,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 2048"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        },
+        {
+          "batch_size": 4,
+          "seq_len": 2048,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 2048"
+        }
+      ],
+      "total_params": 77509623,
+      "total_params_millions": 77.509623,
+      "trainable_params": 77509623,
+      "triton_enabled": true,
+      "status": "SUCCESS"
+    },
+    {
+      "config_name": "Phase8_Large_1.7B",
+      "config": {
+        "d_model": 2048,
+        "n_layers": 24,
+        "num_heads": 16,
+        "vocab_size": 50257,
+        "use_bk_hyperbolic": true,
+        "use_ar_ssm_fusion": true,
+        "enable_entailment_cones": false,
+        "enable_persistent_homology": false,
+        "enable_sheaf_attention": false
+      },
+      "benchmarks": [
+        {
+          "batch_size": 1,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 1,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 256,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 256"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 512,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 512"
+        },
+        {
+          "batch_size": 2,
+          "seq_len": 1024,
+          "status": "ERROR",
+          "error": "n_seq mismatch: expected 128, got 1024"
+        }
+      ],
+      "total_params": 449880527,
+      "total_params_millions": 449.880527,
+      "trainable_params": 449880527,
+      "triton_enabled": true,
+      "status": "SUCCESS"
+    }
+  ]
+}
