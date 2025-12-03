@@ -55,6 +55,8 @@ help:
 		echo "make restore    - 現在の状態をバックアップ"; \
 		echo "make up         - Docker環境の起動"; \
 		echo "make down       - Docker環境の停止"; \
+		echo "make compress-1b   - 10億パラメータモデルの初期化と圧縮"; \
+		echo "make train-compressed - 圧縮済みモデルで訓練開始"; \
 		echo ""; \
 		echo "Phase 7 (ハイブリッド双曲アテンション - Triton必須):"; \
 		echo "make check-phase7-env       - Phase 7環境チェック (CUDA+Triton確認)"; \
@@ -105,6 +107,8 @@ help:
 		echo "make restore    - Backup current state"; \
 		echo "make up         - Start Docker environment"; \
 		echo "make down       - Stop Docker environment"; \
+		echo "make compress-1b   - Initialize and compress 1B parameter model"; \
+		echo "make train-compressed - Train using the compressed model"; \
 		echo ""; \
 		echo "Phase 7 (Hybrid Hyperbolic Attention - Triton Required):"; \
 		echo "make check-phase7-env       - Check Phase 7 environment (CUDA+Triton)"; \
@@ -350,7 +354,7 @@ train-phase8:
 train-phase8-small:
 	$(PYTHON) scripts/train_phase8.py --d-model 256 --n-layers 4 --n-seq 256 --batch-size 8 --epochs 1 --dry-run $(TRAIN_OVERRIDES)
 
-# Phase 8 Training - Maximum configuration (3B parameters, 8GB VRAM)
+# Phase 8 Training - Maximum configuration (3B params, 8GB VRAM)
 train-phase8-max:
 	@if [ ! -f configs/dataset_mixing.yaml ]; then \
 		echo "Warning: Recipe not found. Using dry-run mode."; \
@@ -551,3 +555,23 @@ chat-ai:
 		echo "========================================"; \
 		$(PYTHON) scripts/chat_inference.py --checkpoint $(CHECKPOINT); \
 	fi
+
+# ============================================================================
+# Phase 8 Extreme Compression (1B -> 10M)
+# ============================================================================
+
+compress-1b:
+	@echo "=========================================="
+	@echo "🗜️  Compressing 1B Model to 10M Params"
+	@echo "=========================================="
+	$(PYTHON) scripts/compress_model.py --output_dir checkpoints/compressed_1b_start --d_model 1600 --n_layers 48
+
+train-compressed:
+	@if [ ! -f checkpoints/compressed_1b_start/compressed_model.pt ]; then \
+		echo "Error: Compressed model not found. Please run 'make compress-1b' first."; \
+		exit 1; \
+	fi
+	@echo "=========================================="
+	@echo "🚀 Starting Training on Compressed Model"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase8.py --config checkpoints/compressed_1b_start/config.json --resume-from checkpoints/compressed_1b_start/compressed_model.pt --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
