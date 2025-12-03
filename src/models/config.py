@@ -46,3 +46,8 @@ class ResNetBKConfig:
     
     # Mixed Precision Training
     use_mixed_precision: bool = False
+
+    # HTT / Quantization (Phase 1, 8)
+    use_htt_embedding: bool = False
+    htt_rank: int = 16
+    quantized_htt: bool = False
