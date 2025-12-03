@@ -302,6 +302,7 @@ class HolographicTTEmbedding(nn.Module):
             c1 = c1.float()
             c2 = c2.float()
             
+            executed_triton = False
             if use_triton and TRITON_AVAILABLE and torch.cuda.is_available():
                 try:
                     if is_quantized:
@@ -332,9 +333,9 @@ class HolographicTTEmbedding(nn.Module):
 
                 except (ImportError, Exception) as e:
                     # Fallback to einsum
-                    use_triton = False
+                    executed_triton = False
             
-            if not use_triton:
+            if not executed_triton:
                 # Use gradient checkpointing for memory efficiency
                 if self.training and hasattr(self, 'use_checkpointing') and self.use_checkpointing:
                     from torch.utils.checkpoint import checkpoint

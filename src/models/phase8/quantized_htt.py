@@ -93,6 +93,51 @@ class QuantizedHolographicTTEmbedding(nn.Module):
         # State flag
         self.is_quantized = False
 
+        # Initialize with random noise if training from scratch
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """
+        Initialize quantized parameters with random noise.
+        Essential for training from scratch to avoid zero-initialization NaNs.
+        """
+        if self.is_quantized:
+            # If already quantized from a model, do not reset
+            return
+
+        # Generate random float data (Gaussian)
+        # We need to simulate the distribution of pre-trained embeddings
+        # Typically Xavier/Kaiming init, so std ~ 1/sqrt(fan_in)
+        # Here fan_in is related to rank and vocab decomposition.
+
+        # Core 1: (v1, 1, rank, d1)
+        # Fan-in roughly rank * d1? Or v1?
+        # Using simple normal distribution N(0, 0.02) as a safe starting point
+        c1_float = torch.randn(self.v1, 1, self.rank, self.d1) * 0.02
+
+        # Core 2: (v2, rank, 1, d2)
+        c2_float = torch.randn(self.v2, self.rank, 1, self.d2) * 0.02
+
+        if self.phase_encoding:
+            nn.init.uniform_(self.phase_shift, -math.pi, math.pi)
+
+        # Quantize these random values into our buffers
+        # Core 1
+        c1_flat = c1_float.view(-1)
+        self.quantizer.calibrate(c1_flat)
+        c1_q, c1_s, c1_zp = self.quantizer.quantize_int(c1_flat)
+        self.core1_q.copy_(c1_q.view(c1_float.shape))
+        self.core1_scale.copy_(c1_s)
+        self.core1_zp.copy_(c1_zp)
+
+        # Core 2
+        c2_flat = c2_float.view(-1)
+        self.quantizer.calibrate(c2_flat)
+        c2_q, c2_s, c2_zp = self.quantizer.quantize_int(c2_flat)
+        self.core2_q.copy_(c2_q.view(c2_float.shape))
+        self.core2_scale.copy_(c2_s)
+        self.core2_zp.copy_(c2_zp)
+
     @classmethod
     def from_htt(cls, htt_model: HolographicTTEmbedding, bits: int = 8) -> 'QuantizedHolographicTTEmbedding':
         """
@@ -216,3 +261,62 @@ class QuantizedHolographicTTEmbedding(nn.Module):
             "compression_ratio": ratio,
             "reduction_percentage": (1 - ratio) * 100
         }
+
+
+class QuantizedHTTDecoder(nn.Module):
+    """
+    Decodes hidden states to vocabulary logits using shared Quantized HTT weights.
+    """
+    def __init__(self, embedding: QuantizedHolographicTTEmbedding):
+        super().__init__()
+        self.embedding = embedding
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            hidden_states: (batch_size, seq_len, d_model)
+        Returns:
+            logits: (batch_size, seq_len, vocab_size)
+        """
+        B, L, D = hidden_states.shape
+        emb = self.embedding
+
+        # Dequantize cores once
+        c1, c2 = emb.dequantize_cores()
+
+        # 1. Prepare hidden states
+        # Pad if D < d1*d2 (rare, usually D = d1*d2 approx)
+        target_dim = emb.d1 * emb.d2
+        if D < target_dim:
+            h_padded = F.pad(hidden_states, (0, target_dim - D))
+        else:
+            h_padded = hidden_states
+
+        h_reshaped = h_padded.view(B, L, emb.d1, emb.d2)
+
+        # 2. Prepare cores
+        # c1: (v1, 1, rank, d1) -> squeeze -> (v1, rank, d1)
+        # c2: (v2, rank, 1, d2) -> squeeze -> (v2, rank, d2)
+        c1_sq = c1.squeeze(1)
+        c2_sq = c2.squeeze(2)
+
+        # 3. Apply inverse phase modulation
+        if emb.phase_encoding:
+            phase_mod = torch.cos(emb.phase_shift) # (rank,)
+            # Apply to c1: (v1, rank, d1)
+            c1_sq = c1_sq * phase_mod.view(1, -1, 1)
+
+        # 4. Contraction
+        # h: (B, L, d1, d2)
+        # c1: (v1, rank, d1)
+        # c2: (v2, rank, d2)
+        # Logits: (B, L, v1, v2)
+        #
+        # einsum indices:
+        # b: batch, l: seq, d: d1, f: d2
+        # i: v1, r: rank, u: v2
+        logits_decomposed = torch.einsum('bldf,ird,urf->bliu', h_reshaped, c1_sq, c2_sq)
+
+        # 5. Reshape and crop
+        logits = logits_decomposed.reshape(B, L, -1)
+        return logits[:, :, :emb.vocab_size]
