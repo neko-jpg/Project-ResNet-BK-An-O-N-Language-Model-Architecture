@@ -218,8 +218,8 @@ def main():
         border_style="cyan"
     ))
 
-    check_gpu()
     setup_dependencies()
+    check_gpu()
     check_dataset_recipe()
     check_and_prepare_data()
     prepare_compression()
