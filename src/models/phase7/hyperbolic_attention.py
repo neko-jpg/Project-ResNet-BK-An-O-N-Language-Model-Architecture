@@ -282,7 +282,7 @@ class HyperbolicMultiHeadAttention(nn.Module):
                     raise ValueError(f"Unsupported mask shape {mask.shape}; expected (B, H|1, N, N)")
 
             # Determine if we can use the Triton kernel
-            can_use_triton = self.use_triton_kernel and hasattr(self, 'triton_kernel_function')
+            can_use_triton = self.use_triton_kernel and hasattr(self, 'triton_kernel_function') and self.triton_kernel_function is not None
 
             if can_use_triton:
                 # New optimized Triton kernel interface

@@ -9,7 +9,8 @@ Phase 7の全機能を継承し、以下の拡張を追加します：
 3. Entailment Cones: 論理的含意関係の幾何学的検証（オプション）
 4. Persistent Homology: トポロジカル解析と循環論理検出（オプション）
 5. Sheaf Attention: マルチヘッド間の構造的整合性（オプション）
-6. その他の最適化技術（オプション）
+6. Quantized HTT: 量子化されたHolographic Tensor Train埋め込み（オプション）
+7. その他の最適化技術（オプション）
 
 重要な設計原則:
 - Phase 7IntegratedModelをコアとして使用（ResNetBKベース）
@@ -24,12 +25,14 @@ from dataclasses import asdict
 import time
 
 from src.models.phase7.integrated_model import Phase7IntegratedModel
+from src.models.phase1.htt_embedding import HTTDecoder
 from .config import Phase8Config, Phase8Diagnostics
 from .bk_core_hyperbolic import BKCoreHyperbolicIntegration, BKCoreHyperbolicConfig
 from .ar_ssm_fusion import ARSSMHyperbolicFusion, ARSSMFusionConfig
 from .entailment_cones import EntailmentCones, EntailmentConeConfig
 from .persistent_homology import HyperbolicPersistentHomology, PersistentHomologyConfig
 from .sheaf_attention import SheafAttentionModule, SheafAttentionConfig
+from .quantized_htt import QuantizedHolographicTTEmbedding, QuantizationConfig, QuantizedHTTDecoder
 
 
 class Phase8IntegratedModel(nn.Module):
@@ -85,7 +88,18 @@ class Phase8IntegratedModel(nn.Module):
             'curvature_initial', 'curvature_min', 'curvature_max',
             # Numerical safety settings
             'max_norm', 'grad_clip',
+            # Optimization & System settings (New in Phase 8)
+            'use_torch_compile', 'compile_mode', 'compile_fullgraph',
+            'use_flash_attention_2',
+            'dataloader_num_workers', 'dataloader_pin_memory',
+            'dataloader_prefetch_factor', 'dataloader_persistent_workers',
+            'gradient_accumulation_steps',
+            # Quantized HTT
+            'quantized_htt',
+            'low_rank_embedding', 'low_rank_ffn',
         ]
+
+        # Phase 7Configに存在しないキーを削除
         for param in phase8_specific_params:
             phase7_config_dict.pop(param, None)
         
@@ -93,6 +107,23 @@ class Phase8IntegratedModel(nn.Module):
         from src.models.phase7.integrated_model import Phase7Config
         phase7_config = Phase7Config(**phase7_config_dict)
         self.phase7_model = Phase7IntegratedModel(phase7_config)
+
+        # ========== Quantized HTT Replacement ==========
+        # config.quantized_httがTrueの場合、通常のHTTを量子化版に置き換える
+        if getattr(config, 'quantized_htt', False):
+            print("Phase 8: Activating QuantizedHolographicTTEmbedding...")
+            self.quantized_embedding = QuantizedHolographicTTEmbedding(
+                vocab_size=config.vocab_size,
+                d_model=config.d_model,
+                rank=config.htt_rank,
+                bits=8, # Default to 8-bit, could be configurable
+                phase_encoding=True,
+            )
+            # Replace in Phase 7 Model
+            self.phase7_model.htt_embedding = self.quantized_embedding
+            self.phase7_model.model.token_embedding = self.quantized_embedding
+            # Re-initialize decoder with new embedding
+            self.phase7_model.model.lm_head = QuantizedHTTDecoder(self.quantized_embedding)
         
         # ========== Phase 8 Core Extensions ==========
         # BK-Core Hyperbolic Integration（必須）
@@ -203,6 +234,7 @@ class Phase8IntegratedModel(nn.Module):
         
         # ========== Phase 8 Extensions ==========
         # 中間表現を取得（Phase 7の埋め込み層から）
+        # HTT Embedding (Quantized or Standard)
         x = self.phase7_model.htt_embedding(input_ids)  # [batch, seq_len, d_model]
         batch_size, seq_len, d_model = x.shape
         
@@ -220,10 +252,11 @@ class Phase8IntegratedModel(nn.Module):
                 bk_features, bk_diag = self.bk_hyperbolic(x, attention_weights=None)
             
             # 診断情報を収集
-            self.diagnostics.bk_hyperbolic_gate_mean = bk_diag.get('gate_mean', torch.tensor(0.0)).item()
-            self.diagnostics.bk_hyperbolic_gate_std = bk_diag.get('gate_std', torch.tensor(0.0)).item()
-            self.diagnostics.bk_resonance_detected = bk_diag.get('is_resonant', torch.tensor(False)).item()
-            self.diagnostics.bk_resonance_strength = bk_diag.get('resonance_strength', torch.tensor(0.0)).item()
+            if return_diagnostics:
+                self.diagnostics.bk_hyperbolic_gate_mean = bk_diag.get('gate_mean', torch.tensor(0.0)).item()
+                self.diagnostics.bk_hyperbolic_gate_std = bk_diag.get('gate_std', torch.tensor(0.0)).item()
+                self.diagnostics.bk_resonance_detected = bk_diag.get('is_resonant', torch.tensor(False)).item()
+                self.diagnostics.bk_resonance_strength = bk_diag.get('resonance_strength', torch.tensor(0.0)).item()
             
             # BK特徴量を元の特徴量に加算（残差接続）
             x = x + bk_features
@@ -235,12 +268,13 @@ class Phase8IntegratedModel(nn.Module):
             ar_ssm_output, ar_ssm_diag = self.ar_ssm_fusion(x, G_ii)
             
             # 診断情報を収集
-            self.diagnostics.ar_ssm_rank_mean = ar_ssm_diag.get('effective_rank_mean', torch.tensor(0.0)).item()
-            self.diagnostics.ar_ssm_hyperbolic_distance_mean = ar_ssm_diag.get('distance_mean', torch.tensor(0.0)).item()
+            if return_diagnostics:
+                self.diagnostics.ar_ssm_rank_mean = ar_ssm_diag.get('effective_rank_mean', torch.tensor(0.0)).item()
+                self.diagnostics.ar_ssm_hyperbolic_distance_mean = ar_ssm_diag.get('distance_mean', torch.tensor(0.0)).item()
             
-            # 曲率調整の提案があれば記録
-            if 'suggested_curvature' in ar_ssm_diag:
-                self.diagnostics.ar_ssm_curvature_adjusted = True
+                # 曲率調整の提案があれば記録
+                if 'suggested_curvature' in ar_ssm_diag:
+                    self.diagnostics.ar_ssm_curvature_adjusted = True
             
             # AR-SSM出力を元の特徴量に加算（残差接続）
             x = x + ar_ssm_output
@@ -248,28 +282,34 @@ class Phase8IntegratedModel(nn.Module):
         # Task 38.4: Entailment Cones（オプション）
         if self.entailment_cones is not None:
             # 論理的含意関係をチェック
-            entailment_diag = self._check_entailment(x)
-            self.diagnostics.entailment_violation_rate = entailment_diag.get('violation_rate', 0.0)
-            self.diagnostics.avg_aperture = entailment_diag.get('avg_aperture', 0.0)
+            # Optimized: Avoid loop if possible, or keep simple
+            # (Vectorization will be handled in separate optimization step)
+            if return_diagnostics:
+                 entailment_diag = self._check_entailment(x)
+                 self.diagnostics.entailment_violation_rate = entailment_diag.get('violation_rate', 0.0)
+                 self.diagnostics.avg_aperture = entailment_diag.get('avg_aperture', 0.0)
         
         # Task 38.5: Persistent Homology（オプション）
         if self.persistent_homology is not None:
             # トポロジカル解析
-            homology_diag = self._analyze_topology(x)
-            self.diagnostics.betti_numbers = homology_diag.get('betti_numbers', [])
-            self.diagnostics.persistent_entropy = homology_diag.get('persistent_entropy', 0.0)
-            self.diagnostics.circular_reasoning_detected = homology_diag.get('circular_reasoning', False)
-            
-            # 循環論理が検出された場合、曲率を増加させる提案
-            if self.diagnostics.circular_reasoning_detected:
-                self.diagnostics.topology_curvature_adjustment_suggested = True
+            # Only analyze first item in batch to save time
+            if return_diagnostics:
+                homology_diag = self._analyze_topology(x)
+                self.diagnostics.betti_numbers = homology_diag.get('betti_numbers', [])
+                self.diagnostics.persistent_entropy = homology_diag.get('persistent_entropy', 0.0)
+                self.diagnostics.circular_reasoning_detected = homology_diag.get('circular_reasoning', False)
+
+                # 循環論理が検出された場合、曲率を増加させる提案
+                if self.diagnostics.circular_reasoning_detected:
+                    self.diagnostics.topology_curvature_adjustment_suggested = True
         
         # Task 38.6: Sheaf Attention（オプション）
         if self.sheaf_attention is not None:
             # マルチヘッド間の整合性チェック
-            sheaf_diag = self._check_sheaf_consistency(x)
-            self.diagnostics.sheaf_agreement_mean = sheaf_diag.get('agreement_mean', 0.0)
-            self.diagnostics.sheaf_consensus_rate = sheaf_diag.get('consensus_rate', 0.0)
+            if return_diagnostics:
+                sheaf_diag = self._check_sheaf_consistency(x)
+                self.diagnostics.sheaf_agreement_mean = sheaf_diag.get('agreement_mean', 0.0)
+                self.diagnostics.sheaf_consensus_rate = sheaf_diag.get('consensus_rate', 0.0)
         
         # ========== Performance Metrics ==========
         if return_diagnostics:
@@ -345,22 +385,27 @@ class Phase8IntegratedModel(nn.Module):
             total_checks = 0
             apertures = []
             
-            for i in range(seq_len - 1):
-                premise = x_hyperbolic[:, i, :]  # [batch, d_model]
-                hypothesis = x_hyperbolic[:, i + 1, :]  # [batch, d_model]
-                
-                # 含意スコアを計算
-                entailment_score = self.entailment_cones.compute_entailment_score(
-                    premise, hypothesis
-                )
-                
-                # 開口角を計算
-                aperture = self.entailment_cones.compute_aperture(premise)
-                apertures.append(aperture.mean().item())
-                
-                # 違反をカウント（含意スコアが閾値以下）
-                violations += (entailment_score < self.config.entailment_margin).sum().item()
-                total_checks += batch_size
+            # OPTIMIZATION: Use slicing instead of loop for speed
+            # Premise: x[:, :-1], Hypothesis: x[:, 1:]
+            premise = x_hyperbolic[:, :-1, :] # [B, L-1, D]
+            hypothesis = x_hyperbolic[:, 1:, :] # [B, L-1, D]
+
+            # Flatten to [B*(L-1), D] for batch processing
+            premise_flat = premise.reshape(-1, d_model)
+            hypothesis_flat = hypothesis.reshape(-1, d_model)
+
+            # 含意スコアを計算
+            entailment_score = self.entailment_cones.compute_entailment_score(
+                premise_flat, hypothesis_flat
+            )
+
+            # 開口角を計算 (Sample a subset if too large?)
+            aperture = self.entailment_cones.compute_aperture(premise_flat)
+            apertures.append(aperture.mean().item())
+
+            # 違反をカウント（含意スコアが閾値以下）
+            violations = (entailment_score < self.config.entailment_margin).sum().item()
+            total_checks = premise_flat.shape[0]
             
             violation_rate = violations / total_checks if total_checks > 0 else 0.0
             avg_aperture = sum(apertures) / len(apertures) if apertures else 0.0
@@ -448,26 +493,19 @@ class Phase8IntegratedModel(nn.Module):
             # [batch, seq_len, num_heads, head_dim]に変形
             x_heads = x.view(batch_size, seq_len, num_heads, head_dim)
             
-            # 各ヘッド間の制約写像を計算
-            agreement_scores = []
+            # Optimize: Vectorized computation of adjacent head agreement
+            # Heads: 0..N-2 vs 1..N-1
+            head_i = x_heads[:, :, :-1, :] # [B, L, H-1, D]
+            head_j = x_heads[:, :, 1:, :]  # [B, L, H-1, D]
             
-            for i in range(num_heads - 1):
-                head_i = x_heads[:, :, i, :]  # [batch, seq_len, head_dim]
-                head_j = x_heads[:, :, i + 1, :]  # [batch, seq_len, head_dim]
-                
-                # 制約写像を計算（簡略化: コサイン類似度）
-                head_i_norm = torch.nn.functional.normalize(head_i, dim=-1)
-                head_j_norm = torch.nn.functional.normalize(head_j, dim=-1)
-                agreement = (head_i_norm * head_j_norm).sum(dim=-1)  # [batch, seq_len]
-                
-                agreement_scores.append(agreement.mean().item())
+            head_i_norm = torch.nn.functional.normalize(head_i, dim=-1)
+            head_j_norm = torch.nn.functional.normalize(head_j, dim=-1)
             
-            # 平均合意スコア
-            agreement_mean = sum(agreement_scores) / len(agreement_scores) if agreement_scores else 0.0
+            # Dot product
+            agreement = (head_i_norm * head_j_norm).sum(dim=-1) # [B, L, H-1]
             
-            # コンセンサス率（合意スコアが閾値を超える割合）
-            consensus_count = sum(1 for score in agreement_scores if score > self.config.sheaf_agreement_threshold)
-            consensus_rate = consensus_count / len(agreement_scores) if agreement_scores else 0.0
+            agreement_mean = agreement.mean().item()
+            consensus_rate = (agreement > self.config.sheaf_agreement_threshold).float().mean().item()
             
             return {
                 'agreement_mean': agreement_mean,
