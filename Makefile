@@ -591,9 +591,12 @@ train-10b:
 	@echo "🚀 Starting Training on 10B Compressed Model (RTX 3080 Ready)"
 	@echo "=========================================="
 	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b.yaml --resume-from checkpoints/compressed_10b_start/compressed_model.pt --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+<<<<<<< HEAD
 
 train-10b-8gb:
 	@echo "=========================================="
 	@echo "🚀 Starting Extreme Optimization Training (RTX 3080 8GB)"
 	@echo "=========================================="
 	$(PYTHON) scripts/train_phase8.py --d-model 4096 --n-layers 48 --extreme-compression --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+=======
+>>>>>>> 99f3f4c6dcba04bfb1d5e20a9f802278fe6d055a
