@@ -57,6 +57,10 @@ class Phase8Config(Phase7Config):
     topology_persistence_threshold: float = 0.1
     topology_max_dimension: int = 1
     topology_betti_threshold: float = 0.5  # β₁ threshold for circular reasoning
+    topology_loss_weight: float = 0.0  # Weight for differentiable topology regularizer
+    topology_cycle_weight: float = 1.0
+    topology_fragment_weight: float = 1.0
+    topology_subset_size: int = 256
 
     # ========== Sheaf Attention Settings ==========
     sheaf_agreement_threshold: float = 0.7  # Agreement threshold for consensus
@@ -73,6 +77,8 @@ class Phase8Config(Phase7Config):
     # ========== KV Compression Settings ==========
     kv_cache_dim: int = 4
     kv_eviction_threshold: float = 2.0   # Evict if distance > threshold
+    kv_use_reconstruction_loss: bool = False
+    kv_reconstruction_weight: float = 0.0
 
     # ========== Curvature Settings ==========
     curvature_initial: float = 1.0
@@ -93,6 +99,16 @@ class Phase8Config(Phase7Config):
     # Low-Rank Compression Settings
     low_rank_embedding: bool = True  # Use low-rank compression for embeddings
     low_rank_ffn: bool = True  # Use low-rank compression for FFN layers
+
+    # Adaptive Quantization / HTT
+    adaptive_rank_quantization: bool = False  # Use hot/cold token-aware ranks
+    adaptive_rank_hot_bits: int = 16
+    adaptive_rank_cold_bits: int = 4
+    adaptive_rank_hot: int = 128
+    adaptive_rank_cold: int = 32
+    adaptive_rank_frequency_threshold: float = 0.05
+    adaptive_rank_update_alpha: float = 0.9
+    adaptive_rank_use_loss: bool = False
     
     # ========== Speed Optimizations (NEW) ==========
     # torch.compile settings
@@ -142,6 +158,8 @@ class Phase8Diagnostics:
     circular_reasoning_detected: bool = False
     topology_curvature_adjustment_suggested: bool = False
     topology_curvature_suggestion: Optional[float] = None
+    topology_loss: float = 0.0
+    topology_subset_tokens: int = 0
 
     # ========== Sheaf Attention Metrics ==========
     sheaf_agreement_mean: float = 0.0  # Average agreement score

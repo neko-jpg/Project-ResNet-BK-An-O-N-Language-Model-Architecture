@@ -250,6 +250,165 @@ def _flash_hyperbolic_fwd_kernel(
     tl.store(m_ptrs, m_i, mask=mask_m)
 
 
+@triton.autotune(
+    configs=[
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 64}, num_warps=4, num_stages=3),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 64}, num_warps=4, num_stages=4),
+        triton.Config({'BLOCK_M': 128, 'BLOCK_N': 128}, num_warps=8, num_stages=2),
+        triton.Config({'BLOCK_M': 256, 'BLOCK_N': 64}, num_warps=8, num_stages=3),
+        triton.Config({'BLOCK_M': 64, 'BLOCK_N': 32}, num_warps=2, num_stages=5),
+    ],
+    key=['N', 'D', 'H'],
+)
+@triton.jit
+def _flash_hyperbolic_fwd_kernel_fused(
+    Q, K, V,  # [B, H, N, D]
+    RES,  # Residual [B, H, N, D] (optional)
+    C,  # curvature scalar
+    BETA,  # temperature scalar
+    RES_SCALE,  # residual scaling
+    Out,  # [B, H, N, D]
+    L,  # [B, H, N]
+    M,  # [B, H, N]
+    N, D, H,
+    stride_qb, stride_qh, stride_qn, stride_qd,
+    stride_kb, stride_kh, stride_kn, stride_kd,
+    stride_vb, stride_vh, stride_vn, stride_vd,
+    stride_rb, stride_rh, stride_rn, stride_rd,
+    stride_ob, stride_oh, stride_on, stride_od,
+    stride_lb, stride_lh, stride_ln,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_D: tl.constexpr,
+    CAUSAL: tl.constexpr,
+    USE_EXP_MAP: tl.constexpr,
+    APPLY_LOG_MAP: tl.constexpr,
+    ADD_RESIDUAL: tl.constexpr,
+):
+    """
+    End-to-end fused hyperbolic attention path:
+    ExpMap(Q/K) + Flash-style softmax + optional LogMap + residual accumulation.
+    """
+    pid_m = tl.program_id(0)
+    pid_bh = tl.program_id(1)
+    pid_b = pid_bh // H
+    pid_h = pid_bh % H
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, BLOCK_D)
+    offs_n = tl.arange(0, BLOCK_N)
+
+    mask_m = offs_m < N
+    mask_d = offs_d < D
+
+    c = tl.load(C).to(tl.float32)
+    c = tl.maximum(c, 1e-6)
+    sqrt_c = tl.sqrt(c)
+    beta = tl.load(BETA).to(tl.float32)
+    res_scale = tl.load(RES_SCALE).to(tl.float32)
+
+    q_ptrs = Q + pid_b * stride_qb + pid_h * stride_qh + \
+             offs_m[:, None] * stride_qn + offs_d[None, :] * stride_qd
+    q = tl.load(q_ptrs, mask=mask_m[:, None] & mask_d[None, :], other=0.0).to(tl.float32)
+
+    if USE_EXP_MAP:
+        q_norm_sq = tl.sum(q * q, axis=1)
+        q_norm = tl.sqrt(q_norm_sq + 1e-6)
+        tanh_arg = tl.minimum(sqrt_c * q_norm, 15.0)
+        q_scale = tl.math.tanh(tanh_arg) / (sqrt_c * q_norm + 1e-6)
+        q_hyp = q * q_scale[:, None]
+        q_hyp_norm_sq = tl.sum(q_hyp * q_hyp, axis=1)
+    else:
+        q_hyp = q
+        q_hyp_norm_sq = tl.sum(q * q, axis=1)
+
+    m_i = tl.full([BLOCK_M], float('-inf'), dtype=tl.float32)
+    l_i = tl.zeros([BLOCK_M], dtype=tl.float32)
+    acc = tl.zeros([BLOCK_M, BLOCK_D], dtype=tl.float32)
+
+    if CAUSAL:
+        end_n = tl.minimum((pid_m + 1) * BLOCK_M, N)
+        end_n = ((end_n + BLOCK_N - 1) // BLOCK_N) * BLOCK_N
+    else:
+        end_n = N
+
+    for start_n in range(0, end_n, BLOCK_N):
+        offs_n_curr = start_n + offs_n
+        mask_n = offs_n_curr < N
+
+        k_ptrs = K + pid_b * stride_kb + pid_h * stride_kh + \
+                 offs_n_curr[None, :] * stride_kn + offs_d[:, None] * stride_kd
+        k = tl.load(k_ptrs, mask=mask_d[:, None] & mask_n[None, :], other=0.0).to(tl.float32)
+
+        if USE_EXP_MAP:
+            k_norm_sq = tl.sum(k * k, axis=0)
+            k_norm = tl.sqrt(k_norm_sq + 1e-6)
+            tanh_arg_k = tl.minimum(sqrt_c * k_norm, 15.0)
+            k_scale = tl.math.tanh(tanh_arg_k) / (sqrt_c * k_norm + 1e-6)
+            k_hyp = k * k_scale[None, :]
+            k_hyp_norm_sq = tl.sum(k_hyp * k_hyp, axis=0)
+        else:
+            k_hyp = k
+            k_hyp_norm_sq = tl.sum(k * k, axis=0)
+
+        qk_dot = tl.dot(q_hyp, k_hyp)
+        diff_norm_sq = q_hyp_norm_sq[:, None] - 2.0 * qk_dot + k_hyp_norm_sq[None, :]
+        diff_norm_sq = tl.maximum(diff_norm_sq, 0.0)
+
+        denom = (1.0 - c * q_hyp_norm_sq[:, None]) * (1.0 - c * k_hyp_norm_sq[None, :])
+        denom = tl.maximum(denom, 1e-6)
+
+        arg = 1.0 + 2.0 * c * diff_norm_sq / denom
+        arg = tl.maximum(arg, 1.0 + 1e-6)
+        dist = (1.0 / sqrt_c) * tl.acosh(arg)
+
+        scores = -beta * dist
+        scores = tl.where(mask_n[None, :], scores, float('-inf'))
+
+        if CAUSAL:
+            causal_mask = offs_m[:, None] >= offs_n_curr[None, :]
+            scores = tl.where(causal_mask, scores, float('-inf'))
+
+        m_i_new = tl.maximum(m_i, tl.max(scores, axis=1))
+        alpha = tl.exp(m_i - m_i_new)
+        p = tl.exp(scores - m_i_new[:, None])
+
+        l_i = alpha * l_i + tl.sum(p, axis=1)
+        acc = acc * alpha[:, None]
+
+        v_ptrs = V + pid_b * stride_vb + pid_h * stride_vh + \
+                 offs_n_curr[:, None] * stride_vn + offs_d[None, :] * stride_vd
+        v = tl.load(v_ptrs, mask=mask_n[:, None] & mask_d[None, :], other=0.0).to(tl.float32)
+
+        acc += tl.dot(p.to(v.dtype), v)
+        m_i = m_i_new
+
+    l_i = tl.maximum(l_i, 1e-6)
+    acc = acc / l_i[:, None]
+
+    if APPLY_LOG_MAP:
+        acc_norm_sq = tl.sum(acc * acc, axis=1)
+        acc_norm = tl.sqrt(acc_norm_sq + 1e-6)
+        log_scale = tl.math.atanh(tl.minimum(sqrt_c * acc_norm, 0.999)) / (sqrt_c * acc_norm + 1e-6)
+        acc = acc * log_scale[:, None]
+
+    if ADD_RESIDUAL:
+        r_ptrs = RES + pid_b * stride_rb + pid_h * stride_rh + \
+                 offs_m[:, None] * stride_rn + offs_d[None, :] * stride_rd
+        r = tl.load(r_ptrs, mask=mask_m[:, None] & mask_d[None, :], other=0.0).to(tl.float32)
+        acc = acc + res_scale * r
+
+    out_ptrs = Out + pid_b * stride_ob + pid_h * stride_oh + \
+               offs_m[:, None] * stride_on + offs_d[None, :] * stride_od
+    tl.store(out_ptrs, acc.to(Out.dtype.element_ty), mask=mask_m[:, None] & mask_d[None, :])
+
+    l_ptrs = L + pid_b * stride_lb + pid_h * stride_lh + offs_m * stride_ln
+    tl.store(l_ptrs, l_i, mask=mask_m)
+
+    m_ptrs = M + pid_b * stride_lb + pid_h * stride_lh + offs_m * stride_ln
+    tl.store(m_ptrs, m_i, mask=mask_m)
+
+
 
 @triton.jit
 def _flash_hyperbolic_bwd_kernel(
@@ -565,6 +724,176 @@ def _flash_hyperbolic_pytorch_ref(
     out = torch.matmul(attn, v)
     
     return out.to(dtype)
+
+
+class FlashHyperbolicAttentionE2E(torch.autograd.Function):
+    """
+    End-to-end fused hyperbolic attention with residual addition.
+    
+    Forward: Triton fused kernel (_flash_hyperbolic_fwd_kernel_fused)
+    Backward: Recomputes a reference path that includes optional LogMap and residual.
+    """
+
+    @staticmethod
+    def forward(
+        ctx,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        residual: Optional[torch.Tensor],
+        c: torch.Tensor,
+        beta: torch.Tensor,
+        causal: bool = True,
+        use_exp_map: bool = True,
+        apply_log_map: bool = True,
+        residual_scale: float = 1.0,
+    ) -> torch.Tensor:
+        B, H, N, D = q.shape
+
+        q = q.contiguous()
+        k = k.contiguous()
+        v = v.contiguous()
+        add_residual = residual is not None
+        if residual is None:
+            residual = torch.zeros_like(q)
+        else:
+            residual = residual.contiguous()
+
+        out = torch.empty_like(q)
+        L = torch.empty((B, H, N), device=q.device, dtype=torch.float32)
+        M = torch.empty((B, H, N), device=q.device, dtype=torch.float32)
+        BLOCK_D = min(64, triton.next_power_of_2(D))
+        grid = lambda meta: (triton.cdiv(N, meta['BLOCK_M']), B * H)
+
+        res_scale_tensor = torch.tensor(residual_scale, device=q.device, dtype=torch.float32)
+
+        _flash_hyperbolic_fwd_kernel_fused[grid](
+            q, k, v, residual, c, beta, res_scale_tensor,
+            out, L, M,
+            N, D, H,
+            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
+            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
+            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
+            residual.stride(0), residual.stride(1), residual.stride(2), residual.stride(3),
+            out.stride(0), out.stride(1), out.stride(2), out.stride(3),
+            L.stride(0), L.stride(1), L.stride(2),
+            BLOCK_D=BLOCK_D,
+            CAUSAL=causal,
+            USE_EXP_MAP=use_exp_map,
+            APPLY_LOG_MAP=apply_log_map,
+            ADD_RESIDUAL=add_residual,
+        )
+
+        ctx.save_for_backward(q, k, v, residual if add_residual else torch.tensor([]).to(q.device), c, beta)
+        ctx.add_residual = add_residual
+        ctx.causal = causal
+        ctx.use_exp_map = use_exp_map
+        ctx.apply_log_map = apply_log_map
+        ctx.residual_scale = residual_scale
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        q, k, v, residual, c, beta = ctx.saved_tensors
+        with torch.enable_grad():
+            q_grad = q.detach().requires_grad_(True)
+            k_grad = k.detach().requires_grad_(True)
+            v_grad = v.detach().requires_grad_(True)
+            residual_grad = None
+            residual_arg = None
+            if ctx.add_residual:
+                residual_grad = residual.detach().requires_grad_(True)
+                residual_arg = residual_grad
+
+            c_grad = c.detach().requires_grad_(True)
+            beta_grad = beta.detach().requires_grad_(True)
+            out_ref = _flash_hyperbolic_pytorch_ref_fused(
+                q_grad,
+                k_grad,
+                v_grad,
+                residual_arg,
+                c_grad,
+                beta_grad,
+                causal=ctx.causal,
+                use_exp_map=ctx.use_exp_map,
+                apply_log_map=ctx.apply_log_map,
+                residual_scale=ctx.residual_scale,
+            )
+            out_ref.backward(grad_output)
+
+        res_grad_out = residual_grad.grad if residual_grad is not None else None
+        return (
+            q_grad.grad,
+            k_grad.grad,
+            v_grad.grad,
+            res_grad_out,
+            c_grad.grad,
+            beta_grad.grad,
+            None,  # causal
+            None,  # use_exp_map
+            None,  # apply_log_map
+            None,  # residual_scale
+        )
+
+
+def flash_hyperbolic_attention_fused(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    residual: Optional[torch.Tensor],
+    c: torch.Tensor,
+    beta: torch.Tensor,
+    causal: bool = True,
+    use_exp_map: bool = True,
+    apply_log_map: bool = True,
+    residual_scale: float = 1.0,
+) -> torch.Tensor:
+    """
+    End-to-end fused Flash Hyperbolic Attention.
+
+    Args:
+        q, k, v: [B, H, N, D] tensors
+        residual: optional residual in the same shape (e.g., reshaped input)
+        c: curvature scalar tensor
+        beta: temperature scalar tensor
+        causal: enable causal mask
+        use_exp_map: run exp_map inside the kernel
+        apply_log_map: optionally map back to tangent space
+        residual_scale: scale for residual addition
+    """
+    return FlashHyperbolicAttentionE2E.apply(
+        q, k, v, residual, c, beta, causal, use_exp_map, apply_log_map, residual_scale
+    )
+
+
+def _flash_hyperbolic_pytorch_ref_fused(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    residual: Optional[torch.Tensor],
+    c: torch.Tensor,
+    beta: torch.Tensor,
+    causal: bool = True,
+    use_exp_map: bool = True,
+    apply_log_map: bool = True,
+    residual_scale: float = 1.0,
+) -> torch.Tensor:
+    """
+    PyTorch reference for the fused end-to-end path.
+    Adds optional LogMap + residual accumulation for gradient computation.
+    """
+    out = _flash_hyperbolic_pytorch_ref(q, k, v, c, beta, causal=causal, use_exp_map=use_exp_map)
+
+    if apply_log_map:
+        c_val = c.clamp_min(EPS)
+        sqrt_c = torch.sqrt(c_val)
+        out_norm = out.norm(dim=-1, keepdim=True).clamp_min(EPS)
+        log_scale = torch.atanh(torch.clamp(sqrt_c * out_norm, max=0.999)) / (sqrt_c * out_norm + 1e-6)
+        out = out * log_scale
+
+    if residual is not None:
+        out = out + residual_scale * residual
+    return out
 
 
 def flash_hyperbolic_attention(

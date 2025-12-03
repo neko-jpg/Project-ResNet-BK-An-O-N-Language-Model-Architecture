@@ -214,7 +214,8 @@ class LogarithmicQuantizer(nn.Module):
         q_min = -(self.n_levels // 2)
         q_max = self.n_levels // 2 - 1
         
-        quantized_int = torch.round(x / scale).clamp(q_min, q_max).to(torch.int8)
+        dtype = torch.int8 if self.bits <= 8 else torch.int16
+        quantized_int = torch.round(x / scale).clamp(q_min, q_max).to(dtype)
         
         return quantized_int, scale, torch.tensor(0.0)
     

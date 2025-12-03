@@ -11,6 +11,7 @@ Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 import json
@@ -390,6 +391,43 @@ class HyperbolicPersistentHomology(nn.Module):
             'fragmentation_score': fragmentation_score,
             'circular_reasoning_detected': circular_reasoning,
         }
+
+    def regularization_loss(
+        self,
+        embeddings: torch.Tensor,
+        curvature: Optional[torch.Tensor] = None,
+        cycle_weight: float = 1.0,
+        fragmentation_weight: float = 1.0,
+        max_tokens: int = 256,
+    ) -> torch.Tensor:
+        """
+        Differentiable surrogate of topological regularization.
+
+        Uses random subset sampling to limit cost on long sequences.
+        """
+        B, N, D = embeddings.shape
+        c_val = curvature if curvature is not None else self.curvature_scale
+
+        # Subsample tokens if sequence is long
+        if N > max_tokens:
+            idx = torch.randperm(N, device=embeddings.device)[:max_tokens]
+            embeddings = embeddings[:, idx, :]
+            N = max_tokens
+
+        # Project to the Poincaré ball softly to stay stable
+        x_norm = embeddings.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        x_hyp = embeddings / x_norm * torch.tanh(torch.sqrt(torch.abs(c_val)) * x_norm)
+
+        diff = x_hyp.unsqueeze(2) - x_hyp.unsqueeze(1)  # (B, N, N, D)
+        dist_sq = (diff ** 2).sum(dim=-1)
+
+        affinity = torch.exp(-dist_sq)  # (B, N, N)
+        cycle_score = torch.einsum('bij,bjk,bki->b', affinity, affinity, affinity) / (N ** 3 + 1e-6)
+        mean_affinity = affinity.mean(dim=-1)
+        frag_loss = F.relu(0.2 - mean_affinity).mean()
+
+        loss = cycle_weight * cycle_score.mean() + fragmentation_weight * frag_loss
+        return loss
     
     def suggest_curvature_adjustment(
         self,

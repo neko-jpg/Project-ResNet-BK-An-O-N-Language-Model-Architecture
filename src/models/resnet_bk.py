@@ -65,6 +65,13 @@ class MoEResNetBKLayer(nn.Module):
                 use_scattering_router=config.use_scattering_router,
                 scattering_scale=config.scattering_scale,
                 scattering_scale_warmup_steps=config.scattering_scale_warmup_steps,
+                use_hyperbolic_router=config.use_hyperbolic_router,
+                hyperbolic_curvature=config.hyperbolic_router_curvature,
+                hyperbolic_boundary=config.hyperbolic_router_boundary,
+                hyperbolic_router_config={
+                    "update_prototypes": config.hyperbolic_router_update_proto,
+                    "proto_decay": config.hyperbolic_router_proto_decay,
+                },
             )
 
         self.v_proj = nn.Linear(config.d_model, 1)

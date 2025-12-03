@@ -320,3 +320,108 @@ class QuantizedHTTDecoder(nn.Module):
         # 5. Reshape and crop
         logits = logits_decomposed.reshape(B, L, -1)
         return logits[:, :, :emb.vocab_size]
+
+
+class AdaptiveRankQuantizedHTTEmbedding(nn.Module):
+    """
+    Adaptive Rank/Bit HTT embedding.
+
+    - Hot tokens (frequent) use higher rank & bit-width.
+    - Cold tokens (rare) use lower rank & bit-width.
+    """
+
+    def __init__(
+        self,
+        vocab_size: int,
+        d_model: int,
+        hot_rank: int = 128,
+        cold_rank: int = 32,
+        hot_bits: int = 16,
+        cold_bits: int = 4,
+        frequency_threshold: float = 0.05,
+        token_frequencies: Optional[torch.Tensor] = None,
+        phase_encoding: bool = True,
+        ema_alpha: float = 0.9,
+    ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.frequency_threshold = frequency_threshold
+        self.ema_alpha = ema_alpha
+
+        self.hot_embedding = QuantizedHolographicTTEmbedding(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            rank=hot_rank,
+            bits=hot_bits,
+            phase_encoding=phase_encoding,
+        )
+        self.cold_embedding = QuantizedHolographicTTEmbedding(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            rank=cold_rank,
+            bits=cold_bits,
+            phase_encoding=phase_encoding,
+        )
+
+        if token_frequencies is None:
+            freq = torch.ones(vocab_size, dtype=torch.float32)
+        else:
+            freq = token_frequencies.float()
+        freq = freq / freq.sum().clamp(min=1e-6)
+        self.register_buffer("token_frequency", freq)
+
+    @torch.no_grad()
+    def update_frequencies(self, counts: torch.Tensor):
+        """Update token frequency statistics."""
+        freq = counts.float()
+        freq = freq / freq.sum().clamp(min=1e-6)
+        self.token_frequency.copy_(freq)
+
+    @torch.no_grad()
+    def update_frequencies_from_ids(self, input_ids: torch.Tensor):
+        """EMA update from observed token ids."""
+        flat = input_ids.reshape(-1)
+        counts = torch.bincount(flat, minlength=self.vocab_size).float()
+        prob = counts / counts.sum().clamp(min=1e-6)
+        self.token_frequency.mul_(self.ema_alpha).add_((1 - self.ema_alpha) * prob)
+
+    @torch.no_grad()
+    def update_frequencies_from_loss(self, input_ids: torch.Tensor, token_loss: torch.Tensor):
+        """
+        Update frequencies weighting by per-token loss (higher loss -> more attention).
+        token_loss should broadcast to input_ids shape.
+        """
+        flat_ids = input_ids.reshape(-1)
+        flat_loss = token_loss.reshape(-1).float()
+        accum = torch.zeros(self.vocab_size, device=flat_loss.device)
+        accum.scatter_add_(0, flat_ids, flat_loss)
+        prob = accum / accum.sum().clamp(min=1e-6)
+        self.token_frequency.mul_(self.ema_alpha).add_((1 - self.ema_alpha) * prob)
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Route tokens to hot/cold embeddings based on frequency.
+        """
+        hot_mask = (self.token_frequency[input_ids] >= self.frequency_threshold)
+
+        hot_output = self.hot_embedding(input_ids)
+        cold_output = self.cold_embedding(input_ids)
+
+        return torch.where(hot_mask.unsqueeze(-1), hot_output, cold_output)
+
+
+class AdaptiveQuantizedHTTDecoder(nn.Module):
+    """Decoder paired with AdaptiveRankQuantizedHTTEmbedding."""
+
+    def __init__(self, embedding: AdaptiveRankQuantizedHTTEmbedding):
+        super().__init__()
+        self.embedding = embedding
+        self.hot_decoder = QuantizedHTTDecoder(embedding.hot_embedding)
+        self.cold_decoder = QuantizedHTTDecoder(embedding.cold_embedding)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        hot_logits = self.hot_decoder(hidden_states)
+        cold_logits = self.cold_decoder(hidden_states)
+        vocab_mask = (self.embedding.token_frequency >= self.embedding.frequency_threshold).to(hidden_states.device)
+        return torch.where(vocab_mask.view(1, 1, -1), hot_logits, cold_logits)

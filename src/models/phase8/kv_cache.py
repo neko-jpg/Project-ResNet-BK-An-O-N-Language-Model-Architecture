@@ -30,6 +30,9 @@ class KVCacheConfig:
     use_learned_projection: bool = True
     curvature: float = 1.0
     eps: float = 1e-6
+    use_htt_compression: bool = False
+    htt_rank: int = 16
+    htt_max_tokens: int = 256
 
 
 class LearnedProjection(nn.Module):
@@ -135,6 +138,53 @@ class QuantizedKVCache(nn.Module):
         k = self.dequantize(self.k_quantized, self.k_scale, self.k_zero)
         v = self.dequantize(self.v_quantized, self.v_scale, self.v_zero)
         return k, v
+
+
+class HTTContextCompressor(nn.Module):
+    """
+    Compress long-range context into a low-rank (TT-like) core using SVD.
+    """
+
+    def __init__(self, d_model: int, rank: int = 16, max_tokens: int = 256):
+        super().__init__()
+        self.d_model = d_model
+        self.rank = rank
+        self.max_tokens = max_tokens
+        self.register_buffer("core_left", None)
+        self.register_buffer("core_right", None)
+        self.stored_tokens: int = 0
+
+    def compress(self, tokens: torch.Tensor):
+        """
+        tokens: (B, L, D)
+        """
+        B, L, D = tokens.shape
+        if L == 0:
+            return
+        matrix = tokens.transpose(1, 2)  # (B, D, L)
+        u, s, vh = torch.linalg.svd(matrix, full_matrices=False)
+        r = min(self.rank, s.shape[-1])
+        u_r = u[:, :, :r]
+        s_r = s[:, :r]
+        vh_r = vh[:, :r, :]
+        core_left = u_r * s_r.unsqueeze(1)
+        self.core_left = core_left
+        self.core_right = vh_r
+        self.stored_tokens = min(L, self.max_tokens)
+
+    def decode(self) -> Optional[torch.Tensor]:
+        if self.core_left is None or self.core_right is None:
+            return None
+        approx = torch.matmul(self.core_left, self.core_right)  # (B, D, L)
+        approx_tokens = approx.transpose(1, 2)
+        return approx_tokens[:, : self.stored_tokens, :]
+
+    def reconstruction_loss(self, original: torch.Tensor) -> torch.Tensor:
+        rec = self.decode()
+        if rec is None:
+            return torch.tensor(0.0, device=original.device, dtype=original.dtype)
+        min_len = min(original.shape[1], rec.shape[1])
+        return F.mse_loss(rec[:, :min_len], original[:, :min_len])
 
 
 class FusedDecompressDistance(nn.Module):
@@ -330,6 +380,14 @@ class CompressedKVCache(nn.Module):
         else:
             self.quantized_cache = None
         
+        # HTT-style dynamic compressor for evicted context
+        if config.use_htt_compression:
+            self.htt_compressor_k = HTTContextCompressor(config.d_model, rank=config.htt_rank, max_tokens=config.htt_max_tokens)
+            self.htt_compressor_v = HTTContextCompressor(config.d_model, rank=config.htt_rank, max_tokens=config.htt_max_tokens)
+        else:
+            self.htt_compressor_k = None
+            self.htt_compressor_v = None
+        
         # Fused distance computation
         self.fused_distance = FusedDecompressDistance(config)
         
@@ -353,6 +411,16 @@ class CompressedKVCache(nn.Module):
         else:
             k_compressed = k
             v_compressed = v
+
+        # Reconstruction regularization (optional)
+        if getattr(self.config, "kv_use_reconstruction_loss", False) and self.config.kv_reconstruction_weight > 0:
+            recon_k = self.projection.decompress(k_compressed) if self.projection is not None else k_compressed
+            recon_v = self.projection.decompress(v_compressed) if self.projection is not None else v_compressed
+            self.last_reconstruction_loss = self.config.kv_reconstruction_weight * (
+                F.mse_loss(recon_k, k) + F.mse_loss(recon_v, v)
+            )
+        else:
+            self.last_reconstruction_loss = None
         
         # Quantize if enabled
         if self.quantized_cache is not None:
@@ -398,6 +466,11 @@ class CompressedKVCache(nn.Module):
             candidates_v = v[:, :-self.local_window, :]
             local_k = k[:, -self.local_window:, :]
             local_v = v[:, -self.local_window:, :]
+
+            # Compress the long-tail context into TT-like cores
+            if self.htt_compressor_k is not None:
+                self.htt_compressor_k.compress(candidates_k)
+                self.htt_compressor_v.compress(candidates_v)
             
             # Score by norm (keep smallest = most central)
             norms = candidates_k.norm(dim=-1)
@@ -421,6 +494,10 @@ class CompressedKVCache(nn.Module):
         else:
             self.k_cache = k
             self.v_cache = v
+        # Compress evicted context into TT-style cores for long-term reference
+        if self.htt_compressor_k is not None:
+            self.htt_compressor_k.compress(k)
+            self.htt_compressor_v.compress(v)
     
     def compute_attention_with_fused_decompress(
         self, 
@@ -449,6 +526,16 @@ class CompressedKVCache(nn.Module):
             v_compressed = self.v_cache
             k_scale = None
             k_zero = None
+
+        htt_k = self.htt_compressor_k.decode() if self.htt_compressor_k is not None else None
+        htt_v = self.htt_compressor_v.decode() if self.htt_compressor_v is not None else None
+        if htt_k is not None and htt_v is not None:
+            if k_compressed is None:
+                k_compressed = htt_k
+                v_compressed = htt_v
+            else:
+                k_compressed = torch.cat([htt_k, k_compressed], dim=1)
+                v_compressed = torch.cat([htt_v, v_compressed], dim=1)
         
         if k_compressed is None:
             return q, torch.ones(q.shape[0], q.shape[1], 1, device=q.device)

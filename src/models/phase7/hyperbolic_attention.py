@@ -171,6 +171,7 @@ class HyperbolicMultiHeadAttention(nn.Module):
         self.use_bitnet = use_bitnet
         self.low_rank_attention = low_rank_attention
         self.low_rank_rank = low_rank_rank
+        self.use_e2e_kernel = kernel_version == 'fused'
 
         self.triton_kernel_function = None
         if self.use_triton_kernel:
@@ -183,6 +184,10 @@ class HyperbolicMultiHeadAttention(nn.Module):
                     # 最適化版: 事前計算 + autotune
                     from src.kernels.hyperbolic_attention_triton_v2 import hyperbolic_attention_triton_v2
                     self.triton_kernel_function = hyperbolic_attention_triton_v2
+                elif kernel_version == 'fused':
+                    # End-to-end fused LayerNorm/ExpMap/Attention/Residual
+                    from src.kernels.flash_hyperbolic_triton import flash_hyperbolic_attention_fused
+                    self.triton_kernel_function = flash_hyperbolic_attention_fused
                 else:
                     # 従来版
                     from src.kernels.hyperbolic_attention_triton import hyperbolic_attention_triton
@@ -283,7 +288,7 @@ class HyperbolicMultiHeadAttention(nn.Module):
 
             # Determine if we can use the Triton kernel
             can_use_triton = self.use_triton_kernel and hasattr(self, 'triton_kernel_function') and self.triton_kernel_function is not None
-
+    
             if can_use_triton:
                 # New optimized Triton kernel interface
                 # Input: q, k, v in tangent space [B, H, N, D]
@@ -291,16 +296,29 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 beta_pos = F.softplus(self.attention.beta.float())
                 causal = mask_bool is not None  # Use causal masking if mask provided
                 
-                output_hyperbolic = self.triton_kernel_function(
-                    q_tangent,
-                    k_tangent,
-                    v_tangent,
-                    c,
-                    beta_pos,
-                    causal,
-                )
-
-                output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
+                if self.use_e2e_kernel:
+                    residual_heads = x_f32.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2).contiguous()
+                    output_tangent_heads = self.triton_kernel_function(
+                        q_tangent,
+                        k_tangent,
+                        v_tangent,
+                        residual_heads,
+                        c,
+                        beta_pos,
+                        causal=causal,
+                        use_exp_map=True,
+                        apply_log_map=True,
+                    )
+                else:
+                    output_hyperbolic = self.triton_kernel_function(
+                        q_tangent,
+                        k_tangent,
+                        v_tangent,
+                        c,
+                        beta_pos,
+                        causal,
+                    )
+                    output_tangent_heads = log_map_at_origin(output_hyperbolic, c=c)
                 output_tangent_concat = output_tangent_heads.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
                 final_output = self.W_o(output_tangent_concat)
 

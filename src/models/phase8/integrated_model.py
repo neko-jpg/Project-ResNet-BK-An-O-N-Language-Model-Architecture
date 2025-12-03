@@ -32,7 +32,13 @@ from .ar_ssm_fusion import ARSSMHyperbolicFusion, ARSSMFusionConfig
 from .entailment_cones import EntailmentCones, EntailmentConeConfig
 from .persistent_homology import HyperbolicPersistentHomology, PersistentHomologyConfig
 from .sheaf_attention import SheafAttentionModule, SheafAttentionConfig
-from .quantized_htt import QuantizedHolographicTTEmbedding, QuantizationConfig, QuantizedHTTDecoder
+from .quantized_htt import (
+    QuantizedHolographicTTEmbedding,
+    QuantizationConfig,
+    QuantizedHTTDecoder,
+    AdaptiveRankQuantizedHTTEmbedding,
+    AdaptiveQuantizedHTTDecoder,
+)
 
 
 class Phase8IntegratedModel(nn.Module):
@@ -76,6 +82,7 @@ class Phase8IntegratedModel(nn.Module):
             'entailment_aperture', 'entailment_margin',
             # Topology settings
             'topology_persistence_threshold', 'topology_max_dimension', 'topology_betti_threshold',
+            'topology_loss_weight', 'topology_cycle_weight', 'topology_fragment_weight',
             # Sheaf settings
             'sheaf_num_sections', 'sheaf_agreement_threshold',
             # Adaptive computation settings
@@ -97,6 +104,8 @@ class Phase8IntegratedModel(nn.Module):
             # Quantized HTT
             'quantized_htt',
             'low_rank_embedding', 'low_rank_ffn',
+            'adaptive_rank_quantization', 'adaptive_rank_hot_bits', 'adaptive_rank_cold_bits',
+            'adaptive_rank_hot', 'adaptive_rank_cold', 'adaptive_rank_frequency_threshold',
         ]
 
         # Phase 7Configに存在しないキーを削除
@@ -110,7 +119,24 @@ class Phase8IntegratedModel(nn.Module):
 
         # ========== Quantized HTT Replacement ==========
         # config.quantized_httがTrueの場合、通常のHTTを量子化版に置き換える
-        if getattr(config, 'quantized_htt', False):
+        self.quantized_embedding = None
+        if getattr(config, 'adaptive_rank_quantization', False):
+            print("Phase 8: Activating AdaptiveRankQuantizedHTTEmbedding...")
+            self.quantized_embedding = AdaptiveRankQuantizedHTTEmbedding(
+                vocab_size=config.vocab_size,
+                d_model=config.d_model,
+                hot_rank=config.adaptive_rank_hot,
+                cold_rank=config.adaptive_rank_cold,
+                hot_bits=config.adaptive_rank_hot_bits,
+                cold_bits=config.adaptive_rank_cold_bits,
+                frequency_threshold=config.adaptive_rank_frequency_threshold,
+                ema_alpha=config.adaptive_rank_update_alpha,
+                phase_encoding=True,
+            )
+            self.phase7_model.htt_embedding = self.quantized_embedding
+            self.phase7_model.model.token_embedding = self.quantized_embedding
+            self.phase7_model.model.lm_head = AdaptiveQuantizedHTTDecoder(self.quantized_embedding)
+        elif getattr(config, 'quantized_htt', False):
             print("Phase 8: Activating QuantizedHolographicTTEmbedding...")
             self.quantized_embedding = QuantizedHolographicTTEmbedding(
                 vocab_size=config.vocab_size,
@@ -193,6 +219,7 @@ class Phase8IntegratedModel(nn.Module):
         
         # 診断情報の初期化
         self.diagnostics = Phase8Diagnostics()
+        self.last_topology_loss: Optional[torch.Tensor] = None
     
     def forward(
         self,
@@ -237,6 +264,7 @@ class Phase8IntegratedModel(nn.Module):
         # HTT Embedding (Quantized or Standard)
         x = self.phase7_model.htt_embedding(input_ids)  # [batch, seq_len, d_model]
         batch_size, seq_len, d_model = x.shape
+        topology_loss_value = None
         
         # Task 38.2: BK-Core Hyperbolic Integration
         if self.bk_hyperbolic is not None and G_ii is not None:
@@ -302,6 +330,20 @@ class Phase8IntegratedModel(nn.Module):
                 # 循環論理が検出された場合、曲率を増加させる提案
                 if self.diagnostics.circular_reasoning_detected:
                     self.diagnostics.topology_curvature_adjustment_suggested = True
+
+            if getattr(self.config, 'topology_loss_weight', 0.0) > 0:
+                topo_loss_raw = self.persistent_homology.regularization_loss(
+                    x,
+                    curvature=torch.tensor(self.config.curvature_initial, device=x.device, dtype=x.dtype),
+                    cycle_weight=self.config.topology_cycle_weight,
+                    fragmentation_weight=self.config.topology_fragment_weight,
+                    max_tokens=self.config.topology_subset_size,
+                )
+                topology_loss_value = self.config.topology_loss_weight * topo_loss_raw
+                self.last_topology_loss = topology_loss_value
+                if return_diagnostics:
+                    self.diagnostics.topology_loss = float(topology_loss_value.detach().item())
+                    self.diagnostics.topology_subset_tokens = min(self.config.topology_subset_size, x.shape[1])
         
         # Task 38.6: Sheaf Attention（オプション）
         if self.sheaf_attention is not None:
@@ -329,6 +371,10 @@ class Phase8IntegratedModel(nn.Module):
                 'phase7': phase7_diagnostics,
                 'phase8': asdict(self.diagnostics),
             }
+
+            # Attach optional auxiliary losses to diagnostics
+            if self.persistent_homology is not None and topology_loss_value is not None:
+                all_diagnostics['phase8']['topology_aux_loss'] = float(topology_loss_value.detach().item())
             
             return logits, all_diagnostics
         

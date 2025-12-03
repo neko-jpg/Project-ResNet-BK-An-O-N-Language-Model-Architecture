@@ -19,6 +19,11 @@ class ResNetBKConfig:
     use_scattering_router: bool = False
     scattering_scale: float = 0.1
     scattering_scale_warmup_steps: int = 0
+    use_hyperbolic_router: bool = False
+    hyperbolic_router_curvature: float = 1.0
+    hyperbolic_router_boundary: float = 0.85
+    hyperbolic_router_update_proto: bool = False
+    hyperbolic_router_proto_decay: float = 0.9
     prime_bump_init: bool = False
     prime_bump_scale: float = 0.02
     use_birman_schwinger: bool = False
