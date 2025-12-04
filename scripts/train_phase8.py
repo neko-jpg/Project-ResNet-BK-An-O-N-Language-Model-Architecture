@@ -126,9 +126,26 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--ultra-compression", action="store_true", help="Enable Rank 8 for <3GB VRAM")
     parser.add_argument("--compile", action="store_true", help="Enable torch.compile")
     
+    # Config file support
+    parser.add_argument("--config", type=str, default=None, help="Path to YAML config file")
+    parser.add_argument("--dataset", type=str, default=None, help="Path to dataset config")
+    parser.add_argument("--resume-from", type=str, default=None, help="Path to checkpoint")
+
     parser.set_defaults(low_rank_ffn=True, low_rank_attention=True, use_bitnet=True, use_bk_hyperbolic=True, use_ar_ssm_fusion=True)
     
     args = parser.parse_args()
+
+    # Load YAML config if provided
+    if args.config:
+        import yaml
+        with open(args.config, 'r') as f:
+            yaml_config = yaml.safe_load(f)
+            # Override args with yaml config
+            for k, v in yaml_config.items():
+                # Convert yaml keys (e.g. use_bitnet) to args attributes
+                k_norm = k.replace('-', '_')
+                if hasattr(args, k_norm):
+                    setattr(args, k_norm, v)
     
     # Extreme Compression Logic
     if args.extreme_compression:
@@ -169,6 +186,8 @@ def parse_args() -> Phase8TrainingConfig:
         use_mixed_precision=not args.ultra_compression, # Disable if ultra
     )
     config.compile = args.compile
+    config.dataset_path = args.dataset if args.dataset else config.dataset_path
+    config.resume_from = args.resume_from if args.resume_from else config.resume_from
     return config
 
 def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.device) -> Phase8IntegratedModel:

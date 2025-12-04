@@ -95,12 +95,6 @@ start-10b-local:
 	@echo "=========================================="
 	$(PYTHON) scripts/easy_start_10b.py
 
-start-10b-local:
-	@echo "=========================================="
-	@echo "🚀 Starting 10B All-in-One Local Setup & Training"
-	@echo "=========================================="
-	$(PYTHON) scripts/easy_start_10b.py
-
 compress-10b:
 	@echo "=========================================="
 	@echo "🗜️  Compressing 10B (100.1 Billion) Parameter Model"
