@@ -1,0 +1,9 @@
+{
+  "dataset": "cosmopedia",
+  "hf_name": "HuggingFaceTB/cosmopedia",
+  "paths": {
+    "train_bin": "data_test_validation/cosmopedia/train.bin",
+    "validation_bin": "data_test_validation/cosmopedia/validation.bin"
+  },
+  "doc_count": 100
+}
