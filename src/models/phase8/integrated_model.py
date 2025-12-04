@@ -83,6 +83,7 @@ class Phase8IntegratedModel(nn.Module):
             # Topology settings
             'topology_persistence_threshold', 'topology_max_dimension', 'topology_betti_threshold',
             'topology_loss_weight', 'topology_cycle_weight', 'topology_fragment_weight',
+            'topology_subset_size',
             # Sheaf settings
             'sheaf_num_sections', 'sheaf_agreement_threshold',
             # Adaptive computation settings
@@ -91,6 +92,7 @@ class Phase8IntegratedModel(nn.Module):
             'sparse_top_k', 'sparse_block_size',
             # KV compression settings
             'kv_cache_dim', 'kv_eviction_threshold',
+            'kv_use_reconstruction_loss', 'kv_reconstruction_weight',
             # Curvature settings
             'curvature_initial', 'curvature_min', 'curvature_max',
             # Numerical safety settings
@@ -106,6 +108,7 @@ class Phase8IntegratedModel(nn.Module):
             'low_rank_embedding', 'low_rank_ffn',
             'adaptive_rank_quantization', 'adaptive_rank_hot_bits', 'adaptive_rank_cold_bits',
             'adaptive_rank_hot', 'adaptive_rank_cold', 'adaptive_rank_frequency_threshold',
+            'adaptive_rank_update_alpha', 'adaptive_rank_use_loss',
         ]
 
         # Phase 7Configに存在しないキーを削除
