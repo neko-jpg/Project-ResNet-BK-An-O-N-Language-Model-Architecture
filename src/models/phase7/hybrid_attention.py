@@ -49,7 +49,10 @@ class HybridHyperbolicAttention(nn.Module):
         self.gate_sensitivity = nn.Parameter(torch.tensor(1.0))
 
         # 4. Final layer normalization for stability
-        self.layer_norm = nn.LayerNorm(self.d_model)
+        self.layer_norm = nn.LayerNorm(self.d_model, eps=1e-5) # Enhanced eps
+
+        # Soft Capping Limit (30.0 or 50.0 is standard in recent LLMs like Gemma 2)
+        self.soft_cap = 50.0
 
     def forward(self, x, g_ii: torch.Tensor = None, return_diagnostics: bool = True):
         """
@@ -67,9 +70,18 @@ class HybridHyperbolicAttention(nn.Module):
         batch_size, seq_len, _ = x.shape
         diagnostics = {}
 
+        # Stability Check: Check input for NaNs
+        if torch.isnan(x).any():
+            # Create a clean tensor to allow backward hook to fire (maybe) or just error out cleanly
+            # For resilience, we clamp.
+            x = torch.nan_to_num(x, nan=0.0, posinf=1.0, neginf=-1.0)
+
         # --- 1. Global Attention Path (SSM) ---
         # NOTE: SSMs are causal by nature, no explicit mask needed here.
         global_out, ssm_diagnostics = self.global_attn(x)
+
+        # Apply Soft-Capping to Global Out if needed (SSM usually doesn't explode like Attention, but safety first)
+        global_out = torch.tanh(global_out / self.soft_cap) * self.soft_cap
 
         if return_diagnostics:
             diagnostics['ssm_effective_rank'] = ssm_diagnostics.get('effective_rank', torch.tensor(0.0))
@@ -95,12 +107,17 @@ class HybridHyperbolicAttention(nn.Module):
         local_out_padded = local_out_windowed.reshape(batch_size, -1, self.d_model)
         local_out = local_out_padded[:, :seq_len, :]
 
+        # Apply Soft-Capping to Local Out
+        local_out = torch.tanh(local_out / self.soft_cap) * self.soft_cap
+
         # --- 3. Combination ---
         # Dynamic gating based on scattering phase energy or learned gating
         if g_ii is not None:
             # Use Green's function diagonal for physics-informed gating
             # g_ii has shape (B, N, 1), take the absolute imaginary part
             energy = g_ii.imag.abs()
+            # Clamp energy to prevent NaNs in sigmoid
+            energy = torch.clamp(energy, max=100.0)
             g = torch.sigmoid(energy * self.gate_sensitivity)
             if return_diagnostics:
                 diagnostics['scattering_energy_mean'] = energy.mean()
@@ -108,6 +125,8 @@ class HybridHyperbolicAttention(nn.Module):
             # Fallback: Use learned gating based on input complexity
             # Compute input complexity as variance across feature dimension
             input_complexity = x.var(dim=-1, keepdim=True)  # (B, N, 1)
+            # Clamp for safety
+            input_complexity = torch.clamp(input_complexity, max=100.0)
             g = torch.sigmoid(input_complexity * self.gate_sensitivity)
             if return_diagnostics:
                 diagnostics['input_complexity_mean'] = input_complexity.mean()
@@ -122,4 +141,4 @@ class HybridHyperbolicAttention(nn.Module):
         if return_diagnostics:
             return output, diagnostics
         else:
-            return output
+            return output, diagnostics

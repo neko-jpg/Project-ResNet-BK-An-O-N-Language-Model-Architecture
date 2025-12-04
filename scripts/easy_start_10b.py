@@ -204,7 +204,8 @@ def start_training():
         sys.executable, "scripts/train_phase8.py",
         "--config", "configs/phase8_10b.yaml",
         "--resume-from", "checkpoints/compressed_10b_start/compressed_model.pt",
-        "--dataset", "configs/dataset_mixing.yaml"
+        "--dataset", "configs/dataset_mixing.yaml",
+        "--optimizer", "muon"  # Use Muon optimizer by default
     ]
 
     # We use os.execv to replace the current process, so the training script takes over the terminal
