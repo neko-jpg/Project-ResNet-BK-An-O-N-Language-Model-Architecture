@@ -248,8 +248,8 @@ def train_phase8():
     # Initialize Triton Mode (Strict) if on CUDA
     if device.type == "cuda":
         # Force Triton to be active and strict
-        from src.models.bk_core import BKCoreFunction
-        BKCoreFunction.set_triton_mode(True)
+        from src.models.bk_core import set_triton_mode
+        set_triton_mode(True)
         print("✔ Triton Mode Enforced: STRICT")
 
     # Log VRAM
