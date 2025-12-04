@@ -241,7 +241,7 @@ class BinaryIndexedDataset:
             self.rust_loader = rust_loader.RustDataLoader(str(path), split)
             self.use_rust = True
             # We still need some properties if accessed directly, but let's rely on rust loader methods
-        except ImportError:
+        except (ImportError, AttributeError):
             # Fallback to Python implementation
             pass
 
