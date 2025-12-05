@@ -113,4 +113,11 @@ class LowRankLinear(nn.Module):
         # x: (..., in_features)
         # V(x): (..., rank)
         # U(V(x)): (..., out_features)
-        return self.U(self.V(x))
+        intermediate = self.V(x)
+        # Soft clamp intermediate to prevent explosion
+        intermediate = torch.tanh(intermediate / 10.0) * 10.0
+        output = self.U(intermediate)
+        # Final safety: clamp and remove NaN/Inf
+        output = torch.tanh(output / 30.0) * 30.0
+        output = torch.nan_to_num(output, nan=0.0, posinf=30.0, neginf=-30.0)
+        return output

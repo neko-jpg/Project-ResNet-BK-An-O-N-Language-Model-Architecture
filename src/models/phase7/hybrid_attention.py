@@ -52,7 +52,7 @@ class HybridHyperbolicAttention(nn.Module):
         self.layer_norm = nn.LayerNorm(self.d_model, eps=1e-5) # Enhanced eps
 
         # Soft Capping Limit (30.0 or 50.0 is standard in recent LLMs like Gemma 2)
-        self.soft_cap = 50.0
+        self.soft_cap = 30.0  # Reduced from 50 for extra stability
 
     def forward(self, x, g_ii: torch.Tensor = None, return_diagnostics: bool = True):
         """
@@ -82,6 +82,7 @@ class HybridHyperbolicAttention(nn.Module):
 
         # Apply Soft-Capping to Global Out if needed (SSM usually doesn't explode like Attention, but safety first)
         global_out = torch.tanh(global_out / self.soft_cap) * self.soft_cap
+        global_out = torch.nan_to_num(global_out, nan=0.0, posinf=self.soft_cap, neginf=-self.soft_cap)
 
         if return_diagnostics:
             diagnostics['ssm_effective_rank'] = ssm_diagnostics.get('effective_rank', torch.tensor(0.0))
@@ -109,6 +110,7 @@ class HybridHyperbolicAttention(nn.Module):
 
         # Apply Soft-Capping to Local Out
         local_out = torch.tanh(local_out / self.soft_cap) * self.soft_cap
+        local_out = torch.nan_to_num(local_out, nan=0.0, posinf=self.soft_cap, neginf=-self.soft_cap)
 
         # --- 3. Combination ---
         # Dynamic gating based on scattering phase energy or learned gating
@@ -136,6 +138,7 @@ class HybridHyperbolicAttention(nn.Module):
 
         # Route high-energy/complex tokens to local (hyperbolic) attention
         combined_out = g * local_out + (1 - g) * global_out
+        combined_out = torch.nan_to_num(combined_out, nan=0.0, posinf=self.soft_cap, neginf=-self.soft_cap)
         output = self.layer_norm(combined_out)
 
         if return_diagnostics:

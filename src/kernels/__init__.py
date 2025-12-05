@@ -49,6 +49,36 @@ except ImportError:
     FlashHyperbolicAttentionModule = None
     FlashHyperbolicConfig = None
 
+# Phase 8: Safe Numerical Operations (Rubber Wall)
+try:
+    from .safe_ops_triton import (
+        safe_exp,
+        safe_log,
+        safe_acosh,
+        safe_atanh,
+        safe_softmax_exp,
+        safe_poincare_distance,
+        safe_exp_pytorch,
+        safe_log_pytorch,
+        safe_acosh_pytorch,
+        safe_atanh_pytorch,
+        K_THRESHOLD,
+    )
+    _SAFE_OPS_AVAILABLE = True
+except ImportError:
+    _SAFE_OPS_AVAILABLE = False
+    safe_exp = None
+    safe_log = None
+    safe_acosh = None
+    safe_atanh = None
+    safe_softmax_exp = None
+    safe_poincare_distance = None
+    safe_exp_pytorch = None
+    safe_log_pytorch = None
+    safe_acosh_pytorch = None
+    safe_atanh_pytorch = None
+    K_THRESHOLD = 88.0
+
 __all__ = [
     'fused_associative_scan',
     'lns_matmul',
@@ -68,4 +98,19 @@ if _FLASH_HYPERBOLIC_AVAILABLE:
         'flash_hyperbolic_attention',
         'FlashHyperbolicAttentionModule',
         'FlashHyperbolicConfig',
+    ])
+
+if _SAFE_OPS_AVAILABLE:
+    __all__.extend([
+        'safe_exp',
+        'safe_log',
+        'safe_acosh',
+        'safe_atanh',
+        'safe_softmax_exp',
+        'safe_poincare_distance',
+        'safe_exp_pytorch',
+        'safe_log_pytorch',
+        'safe_acosh_pytorch',
+        'safe_atanh_pytorch',
+        'K_THRESHOLD',
     ])

@@ -1,93 +1,139 @@
 #!/usr/bin/env python3
 """
-Phase 7 Chat AI - 推論スクリプト
-
-訓練済みモデルでチャットできます！
+MUSE Chat AI - Phase 8 対応版
+==============================
+訓練済みモデルでチャットできます！日本語・英語両対応。
 
 Usage:
-    make chat-ai                              # 最新のチェックポイントでチャット
-    make chat-ai CHECKPOINT=path/to/model.pt  # 指定チェックポイント
-    python scripts/chat_inference.py --checkpoint checkpoints/phase7_max_push/best.pt
+    make chat                    # 最新のチェックポイントでチャット
+    make chat CHECKPOINT=path    # 指定チェックポイント
+    python scripts/chat_inference.py --checkpoint checkpoints/phase8_10b_japanese/best.pt
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Optional, List, Dict
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 import torch.nn.functional as F
 
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+    from rich.table import Table
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
-def load_model(checkpoint_path: str, device: str = "cuda"):
-    """チェックポイントからモデルをロード"""
-    from scripts.train_phase7_max import Phase7MaxModel, TrainingConfig
+console = Console() if RICH_AVAILABLE else None
+
+
+@dataclass
+class ChatConfig:
+    """チャット設定"""
+    temperature: float = 0.8
+    top_k: int = 50
+    top_p: float = 0.9
+    max_new_tokens: int = 256
+    repetition_penalty: float = 1.1
+
+
+def load_model_phase8(checkpoint_path: str, device: str = "cuda"):
+    """Phase 8 モデルをロード"""
+    from src.models.resnet_bk import LanguageModel
+    from src.models.config import ResNetBKConfig
     
     print(f"📂 Loading checkpoint: {checkpoint_path}")
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     # 設定を復元
-    config_dict = ckpt.get('config', {})
-    config = TrainingConfig()
-    for k, v in config_dict.items():
-        if hasattr(config, k):
-            setattr(config, k, v)
+    if 'config' in ckpt:
+        config_dict = ckpt['config']
+        config = ResNetBKConfig(**config_dict) if isinstance(config_dict, dict) else config_dict
+    else:
+        # デフォルト設定
+        config = ResNetBKConfig(
+            d_model=4096,
+            n_layers=48,
+            n_seq=512,
+            vocab_size=32000,  # Japanese tokenizer
+        )
     
     # モデル作成
-    model = Phase7MaxModel(
-        vocab_size=config.vocab_size,
-        d_model=config.d_model,
-        n_layers=config.n_layers,
-        n_seq=config.n_seq,
-        num_heads=config.num_heads,
-        embed_rank=config.embed_rank,
-        ffn_rank=config.ffn_rank,
-        head_rank=config.head_rank,
-        use_checkpoint=False,  # 推論時は不要
-    ).to(device)
+    model = LanguageModel(config).to(device)
     
-    model.load_state_dict(ckpt['model_state_dict'])
+    # 重みをロード
+    if 'model_state_dict' in ckpt:
+        model.load_state_dict(ckpt['model_state_dict'], strict=False)
+    else:
+        model.load_state_dict(ckpt, strict=False)
+    
     model.eval()
-    model.half()  # FP16で推論
     
-    step = ckpt.get('step', 'unknown')
-    print(f"✓ Model loaded (step {step})")
+    # パラメータ数
+    total_params = sum(p.numel() for p in model.parameters())
+    
+    print(f"✓ Model loaded successfully!")
     print(f"  d_model: {config.d_model}, n_layers: {config.n_layers}")
-    print(f"  Parameters: {model.total_params / 1e6:.1f}M")
+    print(f"  Parameters: {total_params / 1e6:.1f}M")
     
     return model, config
 
 
-def load_tokenizer():
-    """トークナイザーをロード（GPT-2互換）"""
+def load_tokenizer(tokenizer_name: str = "rinna/japanese-gpt-neox-3.6b"):
+    """トークナイザーをロード（日本語対応）"""
     try:
-        from transformers import GPT2Tokenizer
-        tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-        tokenizer.pad_token = tokenizer.eos_token
-        print("✓ GPT-2 tokenizer loaded")
+        from transformers import AutoTokenizer
+        
+        # 日本語トークナイザーを試す
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
+            print(f"✓ Japanese tokenizer loaded: {tokenizer_name}")
+        except:
+            # フォールバック: GPT-2
+            tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            print("✓ GPT-2 tokenizer loaded (fallback)")
+        
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
         return tokenizer
     except ImportError:
         print("⚠ transformers not installed. Using simple tokenizer.")
-        return None
+        return SimpleTokenizer()
 
 
 class SimpleTokenizer:
-    """シンプルな文字レベルトークナイザー（フォールバック用）"""
-    def __init__(self, vocab_size=50257):
+    """シンプルなUTF-8トークナイザー（フォールバック用）"""
+    def __init__(self, vocab_size=32000):
         self.vocab_size = vocab_size
-        self.eos_token_id = 50256
+        self.eos_token_id = 2
+        self.pad_token_id = 0
     
-    def encode(self, text):
-        # 簡易的なバイトエンコード
-        return [min(b, self.vocab_size - 1) for b in text.encode('utf-8')]
+    def encode(self, text, return_tensors=None, **kwargs):
+        # UTF-8バイトエンコード
+        ids = [min(b + 3, self.vocab_size - 1) for b in text.encode('utf-8')]
+        if return_tensors == "pt":
+            return torch.tensor([ids])
+        return ids
     
-    def decode(self, ids):
+    def decode(self, ids, skip_special_tokens=True):
+        if isinstance(ids, torch.Tensor):
+            ids = ids.tolist()
+        if isinstance(ids[0], list):
+            ids = ids[0]
         # バイトデコード
         try:
-            return bytes([i % 256 for i in ids]).decode('utf-8', errors='replace')
+            bytes_list = [max(0, i - 3) for i in ids if i > 2]
+            return bytes(bytes_list).decode('utf-8', errors='replace')
         except:
-            return "".join(chr(i % 128) for i in ids)
+            return ""
 
 
 @torch.no_grad()
@@ -95,51 +141,51 @@ def generate(
     model,
     tokenizer,
     prompt: str,
-    max_new_tokens: int = 100,
-    temperature: float = 0.8,
-    top_k: int = 50,
-    top_p: float = 0.9,
+    config: ChatConfig,
     device: str = "cuda",
+    stream: bool = True,
 ):
-    """テキスト生成"""
+    """テキスト生成（ストリーミング対応）"""
+    
     # エンコード
-    if hasattr(tokenizer, 'encode'):
-        if hasattr(tokenizer, '__call__'):
-            # HuggingFace tokenizer
-            input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
-        else:
-            # Simple tokenizer
-            input_ids = torch.tensor([tokenizer.encode(prompt)], device=device)
+    if hasattr(tokenizer, '__call__'):
+        input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
     else:
         input_ids = torch.tensor([tokenizer.encode(prompt)], device=device)
     
-    # 生成ループ
     generated = input_ids.clone()
+    past_tokens = set(input_ids[0].tolist())
     
-    for _ in range(max_new_tokens):
-        # 最大シーケンス長でトランケート
+    for step in range(config.max_new_tokens):
+        # シーケンス長制限
         if generated.shape[1] > model.n_seq:
             context = generated[:, -model.n_seq:]
         else:
             context = generated
         
-        # Forward
-        with torch.cuda.amp.autocast():
+        # Forward pass
+        with torch.cuda.amp.autocast(enabled=device=="cuda"):
             logits = model(context)
         
-        # 最後のトークンのlogitsを取得
-        next_logits = logits[:, -1, :] / temperature
+        # 最後のトークンのlogits
+        next_logits = logits[:, -1, :].float() / config.temperature
+        
+        # Repetition penalty
+        if config.repetition_penalty != 1.0:
+            for token_id in past_tokens:
+                if token_id < next_logits.shape[-1]:
+                    next_logits[0, token_id] /= config.repetition_penalty
         
         # Top-k filtering
-        if top_k > 0:
-            indices_to_remove = next_logits < torch.topk(next_logits, top_k)[0][..., -1, None]
+        if config.top_k > 0:
+            indices_to_remove = next_logits < torch.topk(next_logits, config.top_k)[0][..., -1, None]
             next_logits[indices_to_remove] = float('-inf')
         
         # Top-p (nucleus) filtering
-        if top_p < 1.0:
+        if config.top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(next_logits, descending=True)
             cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > top_p
+            sorted_indices_to_remove = cumulative_probs > config.top_p
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
             indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
@@ -150,66 +196,75 @@ def generate(
         next_token = torch.multinomial(probs, num_samples=1)
         
         generated = torch.cat([generated, next_token], dim=1)
+        past_tokens.add(next_token.item())
+        
+        # ストリーミング出力
+        if stream:
+            token_text = tokenizer.decode([next_token.item()], skip_special_tokens=True)
+            print(token_text, end="", flush=True)
         
         # EOS check
         if hasattr(tokenizer, 'eos_token_id') and next_token.item() == tokenizer.eos_token_id:
             break
     
+    if stream:
+        print()  # 改行
+    
     # デコード
     output_ids = generated[0].tolist()
-    if hasattr(tokenizer, 'decode'):
-        return tokenizer.decode(output_ids, skip_special_tokens=True)
-    else:
-        return tokenizer.decode(output_ids)
+    return tokenizer.decode(output_ids, skip_special_tokens=True)
 
 
-def find_latest_checkpoint(checkpoint_dir: str = "checkpoints/phase7_max_push"):
+def find_latest_checkpoint():
     """最新のチェックポイントを探す"""
-    ckpt_dir = Path(checkpoint_dir)
+    search_dirs = [
+        "checkpoints/phase8_10b_japanese",
+        "checkpoints/phase8_10b_rtx3080",
+        "checkpoints/phase8",
+        "checkpoints/phase7_max_push",
+    ]
     
-    if not ckpt_dir.exists():
-        return None
-    
-    # best.pt を優先
-    best_path = ckpt_dir / "best.pt"
-    if best_path.exists():
-        return str(best_path)
-    
-    # final.pt
-    final_path = ckpt_dir / "final.pt"
-    if final_path.exists():
-        return str(final_path)
-    
-    # step_*.pt から最新を探す
-    step_files = list(ckpt_dir.glob("step_*.pt"))
-    if step_files:
-        latest = max(step_files, key=lambda p: int(p.stem.split('_')[1]))
-        return str(latest)
+    for dir_path in search_dirs:
+        ckpt_dir = Path(dir_path)
+        if not ckpt_dir.exists():
+            continue
+        
+        # 優先順位: best.pt > final.pt > phase8_10b_final.pt > step_*.pt
+        for name in ["best.pt", "final.pt", "phase8_10b_final.pt"]:
+            path = ckpt_dir / name
+            if path.exists():
+                return str(path)
+        
+        # step_*.pt から最新
+        step_files = list(ckpt_dir.glob("step_*.pt")) + list(ckpt_dir.glob("*.pt"))
+        if step_files:
+            return str(max(step_files, key=lambda p: p.stat().st_mtime))
     
     return None
 
 
-def interactive_chat(model, tokenizer, device="cuda"):
+def interactive_chat(model, tokenizer, config: ChatConfig, device: str = "cuda"):
     """インタラクティブチャットモード"""
+    
     print("\n" + "=" * 60)
-    print("🤖 MUSE Chat AI - Interactive Mode")
+    print("🤖 MUSE Chat AI - Phase 8 Japanese/English")
     print("=" * 60)
-    print("Commands:")
-    print("  /quit, /exit - 終了")
-    print("  /temp <value> - temperature設定 (default: 0.8)")
-    print("  /tokens <value> - 最大生成トークン数 (default: 100)")
-    print("  /clear - 会話履歴クリア")
+    print("コマンド / Commands:")
+    print("  /quit, /exit  - 終了 / Exit")
+    print("  /temp <val>   - temperature (現在: {:.1f})".format(config.temperature))
+    print("  /tokens <val> - 最大トークン数 (現在: {})".format(config.max_new_tokens))
+    print("  /clear        - 履歴クリア / Clear history")
+    print("  /system <msg> - システムプロンプト設定")
     print("=" * 60 + "\n")
     
-    temperature = 0.8
-    max_tokens = 100
-    history = []
+    history: List[Dict[str, str]] = []
+    system_prompt = "あなたは親切で知識豊富なAIアシスタントです。"
     
     while True:
         try:
             user_input = input("You: ").strip()
         except (KeyboardInterrupt, EOFError):
-            print("\n👋 Bye!")
+            print("\n👋 さようなら！ / Goodbye!")
             break
         
         if not user_input:
@@ -217,60 +272,62 @@ def interactive_chat(model, tokenizer, device="cuda"):
         
         # コマンド処理
         if user_input.startswith('/'):
-            parts = user_input.split()
+            parts = user_input.split(maxsplit=1)
             cmd = parts[0].lower()
             
-            if cmd in ['/quit', '/exit']:
-                print("👋 Bye!")
+            if cmd in ['/quit', '/exit', '/q']:
+                print("👋 さようなら！ / Goodbye!")
                 break
             elif cmd == '/temp' and len(parts) > 1:
                 try:
-                    temperature = float(parts[1])
-                    print(f"✓ Temperature set to {temperature}")
+                    config.temperature = float(parts[1])
+                    print(f"✓ Temperature: {config.temperature}")
                 except ValueError:
-                    print("❌ Invalid temperature value")
+                    print("❌ 無効な値です")
                 continue
             elif cmd == '/tokens' and len(parts) > 1:
                 try:
-                    max_tokens = int(parts[1])
-                    print(f"✓ Max tokens set to {max_tokens}")
+                    config.max_new_tokens = int(parts[1])
+                    print(f"✓ Max tokens: {config.max_new_tokens}")
                 except ValueError:
-                    print("❌ Invalid token count")
+                    print("❌ 無効な値です")
                 continue
             elif cmd == '/clear':
                 history = []
-                print("✓ History cleared")
+                print("✓ 履歴をクリアしました")
+                continue
+            elif cmd == '/system' and len(parts) > 1:
+                system_prompt = parts[1]
+                print(f"✓ System prompt: {system_prompt}")
                 continue
             else:
-                print(f"❌ Unknown command: {cmd}")
+                print(f"❌ 不明なコマンド: {cmd}")
                 continue
         
-        # プロンプト構築
-        # シンプルなチャット形式
-        prompt = ""
-        for h in history[-3:]:  # 直近3ターンのみ
-            prompt += f"User: {h['user']}\nAssistant: {h['assistant']}\n"
-        prompt += f"User: {user_input}\nAssistant:"
+        # プロンプト構築（日本語チャット形式）
+        prompt = f"### システム:\n{system_prompt}\n\n"
+        
+        # 履歴（直近3ターン）
+        for h in history[-3:]:
+            prompt += f"### ユーザー:\n{h['user']}\n\n### アシスタント:\n{h['assistant']}\n\n"
+        
+        prompt += f"### ユーザー:\n{user_input}\n\n### アシスタント:\n"
         
         # 生成
         print("AI: ", end="", flush=True)
         try:
             response = generate(
                 model, tokenizer, prompt,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
+                config=config,
                 device=device,
+                stream=True,
             )
             
             # プロンプト部分を除去
-            if "Assistant:" in response:
-                response = response.split("Assistant:")[-1].strip()
-            
-            # 次のUser:以降を除去
-            if "User:" in response:
-                response = response.split("User:")[0].strip()
-            
-            print(response)
+            if "### アシスタント:" in response:
+                response = response.split("### アシスタント:")[-1].strip()
+            if "### ユーザー:" in response:
+                response = response.split("### ユーザー:")[0].strip()
             
             history.append({
                 'user': user_input,
@@ -284,42 +341,53 @@ def interactive_chat(model, tokenizer, device="cuda"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MUSE Chat AI")
+    parser = argparse.ArgumentParser(description="MUSE Chat AI - Phase 8")
     parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to checkpoint (default: auto-detect latest)")
+                        help="Path to checkpoint (default: auto-detect)")
     parser.add_argument("--prompt", type=str, default=None,
-                        help="Single prompt (non-interactive mode)")
-    parser.add_argument("--max-tokens", type=int, default=100,
+                        help="Single prompt (non-interactive)")
+    parser.add_argument("--max-tokens", type=int, default=256,
                         help="Maximum tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.8,
                         help="Sampling temperature")
-    parser.add_argument("--device", type=str, default="cuda",
-                        help="Device (cuda/cpu)")
+    parser.add_argument("--tokenizer", type=str, default="rinna/japanese-gpt-neox-3.6b",
+                        help="Tokenizer name")
+    parser.add_argument("--device", type=str, default="auto",
+                        help="Device (cuda/cpu/auto)")
     args = parser.parse_args()
     
-    # デバイスチェック
-    if args.device == "cuda" and not torch.cuda.is_available():
+    # デバイス
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
+    
+    if device == "cuda" and not torch.cuda.is_available():
         print("⚠ CUDA not available, using CPU")
-        args.device = "cpu"
+        device = "cpu"
     
     # チェックポイント探索
     checkpoint = args.checkpoint or find_latest_checkpoint()
     
     if checkpoint is None:
-        print("❌ No checkpoint found!")
-        print("\nPlease train a model first:")
-        print("  make train-chat")
-        print("\nOr specify a checkpoint:")
+        print("❌ チェックポイントが見つかりません！")
+        print("\nまず学習を実行してください:")
+        print("  make start-japanese   # 日本語10Bモデル学習")
+        print("\nまたはチェックポイントを指定:")
         print("  python scripts/chat_inference.py --checkpoint path/to/model.pt")
         sys.exit(1)
     
     # モデルロード
-    model, config = load_model(checkpoint, args.device)
+    model, model_config = load_model_phase8(checkpoint, device)
     
     # トークナイザー
-    tokenizer = load_tokenizer()
-    if tokenizer is None:
-        tokenizer = SimpleTokenizer(config.vocab_size)
+    tokenizer = load_tokenizer(args.tokenizer)
+    
+    # チャット設定
+    chat_config = ChatConfig(
+        temperature=args.temperature,
+        max_new_tokens=args.max_tokens,
+    )
     
     # 推論
     if args.prompt:
@@ -328,14 +396,13 @@ def main():
         print("-" * 40)
         response = generate(
             model, tokenizer, args.prompt,
-            max_new_tokens=args.max_tokens,
-            temperature=args.temperature,
-            device=args.device,
+            config=chat_config,
+            device=device,
+            stream=True,
         )
-        print(f"Response: {response}")
     else:
         # インタラクティブモード
-        interactive_chat(model, tokenizer, args.device)
+        interactive_chat(model, tokenizer, chat_config, device)
 
 
 if __name__ == "__main__":

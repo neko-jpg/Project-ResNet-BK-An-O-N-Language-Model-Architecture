@@ -1,410 +1,357 @@
 #!/usr/bin/env python3
 """
-MUSE Concierge - Training Wizard
-Auto-configures training parameters based on hardware calibration and user goals.
+MUSE Concierge - Training Wizard (Phase 8 対応版)
+===================================================
+データセット配合とハードウェア最適化を自動設定します。
+
+Usage:
+    make recipe
+    python scripts/configure_recipe.py
 """
 import os
 import sys
 import yaml
-import time
-import io
-import contextlib
+import json
 from pathlib import Path
-from rich.console import Console
-from rich.panel import Panel
-from rich.prompt import Prompt, IntPrompt, Confirm
-from rich.table import Table
-from rich.layout import Layout
-from rich.live import Live
-from rich.spinner import Spinner
-from rich.status import Status
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional
 
-# Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
-    from scripts.calibration import MuseCalibrator
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt, IntPrompt, Confirm
+    from rich.table import Table
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+    RICH_AVAILABLE = True
 except ImportError:
-    MuseCalibrator = None
+    RICH_AVAILABLE = False
+    print("Note: Install 'rich' for better UI: pip install rich")
 
-# Language
-LANG = "1"
+console = Console() if RICH_AVAILABLE else None
+
+# Language detection
+IS_JP = os.getenv("MUSE_LANG", "1") == "2"
 if os.path.exists(".muse_config"):
     with open(".muse_config") as f:
         for line in f:
             if "MUSE_LANG" in line:
-                LANG = line.strip().split("=")[1].strip("'\"")
-IS_JP = (LANG == "2")
+                IS_JP = "2" in line
 
-def t(en, jp): return jp if IS_JP else en
+def t(en, jp):
+    return jp if IS_JP else en
 
-console = Console()
 
-class AutoTuner:
-    """
-    Automated parameter tuning logic.
-    Optimizes configuration to fit within VRAM target using bidirectional scaling.
-    """
-    def __init__(self, calibrator, goal):
-        self.cal = calibrator
-        self.goal = goal
+@dataclass
+class Phase8Config:
+    """Phase 8 学習設定"""
+    # Model Architecture
+    d_model: int = 4096
+    n_layers: int = 48
+    n_seq: int = 512
+    num_heads: int = 32
+    vocab_size: int = 32000  # Japanese tokenizer
+    
+    # Compression
+    low_rank_ffn: bool = True
+    low_rank_attention: bool = True
+    low_rank_rank: int = 16
+    use_bitnet: bool = True
+    
+    # Training
+    batch_size: int = 1
+    gradient_accumulation_steps: int = 32
+    epochs: int = 1
+    learning_rate: float = 0.02
+    warmup_steps: int = 2000
+    
+    # Memory Optimization
+    use_gradient_checkpointing: bool = True
+    use_mixed_precision: bool = True
+    mixed_precision_dtype: str = "bfloat16"
+    
+    # Triton / Compile
+    use_triton_kernel: bool = True
+    use_torch_compile: bool = True
+    compile_mode: str = "max-autotune"
+    
+    # Language
+    language: str = "japanese"  # japanese or english
+    tokenizer_name: str = "rinna/japanese-gpt-neox-3.6b"
+    
+    # Paths
+    save_dir: str = "checkpoints/phase8_10b_japanese"
 
-        # Priority: d_model (Most impactful) -> n_layers -> batch_size -> seq_len
-        self.priority = ['d_model', 'n_layers', 'batch_size', 'n_seq']
 
-        # Constraints
-        self.limits = {
-            'd_model': {'min': 128, 'max': 4096, 'step': 64},
-            'n_layers': {'min': 2, 'max': 256, 'step': 2},
-            'batch_size': {'min': 1, 'max': 128, 'step': 1},
-            'n_seq': {'min': 128, 'max': 4096, 'step': 128}
-        }
+def detect_gpu():
+    """GPU情報を検出"""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None, 0
+        
+        name = torch.cuda.get_device_name(0)
+        vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        return name, vram
+    except:
+        return None, 0
 
-        # Adjust limits based on goal? (Optional, but kept simple for now)
-        if goal == "1": # Debug
-            self.limits['d_model']['max'] = 1024
-            self.limits['n_layers']['max'] = 16
 
-    def tune(self, config, locked_params, target_vram_ratio, **kwargs):
-        """
-        Adjusts config to meet target_vram_ratio.
-        Respects locked_params.
-        Returns: (new_config, status_dict)
-        """
-        total_vram = self.cal.vram_total if self.cal.vram_total > 0 else 8192
-        target_vram = total_vram * target_vram_ratio
+def estimate_vram(config: Phase8Config) -> float:
+    """VRAM使用量を推定（MB）"""
+    # 簡易推定式
+    # Base: Embedding + Position
+    embed_mem = config.vocab_size * config.d_model * 2 / (1024**2)  # FP16
+    
+    # Per layer (with compression)
+    if config.low_rank_ffn and config.low_rank_attention:
+        # Low-rank: ~5% of full
+        layer_mem = (config.d_model * config.low_rank_rank * 8) * 2 / (1024**2)
+    else:
+        layer_mem = (config.d_model ** 2 * 12) * 2 / (1024**2)
+    
+    total_layers_mem = layer_mem * config.n_layers
+    
+    # Activations (with gradient checkpointing)
+    if config.use_gradient_checkpointing:
+        activation_mem = config.batch_size * config.n_seq * config.d_model * 4 / (1024**2)
+    else:
+        activation_mem = config.batch_size * config.n_seq * config.d_model * config.n_layers * 4 / (1024**2)
+    
+    # Optimizer states (Muon is lighter than Adam)
+    optimizer_mem = (embed_mem + total_layers_mem) * 1.5
+    
+    total = embed_mem + total_layers_mem + activation_mem + optimizer_mem
+    
+    # Safety margin
+    return total * 1.2
 
-        current_cfg = config.copy()
-        iterations = 0
-        max_iterations = 100
-        direction = "stable"
 
-        while iterations < max_iterations:
-            # Predict current usage
-            with contextlib.redirect_stderr(io.StringIO()):
-                est_mem, _ = self.cal.predict(
-                    current_cfg['batch_size'],
-                    current_cfg['n_seq'],
-                    current_cfg['d_model'],
-                    current_cfg['n_layers'],
-                    **kwargs
-                )
+def calculate_dense_params(config: Phase8Config) -> int:
+    """Dense換算パラメータ数を計算"""
+    # Embedding
+    embed_params = config.vocab_size * config.d_model + config.n_seq * config.d_model
+    
+    # Per layer (Dense)
+    attention_params = 4 * config.d_model ** 2  # Q, K, V, O
+    ffn_params = 2 * config.d_model * (config.d_model * 4)  # up + down
+    layer_params = attention_params + ffn_params
+    
+    # Total
+    total_layers = layer_params * config.n_layers
+    lm_head = 0  # Tied with embedding
+    
+    return embed_params + total_layers + lm_head
 
-            # Check convergence (within small margin or safe side)
-            # Actually we want to be <= target.
-            # If we are > target, we MUST reduce.
-            # If we are < target, we CAN expand (up to a point).
 
-            # Let's define "Convergence" as:
-            # 1. Under limit: est_mem <= target_vram
-            # 2. Close enough: est_mem >= target_vram * 0.95 (If we are expanding)
+def calculate_actual_params(config: Phase8Config) -> int:
+    """実際のパラメータ数を計算"""
+    # Embedding (not compressed)
+    embed_params = config.vocab_size * config.d_model + config.n_seq * config.d_model
+    
+    # Per layer (with Low-Rank)
+    if config.low_rank_ffn and config.low_rank_attention:
+        # Low-rank: 2 * (d_model * rank) per projection
+        attention_params = 4 * 2 * config.d_model * config.low_rank_rank
+        ffn_params = 2 * 2 * config.d_model * config.low_rank_rank
+    else:
+        attention_params = 4 * config.d_model ** 2
+        ffn_params = 2 * config.d_model * (config.d_model * 4)
+    
+    layer_params = attention_params + ffn_params
+    total_layers = layer_params * config.n_layers
+    
+    return embed_params + total_layers
 
-            if est_mem > target_vram:
-                # REDUCTION PHASE
-                direction = "reduce"
-                changed = False
-                for param in self.priority: # Reduce d_model first
-                    if param in locked_params: continue
 
-                    val = current_cfg[param]
-                    lim = self.limits[param]
+def scan_datasets() -> Dict[str, Dict]:
+    """利用可能なデータセットをスキャン"""
+    data_dir = Path("data")
+    datasets = {}
+    
+    # Japanese datasets
+    jp_dirs = ["japanese", "wiki_ja", "wikipedia_ja", "cc100_ja", "dolly_ja", "alpaca_ja"]
+    # English datasets
+    en_dirs = ["cosmopedia", "evol_instruct_code", "openwebtext"]
+    
+    for name in jp_dirs + en_dirs:
+        path = data_dir / name
+        if path.exists():
+            # Check for data files
+            has_data = any(path.glob("*.jsonl")) or any(path.glob("*.json")) or (path / "metadata.json").exists()
+            if has_data:
+                is_japanese = name in jp_dirs or "ja" in name.lower()
+                datasets[name] = {
+                    "path": str(path),
+                    "language": "japanese" if is_japanese else "english",
+                    "type": "instruction" if any(x in name for x in ["dolly", "alpaca", "instruct"]) else "pretrain"
+                }
+    
+    return datasets
 
-                    if val > lim['min']:
-                        # Reduce
-                        step = lim['step']
-                        new_val = max(lim['min'], val - step)
-                        current_cfg[param] = new_val
-                        changed = True
-                        break # One change per iteration to re-evaluate VRAM
-
-                if not changed:
-                    # Cannot reduce further (everything min or locked)
-                    break
-
-            elif est_mem < target_vram * 0.95:
-                # EXPANSION PHASE
-                # Only expand if we are significantly below (e.g., < 95%)
-                direction = "expand"
-                changed = False
-                for param in self.priority: # Expand d_model first
-                    if param in locked_params: continue
-
-                    val = current_cfg[param]
-                    lim = self.limits[param]
-
-                    if val < lim['max']:
-                        # Check if next step would blow limit?
-                        # No, just expand, loop will catch it next time and reduce if needed.
-                        # But to avoid oscillation, we should be careful.
-                        # Simple approach: Expand, let next iteration reduce if overshot.
-                        # To prevent infinite toggle, maybe check prediction here?
-
-                        step = lim['step']
-                        next_val = val + step
-
-                        # Tentative check
-                        temp_cfg = current_cfg.copy()
-                        temp_cfg[param] = next_val
-                        with contextlib.redirect_stderr(io.StringIO()):
-                            temp_mem, _ = self.cal.predict(
-                                temp_cfg['batch_size'], temp_cfg['n_seq'],
-                                temp_cfg['d_model'], temp_cfg['n_layers'],
-                                **kwargs
-                            )
-
-                        if temp_mem <= target_vram:
-                            current_cfg[param] = next_val
-                            changed = True
-                            break # One change per iteration
-
-                if not changed:
-                    break
-            else:
-                # Converged (Between 95% and 100%)
-                direction = "converged"
-                break
-
-            iterations += 1
-
-        return current_cfg, {
-            "iterations": iterations,
-            "final_mem": est_mem,
-            "direction": direction
-        }
 
 def main():
-    console.print(Panel.fit(
-        t("MUSE Concierge - Training Wizard", "MUSE コンシェルジュ - 学習設定ウィザード"),
-        subtitle="Auto-tuning for O(N) Architecture",
-        style="bold blue"
-    ))
-
-    # 1. Goal Selection
-    console.print(t("\nWhat is your goal today?", "\n今日の学習の目的は何ですか？"))
-    console.print(t("1. Debug (Quick check)", "1. デバッグ (とりあえず動かす)"))
-    console.print(t("2. Benchmark (Push limits)", "2. ベンチマーク (性能の限界に挑戦)"))
-    console.print(t("3. Production (Train a good model)", "3. 本番学習 (良いモデルを作る)"))
-
-    goal_choice = IntPrompt.ask("Choice", choices=["1", "2", "3"], default="1")
-
-    # 1.5 Model Architecture
-    console.print(t("\nWhich model architecture to use?", "\n使用するモデルアーキテクチャを選択してください。"))
-    console.print(t("1. Phase 3 (Standard ResNet-BK)", "1. Phase 3 (標準 ResNet-BK)"))
-    console.print(t("2. Phase 7 (Hybrid Hyperbolic Attention)", "2. Phase 7 (ハイブリッド双曲アテンション)"))
-    arch_choice = IntPrompt.ask("Choice", choices=["1", "2"], default="2")
-    model_type = "phase3" if arch_choice == "1" else "phase7"
-    predict_kwargs = {}
-    if model_type == 'phase7':
-        predict_kwargs['use_hybrid_attention'] = True
+    if RICH_AVAILABLE:
+        console.print(Panel.fit(
+            t("🧙 MUSE Concierge - Training Wizard (Phase 8)", "🧙 MUSE コンシェルジュ - 学習設定ウィザード (Phase 8)"),
+            subtitle="10B Japanese/English LLM",
+            style="bold blue"
+        ))
     else:
-        # Default for Phase 3/4 MoE
-        predict_kwargs['num_experts'] = 4
-
-
-    # 2. Calibration
-    cal = MuseCalibrator()
-    if cal:
-        cal.check_triton(strict=(goal_choice != "1"))
-
-    if cal and cal.device.type == 'cuda':
-        if Confirm.ask(t("Run hardware calibration?", "ハードウェア診断（キャリブレーション）を実行しますか？"), default=True):
-            cal.calibrate()
+        print("=" * 60)
+        print("MUSE Concierge - Training Wizard (Phase 8)")
+        print("=" * 60)
+    
+    # 1. GPU Detection
+    gpu_name, vram_gb = detect_gpu()
+    if gpu_name:
+        print(f"\n🖥️  GPU: {gpu_name} ({vram_gb:.1f} GB VRAM)")
     else:
-        console.print(t("[yellow]Skipping calibration (CPU or module missing).[/yellow]", "[yellow]キャリブレーションをスキップします。[/yellow]"))
-
-    # 3. Dataset Recipe (Simplified for this file update, keeping logic)
-    data_dir = Path("data")
-    available_datasets = []
-    if data_dir.exists():
-        for d in data_dir.iterdir():
-            if d.is_dir() and d.name != 'import' and (d / "metadata.json").exists():
-                available_datasets.append(d.name)
-
-    ratios = {}
-    if available_datasets:
-        console.print(t("\n[Dataset Recipe Strategy]", "\n[データセット配合戦略]"))
-        console.print(t("1. Balanced (Auto)", "1. バランス型 (おまかせ)"))
-        console.print(t("2. Japanese Focused (Auto)", "2. 日本語重視 (おまかせ)"))
-        console.print(t("3. Code Heavy (Auto)", "3. コード重視 (おまかせ)"))
-        console.print(t("4. Manual (Custom)", "4. 手動設定 (カスタム)"))
-        strategy = IntPrompt.ask("Choice", choices=["1", "2", "3", "4"], default="1")
-
-        # Quick re-impl of ratio logic
-        jp_sets = [d for d in available_datasets if 'jp' in d.lower() or 'japanese' in d.lower() or 'wiki_ja' in d.lower()]
-        code_sets = [d for d in available_datasets if 'code' in d.lower() or 'python' in d.lower() or 'evol' in d.lower()]
-        general_sets = [d for d in available_datasets if d not in jp_sets and d not in code_sets]
-
-        def get_ratios(strat):
-            if strat == "4": return {}
-            w = {'jp': 0.33, 'code': 0.33, 'gen': 0.34}
-            if strat == "2": w = {'jp': 0.70, 'code': 0.15, 'gen': 0.15}
-            elif strat == "3": w = {'jp': 0.15, 'code': 0.70, 'gen': 0.15}
-
-            res = {}
-            for s, k in [(jp_sets, 'jp'), (code_sets, 'code'), (general_sets, 'gen')]:
-                if s:
-                    for d in s: res[d] = w[k] / len(s)
-
-            tot = sum(res.values())
-            if tot > 0:
-                for k in res: res[k] /= tot
-            return res
-
-        ratios = get_ratios(strategy)
-
-        if strategy == "4" or not Confirm.ask(t("Use this mix?", "この配合でよろしいですか？"), default=True):
-            console.print(t("Switching to manual...", "手動モードに切り替えます..."))
-            rem = 100
-            ratios = {}
-            for i, ds in enumerate(available_datasets):
-                val = IntPrompt.ask(f"- {ds} (Remaining: {rem}%)", default=0)
-                val = min(val, rem)
-                ratios[ds] = val / 100.0
-                rem -= val
-
-    # 4. Auto-Tuner Setup
-    console.print(t("\n[Hardware Limit Settings]", "\n[ハードウェア制限設定]"))
-    target_vram_percent = IntPrompt.ask(t("Target VRAM Usage (%)", "目標VRAM使用率 (%)"), default="90")
-    target_vram_ratio = target_vram_percent / 100.0
-
-    tuner = AutoTuner(cal, goal_choice)
-
-    # Initial defaults
-    config = {
-        'd_model': 512, 'n_layers': 6, 'batch_size': 4, 'n_seq': 1024, 'epochs': 1
-    }
-    if goal_choice == "3": config['epochs'] = 3
-
-    locked_params = {}
-
-    # Initial Auto-Tune
-    if cal and cal.memory_coeffs['base'] > 0:
-        with console.status(t("Auto-tuning...", "自動最適化中...")):
-            config, _ = tuner.tune(config, locked_params, target_vram_ratio, **predict_kwargs)
-
-    # 5. Cascading Manual Loop
-    while True:
-        # Estimate
-        est_mem = 0
-        est_time = 0
-        if cal and cal.memory_coeffs['base'] > 0:
-            with contextlib.redirect_stderr(io.StringIO()):
-                est_mem, est_time = cal.predict(
-                    config['batch_size'], config['n_seq'], config['d_model'], config['n_layers'], **predict_kwargs
-                )
-
-        usage_pct = (est_mem / (cal.vram_total if cal.vram_total > 0 else 8192)) * 100
-
-        # Display Status
-        console.clear() # Optional: Clear screen for cleaner UI? maybe just print new table
-        # Actually clearing might be too aggressive if user wants to see history. Let's just print.
-
-        table = Table(title=t("Configuration Proposal", "設定プロポーザル"))
-        table.add_column("Parameter", style="cyan")
-        table.add_column("Value", style="magenta")
-        table.add_column("Status", style="yellow")
-
-        for k in ['d_model', 'n_layers', 'batch_size', 'n_seq', 'epochs']:
-            val = config.get(k, 0)
-            lock_status = "🔒 Locked" if k in locked_params else "Auto"
-            if k == 'epochs': lock_status = "Manual" # Epochs not tuned by VRAM usually
-            table.add_row(k, str(val), lock_status)
-
-        table.add_row("Est. VRAM", f"{est_mem:.0f} MB ({usage_pct:.1f}%)", "")
-        console.print(table)
-
-        if usage_pct > 100:
-             console.print(t("[bold red]⛔ LIMIT EXCEEDED[/bold red]", "[bold red]⛔ 上限超過[/bold red]"))
-        elif usage_pct > target_vram_percent:
-             console.print(t(f"[yellow]⚠ Usage {usage_pct:.1f}% > Target {target_vram_percent}%[/yellow]", f"[yellow]⚠ 目標超過: {usage_pct:.1f}% > {target_vram_percent}%[/yellow]"))
-
-        # Interaction
-        console.print(t("\nOptions:", "\n操作オプション:"))
-        console.print(t(" [Enter] Accept & Start (Auto-fix if invalid)", " [Enter] 決定して開始 (超過時は自動修正)"))
-        console.print(t(" [key=val] Set value (e.g. d_model=1024)", " [key=val] 値を指定 (例: d_model=1024)"))
-        console.print(t(" [r] Reset locks", " [r] ロック解除"))
-
-        user_input = Prompt.ask("Command")
-
-        if not user_input:
-            # Empty Enter
-            if usage_pct > target_vram_percent or usage_pct < target_vram_percent * 0.9:
-                # If not optimal, tune one last time and confirm
-                if usage_pct > 100:
-                     console.print(t("Fixing configuration to fit VRAM...", "VRAMに収まるよう自動修正します..."))
-                else:
-                     console.print(t("Optimizing usage...", "使用率を最適化します..."))
-
-                config, _ = tuner.tune(config, locked_params, target_vram_ratio, **predict_kwargs)
-                continue # Re-show table
-            else:
-                break # Go to save
-
-        elif user_input.lower() == 'r':
-            locked_params = {}
-            console.print("Locks reset.")
-            # Re-tune from scratch?
-            continue
-
-        elif "=" in user_input:
-            try:
-                k, v = user_input.split("=")
-                k = k.strip()
-                v = int(v.strip())
-
-                # Map short names if needed
-                key_map = {'seq': 'n_seq', 'seq_len': 'n_seq', 'bs': 'batch_size', 'batch': 'batch_size', 'layers': 'n_layers', 'dim': 'd_model'}
-                k = key_map.get(k, k)
-
-                if k in config:
-                    config[k] = v
-                    if k != 'epochs': # Don't lock epochs for tuner
-                        locked_params[k] = True
-
-                    # Trigger Auto-Tune for others
-                    with console.status(t("Re-calculating...", "再計算中...")):
-                        config, _ = tuner.tune(config, locked_params, target_vram_ratio, **predict_kwargs)
-                else:
-                    console.print(f"[red]Unknown parameter: {k}[/red]")
-            except ValueError:
-                console.print("[red]Invalid format. Use key=value[/red]")
+        print("\n⚠️  No GPU detected. Training will be slow on CPU.")
+    
+    # 2. Language Selection
+    print(t("\n🌐 Select model language:", "\n🌐 モデルの言語を選択:"))
+    print("  1. 🇯🇵 Japanese (日本語)")
+    print("  2. 🇺🇸 English")
+    print("  3. 🌍 Multilingual")
+    
+    lang_choice = input("Choice [1]: ").strip() or "1"
+    
+    config = Phase8Config()
+    
+    if lang_choice == "1":
+        config.language = "japanese"
+        config.tokenizer_name = "rinna/japanese-gpt-neox-3.6b"
+        config.vocab_size = 32000
+        config.save_dir = "checkpoints/phase8_10b_japanese"
+    elif lang_choice == "2":
+        config.language = "english"
+        config.tokenizer_name = "gpt2"
+        config.vocab_size = 50257
+        config.save_dir = "checkpoints/phase8_10b_english"
+    else:
+        config.language = "multilingual"
+        config.tokenizer_name = "xlm-roberta-base"
+        config.vocab_size = 250002
+        config.save_dir = "checkpoints/phase8_10b_multi"
+    
+    # 3. Training Goal
+    print(t("\n🎯 Select training goal:", "\n🎯 学習の目的を選択:"))
+    print(t("  1. 🔍 Debug (Quick test)", "  1. 🔍 デバッグ (動作確認)"))
+    print(t("  2. 🚀 Production (Full training)", "  2. 🚀 本番学習 (フル学習)"))
+    print(t("  3. ⚡ Benchmark (Max performance)", "  3. ⚡ ベンチマーク (限界に挑戦)"))
+    
+    goal_choice = input("Choice [2]: ").strip() or "2"
+    
+    if goal_choice == "1":
+        config.epochs = 1
+        config.n_layers = 12
+        config.d_model = 1024
+    elif goal_choice == "3":
+        config.epochs = 3
+        config.gradient_accumulation_steps = 64
+    
+    # 4. Hardware Optimization
+    if vram_gb > 0:
+        print(f"\n⚙️  {t('Hardware optimization:', 'ハードウェア最適化:')}")
+        
+        if vram_gb <= 8:
+            print(t("  Detected: Low VRAM (≤8GB) - Using extreme compression", 
+                   "  検出: 低VRAM (≤8GB) - 極限圧縮モード"))
+            config.batch_size = 1
+            config.gradient_accumulation_steps = 32
+            config.use_gradient_checkpointing = True
+        elif vram_gb <= 12:
+            print(t("  Detected: Medium VRAM (8-12GB)", 
+                   "  検出: 中VRAM (8-12GB)"))
+            config.batch_size = 2
+            config.gradient_accumulation_steps = 16
         else:
-            console.print("[red]Unknown command[/red]")
+            print(t("  Detected: High VRAM (>12GB)", 
+                   "  検出: 高VRAM (>12GB)"))
+            config.batch_size = 4
+            config.gradient_accumulation_steps = 8
+    
+    # 5. Dataset Selection
+    print(t("\n📚 Scanning datasets...", "\n📚 データセットをスキャン中..."))
+    datasets = scan_datasets()
+    
+    if datasets:
+        print(t(f"  Found {len(datasets)} dataset(s):", f"  {len(datasets)}個のデータセットを発見:"))
+        for name, info in datasets.items():
+            lang_emoji = "🇯🇵" if info["language"] == "japanese" else "🇺🇸"
+            print(f"    {lang_emoji} {name} ({info['type']})")
+    else:
+        print(t("  No datasets found. Run 'make prepare-japanese-data' first.",
+               "  データセットがありません。'make prepare-japanese-data' を実行してください。"))
+    
+    # 6. Show Configuration Summary
+    dense_params = calculate_dense_params(config)
+    actual_params = calculate_actual_params(config)
+    est_vram = estimate_vram(config)
+    compression = (1 - actual_params / dense_params) * 100 if dense_params > 0 else 0
+    
+    print(t("\n📊 Configuration Summary:", "\n📊 設定サマリー:"))
+    print("-" * 50)
+    
+    if RICH_AVAILABLE:
+        table = Table(show_header=True)
+        table.add_column("Parameter", style="cyan")
+        table.add_column("Value", style="green")
+        
+        table.add_row("Language", config.language.title())
+        table.add_row("d_model", str(config.d_model))
+        table.add_row("n_layers", str(config.n_layers))
+        table.add_row("Dense Params", f"{dense_params / 1e9:.2f}B")
+        table.add_row("Actual Params", f"{actual_params / 1e6:.1f}M")
+        table.add_row("Compression", f"{compression:.1f}%")
+        table.add_row("Est. VRAM", f"{est_vram:.0f} MB")
+        table.add_row("Batch Size", f"{config.batch_size} (×{config.gradient_accumulation_steps} accum)")
+        table.add_row("Save Dir", config.save_dir)
+        
+        console.print(table)
+    else:
+        print(f"  Language: {config.language}")
+        print(f"  d_model: {config.d_model}")
+        print(f"  n_layers: {config.n_layers}")
+        print(f"  Dense Params: {dense_params / 1e9:.2f}B")
+        print(f"  Actual Params: {actual_params / 1e6:.1f}M")
+        print(f"  Compression: {compression:.1f}%")
+        print(f"  Est. VRAM: {est_vram:.0f} MB")
+    
+    # 7. Confirm and Save
+    print()
+    confirm = input(t("Save this configuration? [Y/n]: ", "この設定を保存しますか？ [Y/n]: ")).strip().lower()
+    
+    if confirm in ["", "y", "yes"]:
+        # Save config
+        config_dir = Path("configs")
+        config_dir.mkdir(exist_ok=True)
+        
+        config_dict = asdict(config)
+        
+        # Save as YAML
+        yaml_path = config_dir / "user_train_config.yaml"
+        with open(yaml_path, 'w', encoding='utf-8') as f:
+            yaml.dump(config_dict, f, allow_unicode=True, default_flow_style=False)
+        
+        print(f"\n✅ {t('Configuration saved to:', '設定を保存しました:')} {yaml_path}")
+        
+        # Show next steps
+        print(t("\n🚀 Next steps:", "\n🚀 次のステップ:"))
+        if config.language == "japanese":
+            print("  1. make prepare-japanese-data  # Download Japanese data")
+            print("  2. make start-japanese         # Start training")
+        else:
+            print("  1. make data-lite              # Download English data")
+            print("  2. make start-10b-local        # Start training")
+        
+        print(t("\nOr run with custom config:", "\nまたはカスタム設定で実行:"))
+        print(f"  python scripts/train_phase8.py --config {yaml_path}")
+    else:
+        print(t("Configuration not saved.", "設定は保存されませんでした。"))
 
-    # 6. Save (Same as before)
-    config_dir = Path("configs")
-    config_dir.mkdir(exist_ok=True)
-
-    datasets_cfg = {}
-    for ds, w in ratios.items():
-        datasets_cfg[ds] = {'path': f"./data/{ds}", 'weight': float(w)}
-
-    if not datasets_cfg:
-        datasets_cfg = {'wiki_ja': {'path': "./data/wiki_ja", 'weight': 1.0}}
-
-    with open(config_dir / "dataset_mixing.yaml", 'w') as f:
-        yaml.dump({'datasets': datasets_cfg}, f)
-
-    train_config = {
-        'model_type': model_type,
-        'd_model': config['d_model'], 'n_layers': config['n_layers'],
-        'batch_size': config['batch_size'],
-        'n_seq': config['n_seq'], 'epochs': config.get('epochs', 1),
-        'learning_rate': 1e-4 if goal_choice == "3" else 1e-3
-    }
-
-    if model_type == 'phase7':
-        # Add Phase 7 specific parameters
-        # Sensible defaults, can be exposed to user later if needed
-        train_config['num_heads'] = max(1, config['d_model'] // 128) # Keep head dim reasonable
-        train_config['local_window_size'] = 128
-
-    with open(config_dir / "user_train_config.yaml", 'w') as f:
-        yaml.dump(train_config, f)
-
-    console.print(t("\n[bold green]Ready to fly! 🚀[/bold green]", "\n[bold green]準備完了！ 🚀[/bold green]"))
-    console.print(t("Run 'make train-user' to start.", "'make train-user' で発進してください。"))
 
 if __name__ == "__main__":
     main()

@@ -36,7 +36,14 @@ class LowRankFFN(nn.Module):
         self.act = nn.GELU()
 
     def forward(self, x):
-        return self.down_proj(self.act(self.up_proj(x)))
+        # Apply with soft-capping for numerical stability
+        up = self.act(self.up_proj(x))
+        up = torch.tanh(up / 10.0) * 10.0  # Soft clamp intermediate
+        out = self.down_proj(up)
+        # Final safety: clamp output to reasonable range
+        out = torch.tanh(out / 30.0) * 30.0
+        out = torch.nan_to_num(out, nan=0.0, posinf=30.0, neginf=-30.0)
+        return out
 
 class MoEResNetBKLayer(nn.Module):
     def __init__(self, config: ResNetBKConfig):
@@ -175,7 +182,8 @@ class MoEResNetBKLayer(nn.Module):
                 
             if torch.isnan(output).any() or torch.isinf(output).any():
                 print(f"🚨 NaN/Inf detected after FFN Addition! Max: {output.abs().max().item()}", flush=True)
-                pass
+                # RECOVERY: Replace NaN/Inf with safe values
+                output = torch.nan_to_num(output, nan=0.0, posinf=10.0, neginf=-10.0)
 
         else:
             epsilon = self.birman_schwinger_core.epsilon if self.use_birman_schwinger else 1.0
@@ -213,12 +221,16 @@ class ResNetBKBlock(nn.Module):
         """Pre-Norm residual structure."""
         if torch.isnan(x).any():
              print(f"🚨 NaN detected in ResNetBKBlock Input!")
+             # RECOVERY: Replace NaN with zeros
+             x = torch.nan_to_num(x, nan=0.0, posinf=10.0, neginf=-10.0)
              
         norm_x = self.layer_norm(x)
         out = self.bk_layer(norm_x)
         
         if torch.isnan(out).any():
              print(f"🚨 NaN detected in ResNetBKBlock Output (before residual)!")
+             # RECOVERY: Replace NaN with zeros
+             out = torch.nan_to_num(out, nan=0.0, posinf=10.0, neginf=-10.0)
              
         return x + out
 

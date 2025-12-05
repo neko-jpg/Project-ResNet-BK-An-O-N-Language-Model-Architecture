@@ -48,6 +48,9 @@ custom_theme = Theme({
 })
 console = Console(theme=custom_theme)
 
+# Global VRAM detection
+DETECTED_VRAM_GB = 8.0  # Default to 8GB mode
+
 def run_command(command, description, exit_on_error=True):
     """Runs a shell command with a spinner."""
     with Progress(
@@ -90,6 +93,16 @@ def check_gpu():
         gpu_name = torch.cuda.get_device_name(0)
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         console.print(f"[success]✔ GPU Detected: {gpu_name} ({vram_gb:.1f} GB VRAM)[/success]")
+        
+        # Store VRAM for config selection
+        global DETECTED_VRAM_GB
+        DETECTED_VRAM_GB = vram_gb
+        
+        # Auto-select config based on VRAM
+        if vram_gb <= 10:
+            console.print("[info]Using RTX 3080 optimized config (8GB mode)[/info]")
+        else:
+            console.print("[info]Using standard 10B config[/info]")
 
         # Check Triton
         if importlib.util.find_spec("triton") is None:
@@ -98,6 +111,7 @@ def check_gpu():
 
         import triton
         console.print(f"[success]✔ Triton Detected: v{triton.__version__}[/success]")
+        console.print("[success]✔ Safe-Log Triton kernels available[/success]")
 
     except ImportError:
         console.print("[error]Error: PyTorch not installed correctly.[/error]")
@@ -175,9 +189,18 @@ def prepare_compression():
 
     console.print("[info]Initializing and Compressing 10B Model (this may take a minute)...[/info]")
 
-    # Target Architecture for 10B (from configs/phase8_10b.yaml)
-    d_model = 5120
-    n_layers = 31
+    # Auto-select architecture based on VRAM
+    global DETECTED_VRAM_GB
+    if DETECTED_VRAM_GB <= 10:
+        # RTX 3080 8GB optimized
+        d_model = 4096
+        n_layers = 48
+        console.print(f"[info]Using RTX 3080 config: d_model={d_model}, n_layers={n_layers}[/info]")
+    else:
+        # Standard 10B config
+        d_model = 5120
+        n_layers = 31
+        console.print(f"[info]Using standard config: d_model={d_model}, n_layers={n_layers}[/info]")
 
     cmd = f"{sys.executable} scripts/compress_model.py --output_dir {checkpoint_dir} --d_model {d_model} --n_layers {n_layers}"
     run_command(cmd, "Compressing Model...")
@@ -199,14 +222,24 @@ def start_training():
         border_style="green"
     ))
 
+    # Auto-select config based on VRAM
+    global DETECTED_VRAM_GB
+    if DETECTED_VRAM_GB <= 10:
+        config_file = "configs/phase8_10b_rtx3080.yaml"
+    else:
+        config_file = "configs/phase8_10b.yaml"
+    
     # Construct command
     cmd = [
         sys.executable, "scripts/train_phase8.py",
-        "--config", "configs/phase8_10b.yaml",
+        "--config", config_file,
         "--resume-from", "checkpoints/compressed_10b_start/compressed_model.pt",
         "--dataset", "configs/dataset_mixing.yaml",
-        "--optimizer", "muon"  # Use Muon optimizer by default
+        "--optimizer", "muon",  # Use Muon optimizer by default
+        "--compile"  # Enable torch.compile for speed
     ]
+    
+    console.print(f"[info]Config: {config_file}[/info]")
 
     # We use os.execv to replace the current process, so the training script takes over the terminal
     # allowing user to see live progress bars from the training script itself.

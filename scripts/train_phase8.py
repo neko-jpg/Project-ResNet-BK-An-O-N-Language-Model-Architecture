@@ -15,15 +15,18 @@ Usage:
 """
 
 import argparse
+import json
+import math
 import os
 import sys
 import time
 import warnings
 import torch
 import torch.optim as optim
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+from datetime import datetime
 
 try:
     from tqdm import tqdm
@@ -245,12 +248,11 @@ def train_phase8():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Phase 8 Training (10B Scale) on {device}")
 
-    # Initialize Triton Mode (Strict) if on CUDA
-    if device.type == "cuda":
-        # Disable Strict Triton Mode to allow Safe-Log PyTorch fallback
+    # Initialize Triton Mode with Safe-Log if on CUDA
+    if device.type == "cuda" and config.use_triton_kernel:
         from src.models.bk_core import set_triton_mode
-        set_triton_mode(False)
-        print("✔ Triton Mode Disabled for Stability (Using PyTorch Safe-Log)")
+        set_triton_mode(True)
+        print("✔ Triton Mode Enabled with Safe-Log Operations")
 
     # Log VRAM
     if torch.cuda.is_available():
@@ -319,6 +321,14 @@ def train_phase8():
     step = 0
     total_loss = 0.0
     
+    # JSON Log Accumulator
+    training_log = {
+        'config': asdict(config),
+        'start_time': datetime.now().isoformat(),
+        'total_params': total_params,
+        'steps': [],
+    }
+    
     # Custom Gradient Clipping Schedule
     # Start very strict, relax later
     initial_clip = 0.1
@@ -386,6 +396,7 @@ def train_phase8():
                 optimizer.zero_grad()
                 
                 avg_loss = total_loss / config.grad_accum_steps
+                ppl = math.exp(min(avg_loss, 20.0))  # Clamp to prevent overflow
                 
                 # Diagnostics Logging
                 diag_str = ""
@@ -395,7 +406,24 @@ def train_phase8():
                     vals = [f"{k}={diagnostics.get(k, 0):.2f}" for k in diag_keys if k in diagnostics]
                     diag_str = " | ".join(vals)
 
-                pbar.set_description(f"Epoch {epoch} | Loss: {avg_loss:.4f} | Clip: {current_clip} {diag_str}")
+                pbar.set_description(f"Epoch {epoch} | Loss: {avg_loss:.4f} | PPL: {ppl:.2f} | Clip: {current_clip} {diag_str}")
+                
+                # Log step to JSON
+                step_log = {
+                    'step': step,
+                    'epoch': epoch,
+                    'loss': avg_loss,
+                    'ppl': ppl,
+                    'grad_clip': current_clip,
+                }
+                # Add diagnostics if available
+                for k, v in diagnostics.items():
+                    if isinstance(v, torch.Tensor):
+                        step_log[k] = v.item() if v.numel() == 1 else v.mean().item()
+                    elif isinstance(v, (int, float)):
+                        step_log[k] = v
+                training_log['steps'].append(step_log)
+                
                 total_loss = 0.0
 
             pbar.update(1)
@@ -410,6 +438,14 @@ def train_phase8():
     save_path = os.path.join(config.save_dir, "phase8_10b_final.pt")
     torch.save(model.state_dict(), save_path)
     print(f"Model saved to {save_path}")
+    
+    # Save JSON Log
+    training_log['end_time'] = datetime.now().isoformat()
+    training_log['final_loss'] = training_log['steps'][-1]['loss'] if training_log['steps'] else None
+    log_path = os.path.join(config.save_dir, "training_log.json")
+    with open(log_path, 'w', encoding='utf-8') as f:
+        json.dump(training_log, f, indent=2, ensure_ascii=False, default=str)
+    print(f"Training log saved to {log_path}")
 
 if __name__ == "__main__":
     train_phase8()

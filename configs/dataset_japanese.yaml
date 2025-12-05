@@ -1,0 +1,83 @@
+# Japanese LLM Dataset Configuration
+# ==================================
+# Pre-training + Instruction Tuning for Japanese Chat
+
+datasets:
+  # === Pre-training (Japanese Text) ===
+  
+  # Wikipedia Japanese (高品質な百科事典テキスト)
+  wikipedia_ja:
+    source: "wikimedia/wikipedia"
+    subset: "20231101.ja"
+    weight: 0.25
+    max_samples: 500000
+    text_field: "text"
+  
+  # CC-100 Japanese (大規模ウェブコーパス)
+  cc100_ja:
+    source: "cc100"
+    subset: "ja"
+    weight: 0.30
+    max_samples: 1000000
+    text_field: "text"
+  
+  # Oscar Japanese (クリーンなウェブテキスト)
+  oscar_ja:
+    source: "oscar-corpus/OSCAR-2301"
+    subset: "ja"
+    weight: 0.20
+    max_samples: 500000
+    text_field: "text"
+
+  # === Instruction Tuning (Japanese Chat) ===
+  
+  # Dolly Japanese (指示追従データ)
+  dolly_ja:
+    source: "kunishou/databricks-dolly-15k-ja"
+    weight: 0.10
+    max_samples: 15000
+    text_field: "output"
+    instruction_field: "instruction"
+    format: "instruction"
+  
+  # Japanese Alpaca (ChatGPT生成の指示データ)
+  alpaca_ja:
+    source: "fujiki/japanese_alpaca_data"
+    weight: 0.10
+    max_samples: 50000
+    text_field: "output"
+    instruction_field: "instruction"
+    format: "instruction"
+  
+  # OASST Japanese (会話データ)
+  oasst_ja:
+    source: "OpenAssistant/oasst1"
+    filter_lang: "ja"
+    weight: 0.05
+    max_samples: 10000
+    text_field: "text"
+    format: "conversation"
+
+# === Tokenizer Configuration ===
+tokenizer:
+  # 日本語対応トークナイザー (選択肢)
+  # Option 1: rinna/japanese-gpt-neox-3.6b (推奨)
+  # Option 2: cyberagent/open-calm-7b
+  # Option 3: llm-jp/llm-jp-13b-v1.0
+  name: "rinna/japanese-gpt-neox-3.6b"
+  vocab_size: 32000  # 日本語用に最適化されたサイズ
+
+# === Training Settings ===
+training:
+  # 日本語は文字数が多いのでシーケンス長を調整
+  max_seq_length: 512
+  
+  # 学習スケジュール
+  phases:
+    - name: "pretrain"
+      datasets: ["wikipedia_ja", "cc100_ja", "oscar_ja"]
+      epochs: 1
+      
+    - name: "instruction_tuning"
+      datasets: ["dolly_ja", "alpaca_ja", "oasst_ja"]
+      epochs: 3

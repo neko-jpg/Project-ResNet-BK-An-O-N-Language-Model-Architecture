@@ -1,22 +1,25 @@
 datasets:
   arxiv:
     path: ./data/arxiv
-    weight: 0.085
+    weight: 0.068
   cosmopedia:
     path: ./data/cosmopedia
-    weight: 0.085
+    weight: 0.068
   evol_instruct_code:
     path: ./data/evol_instruct_code
     weight: 0.33
   factuality_source:
     path: ./data/factuality_source
-    weight: 0.085
+    weight: 0.068
   japanese_instruct:
     path: ./data/japanese_instruct
     weight: 0.165
+  mc4_ja:
+    path: ./data/mc4_ja
+    weight: 0.068
   wiki_ja:
     path: ./data/wiki_ja
     weight: 0.165
   wikitext103:
     path: ./data/wikitext103
-    weight: 0.085
+    weight: 0.068

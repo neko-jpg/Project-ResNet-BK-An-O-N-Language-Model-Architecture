@@ -15,6 +15,9 @@ from src.models.bitnet import BitNetLinear, LowRankLinear
 # Epsilon for numerical stability, widened for mixed precision
 EPS = 1e-5
 
+# Maximum norm for tangent vectors (prevents explosion in exp_map)
+MAX_TANGENT_NORM = 5.0  # Conservative limit for Poincaré ball operations
+
 def poincare_distance(x, y, c, dim=-1):
     """
     Computes pairwise Poincaré distance with curvature c.
@@ -52,14 +55,26 @@ def exp_map_at_origin(v, c, dim=-1):
     """
     Exponential map with curvature c.
     Formula: (1/sqrt(c)) * tanh(sqrt(c) * ||v||) * (v / ||v||)
+    
+    CRITICAL: Clamps tangent vector norm to prevent numerical explosion.
     """
     with torch.cuda.amp.autocast(enabled=False):
         v = v.float()
         c = c.float()
         sqrt_c = torch.sqrt(c)
-        v_norm = v.norm(dim=dim, keepdim=True).clamp_min(EPS)
-
-        mapped_v = (1. / sqrt_c) * F.tanh(sqrt_c * v_norm) * (v / v_norm)
+        
+        # CRITICAL: Clamp tangent vector norm BEFORE computing exp_map
+        # This prevents ||v|| from growing unboundedly
+        v_norm = v.norm(dim=dim, keepdim=True)
+        v_norm_clamped = v_norm.clamp(min=EPS, max=MAX_TANGENT_NORM)
+        scale = (v_norm_clamped / (v_norm + EPS)).clamp(max=1.0)
+        v_safe = v * scale
+        
+        v_norm_safe = v_safe.norm(dim=dim, keepdim=True).clamp_min(EPS)
+        mapped_v = (1. / sqrt_c) * torch.tanh(sqrt_c * v_norm_safe) * (v_safe / v_norm_safe)
+        
+        # Final safety: replace any NaN/Inf with zeros
+        mapped_v = torch.nan_to_num(mapped_v, nan=0.0, posinf=0.0, neginf=0.0)
 
     return mapped_v.to(v.dtype)
 
@@ -74,14 +89,17 @@ def log_map_at_origin(y, c, dim=-1):
         sqrt_c = torch.sqrt(c)
         y_norm = y.norm(dim=dim, keepdim=True).clamp_min(EPS)
 
-        # Clamp arg of atanh to be < 1.0
+        # Clamp arg of atanh to be < 1.0 with safety margin
         # sqrt(c) * ||y|| < 1  => ||y|| < 1/sqrt(c)
         max_norm = (1. / sqrt_c) - EPS
         y_norm_clamped = y_norm.clamp_max(max_norm)
 
-        arg = sqrt_c * y_norm_clamped
+        arg = (sqrt_c * y_norm_clamped).clamp(max=0.999)  # Stricter clamp for atanh
 
         result = (1. / sqrt_c) * torch.atanh(arg) * (y / y_norm)
+        
+        # Final safety: replace any NaN/Inf
+        result = torch.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
 
     return result.to(y.dtype)
 

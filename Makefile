@@ -1,4 +1,4 @@
-.PHONY: help setup install data data-lite clean doctor recipe start-10b-local compress-10b train-10b chat dashboard
+.PHONY: help setup install data data-lite clean doctor recipe start-10b-local compress-10b train-10b chat dashboard start-japanese train-japanese prepare-japanese-data dry-run-japanese
 
 # Default shell
 SHELL := /bin/bash
@@ -27,26 +27,42 @@ TRAIN_OVERRIDES += --epochs $(EPOCHS)
 endif
 
 help:
-	@echo "MUSE (ResNet-BK Phase 8) Development Commands"
 	@echo "=============================================="
-	@echo "Quick Start:"
-	@echo "  make start-10b-local  - 🚀 Auto-setup & Train 10B Model (Recommended)"
+	@echo "🧠 MUSE (ResNet-BK Phase 8) - 10B LLM Training"
+	@echo "=============================================="
 	@echo ""
-	@echo "Core Commands:"
-	@echo "  make setup            - Install dependencies & Prepare environment"
-	@echo "  make chat             - Start Chat Interface with trained model"
-	@echo "  make dashboard        - Start Training Dashboard"
-	@echo "  make clean            - Clean artifacts and caches"
+	@echo "🚀 Quick Start (English):"
+	@echo "  make start-10b-local     Auto-setup & Train 10B English Model"
+	@echo "  make dry-run-10b         Test run without training"
 	@echo ""
-	@echo "Data & Configuration:"
-	@echo "  make recipe           - Configure dataset mixing recipe"
-	@echo "  make data-lite        - Download small test dataset (Cosmopedia)"
-	@echo "  make data             - Download full datasets"
+	@echo "🇯🇵 Japanese LLM (Recommended):"
+	@echo "  make start-japanese      🎯 Full Pipeline: Download data + Train Japanese 10B"
+	@echo "  make prepare-japanese-data   Download Japanese datasets only"
+	@echo "  make train-japanese      Train with existing Japanese data"
+	@echo "  make dry-run-japanese    Test Japanese model config"
 	@echo ""
-	@echo "Manual Training Steps (Advanced):"
-	@echo "  make compress-10b     - Initialize/Compress 10B Model"
-	@echo "  make train-10b        - Train 10B Model (Requires compressed checkpoint)"
-	@echo "  make train-10b-8gb    - Train with Extreme Optimization (8GB VRAM)"
+	@echo "🔧 Setup & Utilities:"
+	@echo "  make setup               Install dependencies"
+	@echo "  make chat                Start Chat Interface"
+	@echo "  make dashboard           Start Training Dashboard"
+	@echo "  make clean               Clean artifacts and caches"
+	@echo ""
+	@echo "📊 Data Management:"
+	@echo "  make recipe              Configure dataset mixing"
+	@echo "  make data-lite           Download small English dataset"
+	@echo "  make data                Download full English datasets"
+	@echo ""
+	@echo "⚙️  Advanced (Manual Steps):"
+	@echo "  make compress-10b        Initialize/Compress 10B Model"
+	@echo "  make train-10b           Train 10B (requires checkpoint)"
+	@echo "  make train-10b-8gb       Train with Extreme Optimization (8GB VRAM)"
+	@echo ""
+	@echo "📝 Example Usage:"
+	@echo "  # Japanese 10B LLM (RTX 3080 8GB)"
+	@echo "  wsl -d ubuntu"
+	@echo "  cd /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture"
+	@echo "  source venv_ubuntu/bin/activate"
+	@echo "  make start-japanese"
 
 setup:
 	@if [ -f scripts/easy_setup.sh ]; then \
@@ -115,4 +131,51 @@ train-10b-8gb:
 	@echo "=========================================="
 	@echo "🚀 Starting Extreme Optimization Training (RTX 3080 8GB)"
 	@echo "=========================================="
-	$(PYTHON) scripts/train_phase8.py --d-model 4096 --n-layers 48 --extreme-compression --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_rtx3080.yaml --extreme-compression --compile --dataset configs/dataset_mixing.yaml $(TRAIN_OVERRIDES)
+
+# Dry run for testing (no dataset download)
+dry-run-10b:
+	@echo "=========================================="
+	@echo "🧪 Dry Run: Testing 10B Configuration"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_rtx3080.yaml --dry-run --compile
+
+# WSL Quick Start - runs everything in one command
+wsl-start-10b:
+	@echo "=========================================="
+	@echo "🐧 WSL Ubuntu: Starting 10B Training"
+	@echo "=========================================="
+	wsl -d ubuntu -e bash -c "cd /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture && source venv_ubuntu/bin/activate && make start-10b-local"
+
+# ==========================================
+# 🇯🇵 Japanese LLM Training
+# ==========================================
+
+# Step 1: Download Japanese datasets
+prepare-japanese-data:
+	@echo "=========================================="
+	@echo "🇯🇵 Downloading Japanese Datasets..."
+	@echo "=========================================="
+	$(PYTHON) scripts/prepare_japanese_data.py --max-pretrain 100000 --max-instruct 20000
+
+# Step 2: Train Japanese model
+train-japanese:
+	@echo "=========================================="
+	@echo "🇯🇵 Training Japanese 10B Model"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --dataset configs/dataset_japanese.yaml --compile
+
+# All-in-one Japanese training
+start-japanese:
+	@echo "=========================================="
+	@echo "🇯🇵 Japanese LLM Full Pipeline"
+	@echo "=========================================="
+	make prepare-japanese-data
+	make train-japanese
+
+# Dry run for Japanese model
+dry-run-japanese:
+	@echo "=========================================="
+	@echo "🧪 Dry Run: Japanese 10B Model"
+	@echo "=========================================="
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --dry-run --compile
