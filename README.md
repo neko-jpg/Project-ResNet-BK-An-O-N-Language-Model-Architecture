@@ -1,427 +1,200 @@
-# ResNet-BK: A Mathematically Rigorous O(N) Language Model
+# MUSE: 10B Japanese LLM on Consumer GPU
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch 2.1+](https://img.shields.io/badge/PyTorch-2.1+-ee4c2c.svg)](https://pytorch.org/)
-[![Paper](https://img.shields.io/badge/paper-PDF-red.svg)](paper/main.pdf)
 
-**A memory-efficient language model architecture based on Birman-Schwinger operator theory, achieving 93% memory reduction and 185× speedup through mathematical rigor.**
+**Train a 10B parameter Japanese LLM on RTX 3080 (8GB VRAM) using novel compression techniques.**
+
+![Architecture](docs/images/architecture.png)
 
 ---
 
-## 🎯 Quick Start (3 Minutes)
-
-The easiest way to get started. Supports **English & Japanese**.
+## 🎯 Quick Start
 
 ```bash
 # 1. Clone
 git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
 cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
 
-# 2. Setup (Interactive)
-# Installs dependencies, creates venv, and prepares data.
-make setup
+# 2. Setup (WSL Ubuntu recommended)
+wsl -d ubuntu
+python3 -m venv venv_ubuntu && source venv_ubuntu/bin/activate
+pip install -r requirements.txt
 
-# 3. Enjoy!
-make demo
+# 3. Train Japanese 10B LLM
+make start-japanese
 ```
 
-If you use VS Code, simply open the folder and click **"Reopen in Container"**.
-
-### 🛠 Developer Tools
-
-We provide a suite of tools to enhance your experience:
-
-- **`make doctor`**: Diagnose system issues (GPU, RAM, Config).
-- **`make import`**: Import your own datasets (txt/json/csv) from `data/import/`.
-- **`make recipe`**: Interactively configure dataset mixing ratios.
-- **`make train-user`**: Start training with your custom recipe.
-
-See [QUICK_START.md](QUICK_START.md) for detailed instructions.
+**That's it!** The model will:
+- Download Japanese datasets (Wikipedia, Dolly, Alpaca)
+- Train with Phase 8 optimizations
+- Save checkpoints every 500 steps
 
 ---
 
-## 🤝 Introduction
+## 📊 Key Features
 
-I am a first-year undergraduate student in business administration. While existing models like Transformer and Mamba have achieved remarkable results, I wondered whether there might be room for improvement from a mathematical physics perspective, particularly in memory efficiency and long-context stability. This led me to start this project.
-
-**ResNet-BK** is an experimental implementation of a new O(N) language model architecture that applies:
-- **Birman-Schwinger operator theory** for numerical stability
-- **Semiseparable matrix structure** for O(N log N) memory complexity
-- **Riemann zeta function** for initialization and memory resonance
-- **Non-Hermitian dynamics** for adaptive forgetting
-
----
-
-## 🚀 Key Features
-
-### Phase 1: Efficiency Engine
-- **HTT Embedding**: 99.6% parameter compression via Tensor Train decomposition
-- **AR-SSM Layers**: O(N) sequence processing with adaptive rank
-- **BK-Core**: Semiseparable structure achieving 610× parameter reduction
-- **Triton Kernels**: 185× speedup over PyTorch baseline
-
-### Phase 2: Breath of Life (Dynamic Memory)
-- **Non-Hermitian Potential**: Adaptive forgetting with decay rate Γ
-- **Dissipative Hebbian**: Fast weights with Lyapunov stability
-- **SNR Memory Filter**: Signal-to-noise ratio based memory selection
-- **Memory Resonance**: Zeta-based frequency filtering
+| Feature | Description |
+|---------|-------------|
+| 🧠 **10B Parameters** | Dense equivalent ~10B, stored as ~300M (97% compression) |
+| 🇯🇵 **Japanese Native** | rinna tokenizer, JP datasets (Wiki, Dolly, Alpaca) |
+| 💾 **8GB VRAM** | Runs on RTX 3080, RTX 4070, etc. |
+| ⚡ **Phase 8 Stack** | BK-Core + Hyperbolic Attention + BitNet + Triton |
+| 🔄 **Resume Support** | Auto-checkpoint every 500 steps |
 
 ---
 
-## 📊 Experimental Results
-
-### Memory Efficiency
-
-| Configuration | Parameters | VRAM (GB) | Reduction |
-|---------------|-----------|-----------|-----------|
-| Baseline | 1.62B | 6.89 | -- |
-| Phase 1 | 1.26B | 5.14 | 25.4% |
-| **Phase 2** | **0.11B** | **0.48** | **93.0%** |
-
-*Inference mode, d_model=4096, 6 layers, FP16*
-
-### Performance
-
-| Metric | Baseline | Phase 1 | Improvement |
-|--------|----------|---------|-------------|
-| Throughput | 798.28 tok/s | 824.74 tok/s | +3.3% |
-| Perplexity | 50738.89 | 50505.61 | -0.46% |
-| Complexity | O(N²) | O(N log N) | Memory |
-
-### BK-Core Triton Kernel
-
-| Implementation | Time (ms) | Speedup |
-|----------------|-----------|---------|
-| PyTorch (vmap) | 554.18 | 1.00× |
-| **Triton Kernel** | **2.99** | **185.10×** |
-
-*Batch=16, Seq=4096, RTX 3080*
-
-### Phase 2 Stability
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Warnings | 107 | 8 | 92.5% |
-| Lyapunov Violations | 630 | 0 | 100% |
-| Test Status | -- | PASSED | ✓ |
-
----
-
-## 🏗️ Architecture Overview
-
-```
-ResNet-BK Architecture
-├── Phase 1: Efficiency Engine
-│   ├── HTT Embedding (99.6% compression)
-│   ├── AR-SSM Layers (O(N) complexity)
-│   ├── BK-Core (Semiseparable structure)
-│   └── Triton Kernels (185× speedup)
-│
-└── Phase 2: Breath of Life
-    ├── Non-Hermitian Potential (Γ = 0.001)
-    ├── Dissipative Hebbian (Fast weights)
-    ├── SNR Memory Filter (τ = 2.0)
-    └── Memory Resonance (Zeta regularization)
-```
-
----
-
-## 📚 Documentation
-
-- **[Quick Start Guide](QUICK_START.md)**: Get started in 5 minutes
-- **[Contributing Guide](CONTRIBUTING.md)**: How to contribute
-- **[Paper](paper/main.pdf)**: Full theoretical background (20 pages)
-- **[Phase 1 Guide](docs/PHASE1_IMPLEMENTATION_GUIDE.md)**: Phase 1 implementation details
-- **[Phase 2 Guide](docs/PHASE2_IMPLEMENTATION_GUIDE.md)**: Phase 2 implementation details
-- **[Performance Analysis](PERFORMANCE.md)**: Detailed performance metrics
-
----
-
-## 🙋‍♀️ Call for Collaboration
-
-This project is in an experimental stage. We welcome collaborators of all skill levels:
-
-- **Researchers**: Validate theoretical claims, propose improvements
-- **Engineers**: Optimize implementations, add features
-- **Students**: Learn and contribute to cutting-edge research
-- **Users**: Test on real tasks, report issues
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
----
-
-## 💻 Installation
-
-### Prerequisites
-
-- Python 3.10+
-- CUDA 11.8+ (for GPU support)
-- 8GB+ VRAM (RTX 3080 or better recommended)
-
-### Option 1: Docker (Recommended)
+## 🛠 Commands
 
 ```bash
-# Clone repository
-git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
-cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
+make help                  # Show all commands
 
-# Build and start container
+# Training
+make start-japanese        # Full pipeline: data + train
+make dry-run-japanese      # Test config (no training)
+make resume-japanese       # Resume from latest checkpoint
+
+# Checkpoints
+make list-checkpoints      # Show saved models
+make resume CHECKPOINT=path # Resume from specific file
+
+# Chat
+make chat                  # Interactive chat with model
+make export-model          # Export for deployment
+
+# Utils
+make setup                 # Install dependencies
+make recipe                # Training wizard
+make test                  # Run tests
+make clean                 # Clean caches
+```
+
+---
+
+## 🏗 Architecture (Phase 8)
+
+```
+MUSE Architecture
+├── BK-Core (Birman-Schwinger Scattering)
+│   └── O(N) Green's function computation
+├── Hyperbolic Attention
+│   └── Poincaré ball for hierarchical structure
+├── Low-Rank Compression (r=16)
+│   └── 97% parameter reduction
+├── BitNet 1.58-bit
+│   └── Ternary weights {-1, 0, 1}
+├── Triton Safe-Log Kernels
+│   └── NaN-proof numerical stability
+└── Muon Optimizer
+    └── High learning rate (0.02) training
+```
+
+### Parameter Calculation
+
+| Metric | Value |
+|--------|-------|
+| Dense Equivalent | ~9.87B |
+| Actual Parameters | ~311M |
+| Compression | 97% |
+| VRAM Usage | ~7GB |
+
+---
+
+## 📁 Project Structure
+
+```
+├── configs/
+│   ├── phase8_10b_japanese.yaml  # Japanese model config
+│   └── dataset_japanese.yaml     # Dataset mixing
+├── scripts/
+│   ├── train_phase8.py           # Main training script
+│   ├── chat_inference.py         # Chat interface
+│   ├── prepare_japanese_data.py  # Data downloader
+│   └── configure_recipe.py       # Training wizard
+├── src/
+│   ├── models/
+│   │   ├── resnet_bk.py          # Main model
+│   │   ├── bk_core.py            # BK-Core implementation
+│   │   └── phase7/               # Hyperbolic attention
+│   └── kernels/
+│       └── safe_ops_triton.py    # Triton kernels
+└── checkpoints/
+    └── phase8_10b_japanese/      # Saved models
+```
+
+---
+
+## 🐳 Docker
+
+```bash
+# Build
+docker build -t muse-llm .
+
+# Run with GPU
+docker run --gpus all -it muse-llm bash
+
+# Or use docker-compose
 docker-compose up -d
-
-# Enter container
-docker exec -it mamba-killer-dev bash
-
-# Run tests
-pytest tests/ -v
-```
-
-### Option 2: Local Installation (Automated)
-
-```bash
-# Clone repository
-git clone https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture.git
-cd Project-ResNet-BK-An-O-N-Language-Model-Architecture
-
-# Run automated setup
-make setup
-
-# This script will:
-# 1. Create a virtual environment (venv_ubuntu)
-# 2. Install all dependencies
-# 3. Setup datasets (optional)
+docker exec -it muse-dev bash
 ```
 
 ---
 
-## 🎮 Usage Examples
+## 🔬 Technical Details
 
-### Phase 1: Memory-Efficient Model
+### Novel Contributions
 
-```python
-from src.models.phase1.factory import create_phase1_model
-import torch
+1. **BK-Core Scattering**: Applies quantum scattering theory to attention
+2. **Hyperbolic Geometry**: Poincaré ball for natural hierarchy representation
+3. **Extreme Compression**: 10B → 300M with minimal quality loss
+4. **Safe Triton Kernels**: NaN-proof log/exp operations
 
-# Create model
-model = create_phase1_model(preset="small", device="cuda")
+### Training Configuration
 
-# Generate
-input_ids = torch.randint(0, model.vocab_size, (1, 512)).cuda()
-output = model(input_ids)
-
-print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-print(f"Output shape: {output.shape}")
-```
-
-### Phase 2: Dynamic Memory Model
-
-```python
-from src.models.phase2.factory import create_phase2_model
-import torch
-
-# Create model with dynamic memory
-model = create_phase2_model(preset="small", device="cuda")
-
-# Generate
-input_ids = torch.randint(0, model.vocab_size, (1, 512)).cuda()
-output = model(input_ids)
-
-print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
-```
-
-### BK-Core Computation
-
-```python
-from src.models.bk_core import BKCoreFunction
-import torch
-
-# Setup
-h_diag = torch.randn(4, 512).cuda()
-h_super = torch.randn(4, 511).cuda()
-h_sub = torch.randn(4, 511).cuda()
-z = torch.tensor(0.1 + 0.1j).cuda()
-
-# Compute Green's function
-g = BKCoreFunction.apply(h_diag, h_super, h_sub, z, use_triton=True)
-print(f"Green's function shape: {g.shape}")
+```yaml
+# configs/phase8_10b_japanese.yaml
+d_model: 4096
+n_layers: 48
+vocab_size: 32000  # Japanese tokenizer
+low_rank_rank: 16
+use_bitnet: true
+use_gradient_checkpointing: true
+use_torch_compile: true
 ```
 
 ---
 
-## 🧪 Running Experiments
+## 📈 Expected Results
 
-### Benchmarks
+| Stage | Loss | PPL | Time (RTX 3080) |
+|-------|------|-----|-----------------|
+| Start | ~10 | ~22000 | 0h |
+| 1K steps | ~5 | ~150 | ~2h |
+| 10K steps | ~3 | ~20 | ~20h |
+| 50K steps | ~2 | ~8 | ~100h |
 
-```bash
-# Memory benchmark
-python scripts/validate_phase1_memory.py
+*Estimates based on similar architectures*
 
-# Throughput benchmark
-python scripts/benchmark_phase1_throughput.py
+---
 
-# BK-Core Triton benchmark
-python scripts/benchmark_bk_triton.py
+## 🤝 Contributing
 
-# Phase 2 integration test
-pytest tests/test_phase2_integration.py -v
-```
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Training
-
-```bash
-# Phase 1 training
-python scripts/train_phase1.py --config configs/phase1_small.yaml
-
-# Phase 2 training
-python scripts/train_phase2.py --config configs/phase2_small.yaml
-```
+Areas of interest:
+- Training optimization
+- Japanese dataset curation
+- Inference speedup
+- Documentation
 
 ---
 
 ## 📖 Citation
 
-If you use this work in your research, please cite:
-
 ```bibtex
-@article{arai2025resnetbk,
-  title={ResNet-BK: A Memory-Efficient Language Model Based on Birman-Schwinger Operator Theory},
-  author={Arai, Teppei},
-  journal={arXiv preprint},
-  year={2025}
-}
-```
-
----
-
-## 📞 Contact
-
-- **GitHub Issues**: [Report bugs or request features](https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture/issues)
-- **Email**: arat252539@gmail.com
-- **Paper**: [paper/main.pdf](paper/main.pdf)
-
----
-
-## 🙏 Acknowledgments
-
-- **Mathematical Foundations**: M.Sh. Birman, J. Schwinger, E. Mourre
-- **Open Source Community**: PyTorch, Hugging Face, Triton
-- **AI Assistance**: Claude (Anthropic), Kiro IDE
-
----
-
-## 📜 License
-
-This project is licensed under the Apache-2.0 license - see the [LICENSE](LICENSE) file for details.
-
----
-
-## ⭐ Star History
-
-If you find this project useful, please consider giving it a star! ⭐
-
----
-
-**Made with ❤️ by Teppei Arai and contributors**
-
-```bash
-# Set PYTHONPATH to include the project root
-export PYTHONPATH=$PYTHONPATH:.
-
-# Run a small-scale training experiment on WikiText-2
-python scripts/train.py --config configs/base_config.yaml
-
-# Run the local efficiency benchmark
-python scripts/local_efficiency_benchmark.py --train-steps 10 --seq-length 1024
-```
-
-For more details on benchmarking, see the "Benchmarking" section below.
-
----
-
-## 🏗️ Architecture & Mathematical Foundation
-
-ResNet-BK is built on three core mathematical concepts from operator theory and quantum physics. The goal is to build a model where stability and efficiency are guaranteed by the underlying mathematics.
-
-1.  **Birman-Schwinger Operator Theory**: The model's core uses a kernel based on the Birman-Schwinger principle, which provides proven bounds on the operator's properties, ensuring stability.
-2.  **Prime-Bump Initialization**: The model's potential is initialized based on the distribution of prime numbers, a technique inspired by the Riemann zeta function.
-3.  **Scattering-Based Routing**: A zero-parameter MoE router that uses the physical concept of a scattering phase to route information, eliminating the need for learnable router parameters.
-
-For a detailed but accessible explanation of these concepts, please read our **[Mathematical Foundations Guide](docs/THEORY.md)**.
-
-The full theoretical proofs are available in the paper:
-- **"Riemann Hypothesis and AI: Emergent Theory"** by Teppei Arai
-- 📄 Available at: https://doi.org/10.5281/zenodo.17346958 (License: CC BY-NC-ND 4.0)
--　However, the file riemann_hypothesis_main.tex within this repository is licensed under the MIT License, so please feel free to use it as you wish.
----
-
-## 📊 Benchmarking
-
-We provide an enhanced benchmarking script that compares ResNet-BK against a Mamba baseline.
-
-### Running the Benchmark
-
-The script is highly configurable. You can easily test different model sizes and sequence lengths.
-
-```bash
-# Set PYTHONPATH to include the project root
-export PYTHONPATH=$PYTHONPATH:.
-
-# Run with custom model dimensions and sequence length
-python scripts/local_efficiency_benchmark.py \
-  --seq-length 4096 \
-  --d-model 512 \
-  --n-layers 8 \
-  --batch-size 1
-```
-
-### Output
-
-The script provides a progress bar, a summary table in the console, and saves a detailed JSON file to `results/benchmarks/` with a unique, timestamped filename.
-
-```
---- Benchmark Results ---
-Configuration: sequence_length=4096, d_model=512, n_layers=8
---------------------------------------------------
-Model                | Avg FLOPs (GFLOPs)   | Final Loss
---------------------------------------------------
-ResNet-BK            | 123.4567             | 9.8765
-ResNet-BK (GC)       | 123.5678             | 9.8888
-Mamba                | 110.9876             | 9.9123
---------------------------------------------------
-Results saved to: results/benchmarks/efficiency_seq4096_d512_l8_20240101-123000.json
-```
-
----
-
-## 📚 Documentation
-
-- **[Contributing Guidelines](docs/CONTRIBUTING.md)**: Our main guide for contributors.
-- **[Mathematical Foundations](docs/THEORY.md)**: An accessible guide to the core theory.
-- **[Tutorial](docs/TUTORIAL.md)**: Step-by-step training guide.
-- **[Roadmap](ROADMAP.md)**: Our development roadmap.
-
----
-
-## 🗺️ Roadmap
-
-- [x] Phase 1: Birman-Schwinger Core Implementation
-- [x] Phase 2: Scattering-Based Router
-- [x] Phase 3: Semiseparable Matrix Structure
-- [x] Phase 4: Initial Stability Tests
-- [ ] Phase 5: Large-Scale Validation
-- [ ] Phase 6: Performance Optimization
-- [ ] Phase 7: Community Feedback Integration
-- [ ] Phase 8: Paper Preparation
-
----
-
-## 📖 Citation
-
-If you use ResNet-BK in your research, please cite:
-
-```bibtex
-@misc{resnetbk2025,
-  title={ResNet-BK: An Experimental O(N) Language Model via Birman-Schwinger Theory},
+@misc{muse2025,
+  title={MUSE: 10B Japanese LLM on Consumer GPU},
   author={Teppei Arai},
   year={2025},
   howpublished={\url{https://github.com/neko-jpg/Project-ResNet-BK-An-O-N-Language-Model-Architecture}}
@@ -432,23 +205,10 @@ If you use ResNet-BK in your research, please cite:
 
 ## 📜 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-### Third-Party Licenses
-
-See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for complete list of open-source libraries used.
+MIT License - see [LICENSE](LICENSE)
 
 ---
 
-## 🙏 Acknowledgments
+**Made with ❤️ by Teppei Arai**
 
-This project builds on foundational work in:
-- **Quantum Scattering Theory**: Newton (1982), Mourre (1981)
-- **Birman-Schwinger Operator**: Birman & Schwinger (1962), Reed & Simon (1979)
-- **State Space Models**: Gu et al. (S4, Mamba)
-
-We thank the open-source community and all contributors who have helped make this project possible.
-
----
-
-**Made with curiosity and mathematical rigor**
+*Train your own 10B LLM today! 🚀*

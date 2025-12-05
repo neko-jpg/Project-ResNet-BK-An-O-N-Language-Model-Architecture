@@ -1,53 +1,59 @@
-# Docker Compose configuration for Mamba-Killer ResNet-BK
-# Simplifies running the container with proper volume mounts
+# MUSE: 10B Japanese LLM - Docker Compose
 
 version: '3.8'
 
 services:
-  mamba-killer:
+  muse:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mamba-killer-resnet-bk:latest
-    container_name: mamba-killer-dev
-    
-    # GPU support
+    image: muse-llm:latest
+    container_name: muse-dev
+
+    # GPU
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
-    
-    # Port mappings
+              capabilities: [ gpu ]
+
+    # Ports
     ports:
-      - "8888:8888"  # Jupyter
-      - "6006:6006"  # TensorBoard
-    
-    # Volume mounts
+      - "8888:8888" # Jupyter (optional)
+
+    # Volumes
     volumes:
       - ./data:/workspace/data
       - ./checkpoints:/workspace/checkpoints
-      - ./logs:/workspace/logs
-      - ./results:/workspace/results
       - ./configs:/workspace/configs
-    
-    # Environment variables
+
+    # Environment
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - PYTHONUNBUFFERED=1
-    
-    # Keep container running
+      - PYTHONPATH=/workspace
+
     stdin_open: true
     tty: true
-    
-    # Default command
     command: /bin/bash
 
+# ==========================================
 # Usage:
-# Build and start: docker-compose up -d
-# Stop: docker-compose down
-# Logs: docker-compose logs -f
-# Shell: docker-compose exec mamba-killer bash
-# Jupyter: docker-compose exec mamba-killer jupyter lab --ip=0.0.0.0 --port=8888 --allow-root
+# ==========================================
+#
+# Start container:
+#   docker-compose up -d
+#
+# Enter shell:
+#   docker-compose exec muse bash
+#
+# Train Japanese LLM:
+#   docker-compose exec muse make start-japanese
+#
+# Chat with model:
+#   docker-compose exec muse make chat
+#
+# Stop:
+#   docker-compose down
