@@ -58,10 +58,15 @@ class Muon(optim.Optimizer):
         self.muon_params = muon_params
         self.adamw_params = adamw_params
 
+        # Track global step for dynamic NS adjustment
+        self.global_step = 0
+
     def step(self, closure=None):
         loss = None
         if closure is not None:
             loss = closure()
+
+        self.global_step += 1
 
         # Step AdamW
         self.adamw.step()
@@ -71,7 +76,13 @@ class Muon(optim.Optimizer):
             lr = group['lr']
             momentum = group['momentum']
             nesterov = group['nesterov']
+
+            # Dynamic Newton-Schulz steps for Cold Start Stability
+            # Initial 1000 steps: 10 iters (Strong Orthogonalization)
+            # After 1000 steps: Default (usually 5) (Efficiency)
             ns_steps = group['ns_steps']
+            if self.global_step <= 1000:
+                ns_steps = 10
 
             for p in group['params']:
                 if p.grad is None:
@@ -102,13 +113,6 @@ class Muon(optim.Optimizer):
                     g_ortho = g / (g.norm() + 1e-8)
 
                 # Update
-                # Scale by RMS of param to keep update scale consistent?
-                # Muon paper suggests: param -= lr * g_ortho * max(1, param.rms / g_ortho.rms) ?
-                # Simplified: param -= lr * g_ortho
-
-                # Ideally, we scale the update by the spectral radius, but NewtonSchulz returns unitary-like.
-                # So we just apply LR.
-
                 p.data.add_(g_ortho, alpha=-lr)
 
         return loss

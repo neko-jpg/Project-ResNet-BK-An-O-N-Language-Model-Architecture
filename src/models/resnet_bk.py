@@ -81,8 +81,9 @@ class MoEResNetBKLayer(nn.Module):
         self.homeostasis = HomeostasisController()
         
         # Initialize v_proj with very small weights to prevent NaN in BK Core
+        # Poincaré Centering: Initialize < 1e-3 to stay in hyperbolic safe zone
         with torch.no_grad():
-            nn.init.normal_(self.v_proj.weight, mean=0.0, std=0.01)
+            nn.init.normal_(self.v_proj.weight, mean=0.0, std=1e-4)
             if self.v_proj.bias is not None:
                 nn.init.zeros_(self.v_proj.bias)
 
@@ -103,10 +104,8 @@ class MoEResNetBKLayer(nn.Module):
         else:
             self.birman_schwinger_core = None
             # --- Identity Initialization (Transparent Pipe) ---
-            # Replaced Laplacian Init (-2, 1, 1) with Identity Init (1, 0, 0)
-            # This prevents turbulence in the Cold Start phase of BitNet.
+            # Initialize strictly to Identity Matrix (Diag=1, Off=0) for Cold Start
             self.register_buffer("h0_diag_base", torch.full((1, config.n_seq), 1.0, dtype=torch.float32))
-            # Use small random noise instead of pure zero to allow gradient flow but prevent explosion
             self.register_buffer("h0_sub_base",  torch.zeros((1, config.n_seq - 1), dtype=torch.float32))
             self.register_buffer("h0_super_base",torch.zeros((1, config.n_seq - 1), dtype=torch.float32))
             self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
@@ -175,11 +174,7 @@ class MoEResNetBKLayer(nn.Module):
                 output = output + ffn_out 
                 
             if torch.isnan(output).any() or torch.isinf(output).any():
-                print(f"🚨 NaN/Inf detected after FFN Addition! Max: {output.abs().max().item()}", flush=True) # Residual connection for FFN? 
-                # Wait, the block has one residual. Usually it's x + Attn + FFN or x + Layer(x).
-                # If Layer = Attn -> FFN, then it's x + FFN(Attn(x)).
-                # Let's just chain them.
-                # output = self.ffn(output) 
+                print(f"🚨 NaN/Inf detected after FFN Addition! Max: {output.abs().max().item()}", flush=True)
                 pass
 
         else:
@@ -201,10 +196,6 @@ class MoEResNetBKLayer(nn.Module):
         
         # Unified FFN application for Hybrid mode if not handled above
         if self.use_hybrid_attention and self.ffn is not None:
-             # Already handled above? No, the original code had:
-             # output = output + self.ffn(output)
-             # But I modified it above to be explicit.
-             # Let's remove the duplicate call below if I added it above.
              pass
              
         return output
@@ -393,8 +384,9 @@ class LanguageModel(nn.Module):
         return [i for i, is_prime in enumerate(sieve) if is_prime]
 
     def _reset_parameters(self, prime_bump_init: bool, prime_bump_scale: float):
-        # Use smaller std for embeddings to prevent NaN
-        embed_std = 0.001  # Reduced from min(prime_bump_scale, 0.02) for stability
+        # Poincaré Centering: Initialize embeddings deep within the hyperbolic space (norm < 1e-3)
+        # to prevent boundary collapse during Cold Start.
+        embed_std = 0.0001  # 1e-4
         nn.init.normal_(self.token_embedding.weight, mean=0.0, std=embed_std)
         nn.init.normal_(self.position_embedding.weight, mean=0.0, std=embed_std)
 
@@ -403,7 +395,7 @@ class LanguageModel(nn.Module):
                 # Use much smaller initialization for stability
                 # Especially important for v_proj which feeds into BK Core
                 fan_in = module.weight.size(1)
-                std = min(0.001, (1.0 / fan_in) ** 0.5)  # Cap at 0.001 for ultra-stability
+                std = min(0.0001, (1.0 / fan_in) ** 0.5)  # Cap at 1e-4 for ultra-stability
                 nn.init.normal_(module.weight, mean=0.0, std=std)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
