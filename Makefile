@@ -41,28 +41,29 @@ help:
 	@echo "  make train-japanese      Train with existing Japanese data"
 	@echo "  make dry-run-japanese    Test Japanese model config"
 	@echo ""
+	@echo "� Checkpoints & Resume:"
+	@echo "  make resume-japanese     Resume training from latest checkpoint"
+	@echo "  make resume CHECKPOINT=path/to/step_500.pt  Resume from specific checkpoint"
+	@echo "  make list-checkpoints    Show available checkpoints"
+	@echo "  (Checkpoints auto-saved every 500 steps)"
+	@echo ""
+	@echo "💬 Chat & Inference:"
+	@echo "  make chat                Start interactive chat with trained model"
+	@echo "  make chat CHECKPOINT=path  Chat with specific checkpoint"
+	@echo ""
 	@echo "🔧 Setup & Utilities:"
 	@echo "  make setup               Install dependencies"
-	@echo "  make chat                Start Chat Interface"
+	@echo "  make recipe              Configure training (language, VRAM, etc.)"
 	@echo "  make dashboard           Start Training Dashboard"
 	@echo "  make clean               Clean artifacts and caches"
 	@echo ""
 	@echo "📊 Data Management:"
-	@echo "  make recipe              Configure dataset mixing"
 	@echo "  make data-lite           Download small English dataset"
 	@echo "  make data                Download full English datasets"
 	@echo ""
-	@echo "⚙️  Advanced (Manual Steps):"
+	@echo "⚙️  Advanced:"
 	@echo "  make compress-10b        Initialize/Compress 10B Model"
-	@echo "  make train-10b           Train 10B (requires checkpoint)"
 	@echo "  make train-10b-8gb       Train with Extreme Optimization (8GB VRAM)"
-	@echo ""
-	@echo "📝 Example Usage:"
-	@echo "  # Japanese 10B LLM (RTX 3080 8GB)"
-	@echo "  wsl -d ubuntu"
-	@echo "  cd /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture"
-	@echo "  source venv_ubuntu/bin/activate"
-	@echo "  make start-japanese"
 
 setup:
 	@if [ -f scripts/easy_setup.sh ]; then \
@@ -179,3 +180,57 @@ dry-run-japanese:
 	@echo "🧪 Dry Run: Japanese 10B Model"
 	@echo "=========================================="
 	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --dry-run --compile
+
+# ==========================================
+# 💾 Checkpoint Management
+# ==========================================
+
+# Resume from latest Japanese checkpoint
+resume-japanese:
+	@echo "=========================================="
+	@echo "🔄 Resuming Japanese Training"
+	@echo "=========================================="
+	@LATEST=$$(ls -t checkpoints/phase8_10b_japanese/step_*.pt 2>/dev/null | head -1); \
+	if [ -n "$$LATEST" ]; then \
+		echo "Found checkpoint: $$LATEST"; \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from "$$LATEST" --compile; \
+	else \
+		echo "❌ No checkpoint found. Run 'make start-japanese' first."; \
+	fi
+
+# Resume from specific checkpoint
+resume:
+	@echo "=========================================="
+	@echo "🔄 Resuming from: $(CHECKPOINT)"
+	@echo "=========================================="
+ifdef CHECKPOINT
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from $(CHECKPOINT) --compile
+else
+	@echo "❌ Usage: make resume CHECKPOINT=path/to/step_500.pt"
+endif
+
+# List available checkpoints
+list-checkpoints:
+	@echo "=========================================="
+	@echo "💾 Available Checkpoints"
+	@echo "=========================================="
+	@echo ""
+	@echo "Japanese (phase8_10b_japanese):"
+	@ls -lh checkpoints/phase8_10b_japanese/*.pt 2>/dev/null || echo "  (none)"
+	@echo ""
+	@echo "English (phase8_10b_rtx3080):"
+	@ls -lh checkpoints/phase8_10b_rtx3080/*.pt 2>/dev/null || echo "  (none)"
+	@echo ""
+	@echo "General (phase8):"
+	@ls -lh checkpoints/phase8/*.pt 2>/dev/null || echo "  (none)"
+
+# Chat with model
+chat:
+	@echo "=========================================="
+	@echo "💬 Starting Chat Interface"
+	@echo "=========================================="
+ifdef CHECKPOINT
+	$(PYTHON) scripts/chat_inference.py --checkpoint $(CHECKPOINT)
+else
+	$(PYTHON) scripts/chat_inference.py
+endif

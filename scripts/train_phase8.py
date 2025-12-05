@@ -424,6 +424,21 @@ def train_phase8():
                         step_log[k] = v
                 training_log['steps'].append(step_log)
                 
+                # Periodic checkpoint save (every 500 steps)
+                if step > 0 and step % 500 == 0:
+                    os.makedirs(config.save_dir, exist_ok=True)
+                    ckpt_path = os.path.join(config.save_dir, f"step_{step}.pt")
+                    torch.save({
+                        'step': step,
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scaler_state_dict': scaler.state_dict(),
+                        'config': asdict(config),
+                        'loss': avg_loss,
+                    }, ckpt_path)
+                    print(f"\n💾 Checkpoint saved: {ckpt_path}")
+                
                 total_loss = 0.0
 
             pbar.update(1)
