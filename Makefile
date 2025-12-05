@@ -31,6 +31,10 @@ help:
 	@echo "  make test                Run tests"
 	@echo "  make benchmark           Run speed benchmark"
 	@echo "  make clean               Clean caches"
+	@echo ""
+	@echo "📝 WSL Ubuntu Setup:"
+	@echo "  wsl -d ubuntu"
+	@echo "  source venv_ubuntu/bin/activate"
 
 # ==========================================
 # 🔧 Setup
