@@ -62,7 +62,8 @@ class ScatteringGate(nn.Module):
     
     def _init_weights(self):
         # 初期状態では恒等ゲート（全て1）に近い
-        nn.init.zeros_(self.gate_proj.weight)
+        # Initialize small random weights for stability
+        nn.init.normal_(self.gate_proj.weight, mean=0.0, std=1e-4)
         nn.init.ones_(self.gate_proj.bias)
     
     def forward(
@@ -287,9 +288,22 @@ class BKCoreHyperbolicIntegration(nn.Module):
         self._init_weights()
     
     def _init_weights(self):
-        for module in [self.he_diag_proj, self.h0_super_proj, self.h0_sub_proj]:
-            nn.init.xavier_uniform_(module.weight)
-            nn.init.zeros_(module.bias)
+        # Identity Initialization & Poincaré Centering
+        # he_diag -> 1.0 (Identity Matrix main diagonal)
+        # h0_super/sub -> 0.0 (Identity Matrix off-diagonal)
+        # Weights -> Small noise (1e-4)
+
+        # he_diag_proj: y = xW + b. Init b=1.0, W ~ N(0, 1e-4)
+        nn.init.normal_(self.he_diag_proj.weight, mean=0.0, std=1e-4)
+        nn.init.constant_(self.he_diag_proj.bias, 1.0)
+
+        # h0_super_proj: y = xW + b. Init b=0.0, W ~ N(0, 1e-4)
+        nn.init.normal_(self.h0_super_proj.weight, mean=0.0, std=1e-4)
+        nn.init.zeros_(self.h0_super_proj.bias)
+
+        # h0_sub_proj: y = xW + b. Init b=0.0, W ~ N(0, 1e-4)
+        nn.init.normal_(self.h0_sub_proj.weight, mean=0.0, std=1e-4)
+        nn.init.zeros_(self.h0_sub_proj.bias)
     
     def compute_green_function(
         self,
