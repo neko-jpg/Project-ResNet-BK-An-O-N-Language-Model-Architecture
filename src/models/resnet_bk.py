@@ -102,9 +102,13 @@ class MoEResNetBKLayer(nn.Module):
             self.bk_core = None
         else:
             self.birman_schwinger_core = None
-            self.register_buffer("h0_diag_base", torch.full((1, config.n_seq), -2.0, dtype=torch.float32))
-            self.register_buffer("h0_sub_base",  torch.full((1, config.n_seq - 1), 1.0, dtype=torch.float32))
-            self.register_buffer("h0_super_base",torch.full((1, config.n_seq - 1), 1.0, dtype=torch.float32))
+            # --- Identity Initialization (Transparent Pipe) ---
+            # Replaced Laplacian Init (-2, 1, 1) with Identity Init (1, 0, 0)
+            # This prevents turbulence in the Cold Start phase of BitNet.
+            self.register_buffer("h0_diag_base", torch.full((1, config.n_seq), 1.0, dtype=torch.float32))
+            # Use small random noise instead of pure zero to allow gradient flow but prevent explosion
+            self.register_buffer("h0_sub_base",  torch.zeros((1, config.n_seq - 1), dtype=torch.float32))
+            self.register_buffer("h0_super_base",torch.zeros((1, config.n_seq - 1), dtype=torch.float32))
             self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
             self.bk_core = BKCoreFunction.apply
 
