@@ -247,10 +247,10 @@ def train_phase8():
 
     # Initialize Triton Mode (Strict) if on CUDA
     if device.type == "cuda":
-        # Force Triton to be active and strict
+        # Disable Strict Triton Mode to allow Safe-Log PyTorch fallback
         from src.models.bk_core import set_triton_mode
-        set_triton_mode(True)
-        print("✔ Triton Mode Enforced: STRICT")
+        set_triton_mode(False)
+        print("✔ Triton Mode Disabled for Stability (Using PyTorch Safe-Log)")
 
     # Log VRAM
     if torch.cuda.is_available():

@@ -48,6 +48,21 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
     if n == 0:
         return torch.zeros(0, dtype=torch.complex64, device=device)
 
+    # --- Safe-Log Helper (The Rubber Wall) ---
+    def safe_log_exp_diff(diff_val, k_threshold=30.0):
+        """
+        Computes exp(diff) with safe soft-clamping (Rubber Wall).
+        If diff is large positive, it clamps to exp(K).
+        Uses tanh for smooth saturation.
+        """
+        # Soft clamp: K * tanh(diff / K)
+        # diff_val is float64.
+
+        # Optimization: if diff is reasonable, skip tanh?
+        # But for stability we apply it.
+        clamped_diff = k_threshold * torch.tanh(diff_val / k_threshold)
+        return torch.exp(clamped_diff)
+
     # --- Theta recursion (forward sweep) with scaling ---
     # We use log-scale to prevent overflow: theta_i = t_i * exp(l_i)
     # where |t_i| is close to 1.
@@ -59,8 +74,23 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
     t_theta.append(torch.ones((), dtype=torch.complex128, device=device))
     l_theta.append(torch.zeros((), dtype=torch.float64, device=device))
 
-    # θ_1 = a[0]
+    # θ_1 = a[0] (Apply Diagonal Regularization here effectively)
+    # Note: a_shifted already contains a - z.
+    # We add a small mass to ensure we are never exactly 0.
+    mass_epsilon = 1e-3 # Mass injection
     val = a_shifted[0]
+
+    # Check if close to zero and add mass (Data-dependent control flow replaced with torch.where for vmap)
+    abs_val = val.abs()
+    is_small = abs_val < mass_epsilon
+    is_very_small = abs_val < 1e-9
+
+    # Correction term: val + mass_epsilon * (val / |val|)
+    # Use 1.0 for direction if very small (to avoid div by zero)
+    direction = torch.where(is_very_small, torch.tensor(1.0, dtype=torch.complex128, device=device), val / (abs_val + 1e-9))
+
+    val = torch.where(is_small, val + mass_epsilon * direction, val)
+
     scale = val.abs() + 1e-20
     t_theta.append(val / scale)
     l_theta.append(scale.log())
@@ -77,9 +107,16 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
         k = c_c[i-1] * b_c[i-1]
 
         log_diff = prev2_l - prev_l
-        term2_scale = torch.exp(log_diff)
 
-        val = a_shifted[i] * prev_t - k * prev2_t * term2_scale
+        # --- Rubber Wall Implementation ---
+        # Instead of raw exp, use safe_log_exp_diff
+        term2_scale = safe_log_exp_diff(log_diff)
+
+        # Diagonal Regularization for current term
+        curr_a = a_shifted[i]
+        curr_a = torch.where(curr_a.abs() < mass_epsilon, curr_a + mass_epsilon, curr_a)
+
+        val = curr_a * prev_t - k * prev2_t * term2_scale
 
         scale = val.abs() + 1e-20
         t_theta.append(val / scale)
@@ -103,6 +140,9 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
     if n > 1:
         # phi_{n-2} = a_{n-1}
         val = a_shifted[-1]
+        # Diagonal Regularization
+        val = torch.where(val.abs() < mass_epsilon, val + mass_epsilon, val)
+
         scale = val.abs() + 1e-20
         t_phi[n-2] = val / scale
         l_phi[n-2] = scale.log()
@@ -116,9 +156,15 @@ def get_tridiagonal_inverse_diagonal(a, b, c, z):
             k = c_c[i] * b_c[i]
 
             log_diff = prev2_l - prev_l
-            term2_scale = torch.exp(log_diff)
 
-            val = a_shifted[i+1] * prev_t - k * prev2_t * term2_scale
+            # --- Rubber Wall Implementation ---
+            term2_scale = safe_log_exp_diff(log_diff)
+
+            curr_a = a_shifted[i+1]
+            # Diagonal Regularization
+            curr_a = torch.where(curr_a.abs() < mass_epsilon, curr_a + mass_epsilon, curr_a)
+
+            val = curr_a * prev_t - k * prev2_t * term2_scale
 
             scale = val.abs() + 1e-20
             t_phi[i] = val / scale

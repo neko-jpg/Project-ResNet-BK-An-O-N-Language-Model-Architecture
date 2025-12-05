@@ -140,11 +140,14 @@ class TestBKCore:
         z = torch.tensor(1.0j, dtype=torch.complex64, device=device)
         
         # Forward pass
-        features = BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
+        # Expect tuple return: (features, G_ii)
+        out_tuple = BKCoreFunction.apply(he_diag, h0_super, h0_sub, z)
+        features, G_ii = out_tuple
         
         # Verify output shape
         assert features.shape == (B, N, 2), f"Expected shape ({B}, {N}, 2), got {features.shape}"
         assert features.dtype == torch.float32, f"Expected float32, got {features.dtype}"
+        assert G_ii.shape == (B, N), f"Expected shape ({B}, {N}), got {G_ii.shape}"
         
         # Backward pass
         loss = features.sum()
