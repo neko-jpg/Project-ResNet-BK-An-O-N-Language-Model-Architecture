@@ -238,3 +238,18 @@ if _RESONANCE_AVAILABLE:
 
 if _TERNARY_MOBIUS_AVAILABLE:
     __all__.extend(['TernaryMobiusLinear', 'TernaryMobiusMLP', 'ternary_matmul'])
+
+# Scattering-Aware Attention Pruning (Moonshot #7)
+try:
+    from .scattering_attention_pruning import (
+        ScatteringAwareAttention,
+        create_scattering_attention,
+    )
+    _SCATTERING_PRUNING_AVAILABLE = True
+except ImportError:
+    _SCATTERING_PRUNING_AVAILABLE = False
+    ScatteringAwareAttention = None
+    create_scattering_attention = None
+
+if _SCATTERING_PRUNING_AVAILABLE:
+    __all__.extend(['ScatteringAwareAttention', 'create_scattering_attention'])

@@ -271,6 +271,12 @@ class Phase8TrainingConfig:
     dataset_path: str = "configs/dataset_mixing.yaml"
     resume_from: Optional[str] = None
     compile: bool = False
+    
+    # Moonshot Optimizations
+    use_resonance_locked: bool = True  # #6: Skip updates when gradient SNR is low
+    resonance_gns_threshold: float = 5.0  # Gradient Noise Scale threshold
+    use_time_reversed: bool = True  # #10: Train on reversed sequences too
+    time_reversed_weight: float = 0.5  # Weight for reversed loss
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -767,8 +773,21 @@ def train_phase8():
                     skip_count += 1
                     continue
                 
-                # Loss with label smoothing
-                loss = F.cross_entropy(logits, y, label_smoothing=config.label_smoothing)
+                # Loss with label smoothing (forward direction)
+                loss_forward = F.cross_entropy(logits, y, label_smoothing=config.label_smoothing)
+                
+                # Time-Reversed Training (#10 Moonshot)
+                # Train on reversed sequences for bi-directional consistency
+                if config.use_time_reversed:
+                    x_rev = x.flip(1)  # Reverse sequence
+                    y_rev = y.view(x.shape[0], -1).flip(1).view(-1)  # Reverse targets
+                    logits_rev, _ = model(x_rev, return_diagnostics=False)
+                    logits_rev = logits_rev.view(-1, config.vocab_size)
+                    loss_backward = F.cross_entropy(logits_rev, y_rev, label_smoothing=config.label_smoothing)
+                    loss = (1 - config.time_reversed_weight) * loss_forward + config.time_reversed_weight * loss_backward
+                else:
+                    loss = loss_forward
+                
                 loss = loss / config.grad_accum_steps
             
             # Check for NaN loss
@@ -800,6 +819,33 @@ def train_phase8():
                     print(f"⚠ Grad norm {grad_norm:.2f} > {config.grad_skip_threshold}, skipping step")
                     optimizer.zero_grad()
                     skip_count += 1
+                    total_loss = 0.0
+                    pbar.update(1)
+                    continue
+                
+                # Resonance-Locked Training (#6 Moonshot)
+                # Skip updates when gradient SNR is low (high noise)
+                resonance_skip = False
+                if config.use_resonance_locked and step > config.warmup_steps:
+                    # Approximate Gradient Noise Scale (GNS)
+                    # GNS ≈ grad_variance / grad_mean² 
+                    # High GNS = noisy gradient, skip update
+                    grads = [p.grad for p in model.parameters() if p.grad is not None]
+                    if grads:
+                        all_grads = torch.cat([g.flatten() for g in grads])
+                        grad_mean = all_grads.mean().abs()
+                        grad_var = all_grads.var()
+                        gns = (grad_var / (grad_mean ** 2 + 1e-8)).item()
+                        
+                        if gns > config.resonance_gns_threshold:
+                            # High noise, skip update (resonance not achieved)
+                            resonance_skip = True
+                            skip_count += 1
+                            if step % 50 == 0:
+                                print(f"🔒 Resonance skip: GNS={gns:.2f} > {config.resonance_gns_threshold}")
+                
+                if resonance_skip:
+                    optimizer.zero_grad()
                     total_loss = 0.0
                     pbar.update(1)
                     continue
