@@ -253,3 +253,62 @@ except ImportError:
 
 if _SCATTERING_PRUNING_AVAILABLE:
     __all__.extend(['ScatteringAwareAttention', 'create_scattering_attention'])
+
+# =============================================================================
+# Phase 2 Moonshot Optimizations
+# =============================================================================
+
+# Green Function LUT (Moonshot #3)
+try:
+    from .green_function_lut import (
+        GreenFunctionLUT,
+        FastBKCoreGreen,
+        FastTridiagonalSolver,
+        create_green_function_lut,
+    )
+    _GREEN_LUT_AVAILABLE = True
+except ImportError:
+    _GREEN_LUT_AVAILABLE = False
+    GreenFunctionLUT = None
+    FastBKCoreGreen = None
+    FastTridiagonalSolver = None
+    create_green_function_lut = None
+
+if _GREEN_LUT_AVAILABLE:
+    __all__.extend(['GreenFunctionLUT', 'FastBKCoreGreen', 'FastTridiagonalSolver', 'create_green_function_lut'])
+
+# Hyperbolic MoE (Moonshot #8)
+try:
+    from .hyperbolic_moe import (
+        HyperbolicMoE,
+        HyperbolicVoronoiRouter,
+        create_hyperbolic_moe,
+    )
+    _HYPERBOLIC_MOE_AVAILABLE = True
+except ImportError:
+    _HYPERBOLIC_MOE_AVAILABLE = False
+    HyperbolicMoE = None
+    HyperbolicVoronoiRouter = None
+    create_hyperbolic_moe = None
+
+if _HYPERBOLIC_MOE_AVAILABLE:
+    __all__.extend(['HyperbolicMoE', 'HyperbolicVoronoiRouter', 'create_hyperbolic_moe'])
+
+# Superposition Training (Moonshot #12)
+try:
+    from .superposition_training import (
+        SuperpositionOptimizer,
+        ImaginaryTimeEvolution,
+        QuantumEnsembleDistillation,
+        create_superposition_optimizer,
+    )
+    _SUPERPOSITION_AVAILABLE = True
+except ImportError:
+    _SUPERPOSITION_AVAILABLE = False
+    SuperpositionOptimizer = None
+    ImaginaryTimeEvolution = None
+    QuantumEnsembleDistillation = None
+    create_superposition_optimizer = None
+
+if _SUPERPOSITION_AVAILABLE:
+    __all__.extend(['SuperpositionOptimizer', 'ImaginaryTimeEvolution', 'QuantumEnsembleDistillation', 'create_superposition_optimizer'])
