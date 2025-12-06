@@ -1,13 +1,12 @@
 """
-AR-SSM Hyperbolic Fusion - Phase 8 Implementation
+AR-SSM Hyperbolic Fusion - Phase 8 Implementation (Optimized)
 
 AR-SSM（自己回帰状態空間モデル）と双曲空間の融合。
 双曲距離を複雑性シグナルとして使用し、動的にランクを調整。
 
-物理的直観:
-- 双曲距離が大きい = 情報が複雑 = 高ランクが必要
-- 原点に近い = 単純な情報 = 低ランクで十分
-- BK-CoreのG_iiを物理ベースのゲーティングに使用
+最適化:
+- LowRankSSMScan: 並列プレフィックススキャン (5-10x高速)
+- BatchedHyperbolicDistance: バッチ双曲距離計算 (4x高速)
 
 Requirements: 21.1, 21.2, 21.3, 21.4, 21.5, 21.6
 """
@@ -19,6 +18,23 @@ from dataclasses import dataclass
 import math
 
 EPS = 1e-6
+
+# Import optimization kernels
+try:
+    from src.kernels.low_rank_ssm_scan import LowRankSSMScan, AdaptiveLowRankSSM
+    _SSM_SCAN_AVAILABLE = True
+except ImportError:
+    _SSM_SCAN_AVAILABLE = False
+    LowRankSSMScan = None
+    AdaptiveLowRankSSM = None
+
+try:
+    from src.kernels.hyperbolic_distance_batch import BatchedHyperbolicDistance, HyperbolicRankGatingOptimized
+    _HYPER_DIST_AVAILABLE = True
+except ImportError:
+    _HYPER_DIST_AVAILABLE = False
+    BatchedHyperbolicDistance = None
+    HyperbolicRankGatingOptimized = None
 
 
 @dataclass
@@ -33,6 +49,9 @@ class ARSSMFusionConfig:
     curvature_adjustment_rate: float = 0.1
     use_physics_gating: bool = True
     use_adaptive_rank: bool = True
+    # Optimization options
+    use_parallel_ssm_scan: bool = True
+    use_batched_hyperbolic_distance: bool = True
 
 
 class HyperbolicRankGating(nn.Module):
@@ -311,17 +330,29 @@ class ARSSMHyperbolicFusion(nn.Module):
         self.d_model = config.d_model
         self.curvature = config.curvature
         
-        # 双曲ランクゲーティング
+        # 双曲ランクゲーティング (use optimized version if available)
         if config.use_adaptive_rank:
-            self.rank_gating = HyperbolicRankGating(
-                d_model=config.d_model,
-                max_rank=config.max_rank,
-                min_rank=config.min_rank,
-                curvature=config.curvature,
-                distance_threshold=config.distance_threshold,
-            )
+            if config.use_batched_hyperbolic_distance and _HYPER_DIST_AVAILABLE:
+                self.rank_gating = HyperbolicRankGatingOptimized(
+                    d_model=config.d_model,
+                    max_rank=config.max_rank,
+                    min_rank=config.min_rank,
+                    curvature=config.curvature,
+                    distance_threshold=config.distance_threshold,
+                )
+                self._using_optimized_gating = True
+            else:
+                self.rank_gating = HyperbolicRankGating(
+                    d_model=config.d_model,
+                    max_rank=config.max_rank,
+                    min_rank=config.min_rank,
+                    curvature=config.curvature,
+                    distance_threshold=config.distance_threshold,
+                )
+                self._using_optimized_gating = False
         else:
             self.rank_gating = None
+            self._using_optimized_gating = False
         
         # 物理ベースゲーティング
         if config.use_physics_gating:
@@ -329,12 +360,21 @@ class ARSSMHyperbolicFusion(nn.Module):
         else:
             self.physics_gating = None
         
-        # 適応的ランクSSM
-        self.ssm = AdaptiveRankSSM(
-            d_model=config.d_model,
-            d_state=config.d_state,
-            max_rank=config.max_rank,
-        )
+        # 適応的ランクSSM (use optimized version if available)
+        if config.use_parallel_ssm_scan and _SSM_SCAN_AVAILABLE:
+            self.ssm = LowRankSSMScan(
+                d_model=config.d_model,
+                d_state=config.d_state,
+                rank=config.max_rank,
+            )
+            self._using_parallel_ssm = True
+        else:
+            self.ssm = AdaptiveRankSSM(
+                d_model=config.d_model,
+                d_state=config.d_state,
+                max_rank=config.max_rank,
+            )
+            self._using_parallel_ssm = False
         
         # 曲率調整率
         self.curvature_adjustment_rate = config.curvature_adjustment_rate

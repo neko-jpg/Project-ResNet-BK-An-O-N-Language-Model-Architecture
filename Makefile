@@ -69,14 +69,20 @@ prepare-japanese-data:
 
 train-japanese:
 	@echo "🇯🇵 Training Japanese 10B Model..."
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --compile
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml
 
 start-japanese:
 	@echo "=========================================="
 	@echo "🇯🇵 Japanese 10B LLM - Full Pipeline"
 	@echo "=========================================="
+	@echo "Step 1: Verifying environment..."
+	$(PYTHON) -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+	@echo "Step 2: Running quick benchmark..."
+	$(PYTHON) scripts/benchmark_simple.py 2>&1 | head -30 || true
+	@echo "Step 3: Downloading data..."
 	$(MAKE) prepare-japanese-data
-	$(MAKE) train-japanese
+	@echo "Step 4: Starting training with --compile..."
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --compile
 
 dry-run-japanese:
 	@echo "🧪 Dry Run: Japanese 10B Model..."
@@ -138,8 +144,8 @@ test:
 	$(PYTHON) -m pytest tests/ -v --tb=short
 
 benchmark:
-	@echo "⚡ Running speed benchmark..."
-	$(PYTHON) -c "from scripts.train_phase8 import *; print('Benchmark not implemented yet')"
+	@echo "⚡ Running Phase 8 Kernel Benchmark..."
+	$(PYTHON) scripts/benchmark_simple.py
 
 recipe:
 	$(PYTHON) scripts/configure_recipe.py

@@ -1,6 +1,6 @@
-# Phase 8: 10B Japanese LLM - RTX 3080 8GB Optimized
-# ===================================================
-# 日本語特化モデル設定
+# Phase 8: 10B Japanese LLM - RTX 3080 8GB Optimized (v2)
+# =========================================================
+# 日本語特化モデル設定 - 最適化版
 
 # === Model Architecture ===
 d_model: 4096
@@ -11,7 +11,6 @@ htt_rank: 16
 hyperbolic_window_size: 64
 
 # === Japanese Tokenizer ===
-# rinna/japanese-gpt-neox uses 32000 tokens (vs 50257 for GPT-2)
 vocab_size: 32000
 tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
 
@@ -32,11 +31,31 @@ batch_size: 1
 gradient_accumulation_steps: 32
 effective_batch_size: 32
 
-# === Optimizer (Muon) ===
-optimizer_type: muon
+# === Optimizer (AdamW) ===
+optimizer_type: adamw
+beta1: 0.9
+beta2: 0.95
+eps: 1.0e-8
+weight_decay: 0.01
+
+# === Learning Rate Scheduler ===
 learning_rate: 0.02
-warmup_steps: 2000
-max_grad_norm: 0.5
+min_lr: 1.0e-6
+warmup_steps: 500  # 2000 -> 500 に短縮
+
+# === Gradient Control ===
+grad_clip_warmup: 0.1
+grad_clip_train: 1.0
+grad_skip_threshold: 10.0
+
+# === EMA (Exponential Moving Average) ===
+use_ema: true
+ema_decay: 0.999
+
+# === Regularization ===
+label_smoothing: 0.1
+dropout: 0.1
+attention_dropout: 0.1
 
 # === Phase 8 Components ===
 use_bk_hyperbolic: true
@@ -48,6 +67,31 @@ enable_entailment_cones: false
 enable_persistent_homology: false
 enable_sheaf_attention: false
 
+# === Phase 8 Optimizations (NEW) ===
+# Fused Möbius operations
+use_fused_mobius: true
+
+# Green function caching
+use_green_function_cache: true
+green_function_cache_size: 512
+
+# Low-Rank SSM parallel scan
+use_parallel_ssm_scan: true
+
+# Fused scattering gate
+use_fused_scattering_gate: true
+
+# Hyperbolic distance batching
+use_batched_hyperbolic_distance: true
+
+# Resonance adaptive curvature
+use_resonance_adaptive_curvature: true
+resonance_threshold: 0.5
+curvature_adjustment_rate: 0.01
+
+# Ternary Möbius matmul
+use_ternary_mobius_matmul: true
+
 # === Triton Kernels ===
 use_triton_kernel: true
 triton_kernel_version: fast
@@ -55,7 +99,8 @@ triton_use_safe_ops: true
 use_fused_kernels: true
 
 # === torch.compile ===
-use_torch_compile: true
+# Note: Disabled on Python 3.12+
+use_torch_compile: false
 compile_mode: max-autotune
 
 # === Flash Attention 2 ===
@@ -69,7 +114,7 @@ persistent_workers: true
 
 # === Logging ===
 log_interval: 10
-save_interval: 1000
+save_interval: 500  # 1000 -> 500
 eval_interval: 500
 save_dir: checkpoints/phase8_10b_japanese
 

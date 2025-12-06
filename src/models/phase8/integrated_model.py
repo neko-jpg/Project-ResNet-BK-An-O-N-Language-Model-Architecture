@@ -29,6 +29,15 @@ from src.models.phase1.htt_embedding import HTTDecoder
 from .config import Phase8Config, Phase8Diagnostics
 from .bk_core_hyperbolic import BKCoreHyperbolicIntegration, BKCoreHyperbolicConfig
 from .ar_ssm_fusion import ARSSMHyperbolicFusion, ARSSMFusionConfig
+
+# Import optimization kernels for training
+try:
+    from src.kernels.resonance_adaptive_curvature import ResonanceAdaptiveCurvature, StabilityMonitor
+    _RESONANCE_OPT_AVAILABLE = True
+except ImportError:
+    _RESONANCE_OPT_AVAILABLE = False
+    ResonanceAdaptiveCurvature = None
+    StabilityMonitor = None
 from .entailment_cones import EntailmentCones, EntailmentConeConfig
 from .persistent_homology import HyperbolicPersistentHomology, PersistentHomologyConfig
 from .sheaf_attention import SheafAttentionModule, SheafAttentionConfig
@@ -109,6 +118,12 @@ class Phase8IntegratedModel(nn.Module):
             'adaptive_rank_quantization', 'adaptive_rank_hot_bits', 'adaptive_rank_cold_bits',
             'adaptive_rank_hot', 'adaptive_rank_cold', 'adaptive_rank_frequency_threshold',
             'adaptive_rank_update_alpha', 'adaptive_rank_use_loss',
+            # Phase 8 Optimization Kernels (NEW)
+            'use_fused_mobius', 'use_green_function_cache', 'green_function_cache_size',
+            'use_parallel_ssm_scan', 'use_fused_scattering_gate',
+            'use_batched_hyperbolic_distance', 'use_resonance_adaptive_curvature',
+            'resonance_threshold', 'curvature_adjustment_rate',
+            'use_ternary_mobius_matmul', 'use_quantized_htt_fusion',
         ]
 
         # Phase 7Configに存在しないキーを削除
@@ -159,11 +174,16 @@ class Phase8IntegratedModel(nn.Module):
         if config.use_bk_hyperbolic:
             bk_config = BKCoreHyperbolicConfig(
                 d_model=config.d_model,
-                curvature=1.0,  # 初期曲率
+                curvature=getattr(config, 'curvature_initial', 1.0),
                 gate_scale=config.bk_hyperbolic_gate_scale,
                 resonance_threshold=config.bk_hyperbolic_resonance_threshold,
                 use_scattering_gate=True,
                 use_resonance_detection=True,
+                # Phase 8 kernel optimizations
+                use_fused_mobius=getattr(config, 'use_fused_mobius', True),
+                use_green_function_cache=getattr(config, 'use_green_function_cache', True),
+                use_fused_scattering_gate=getattr(config, 'use_fused_scattering_gate', True),
+                green_function_cache_size=getattr(config, 'green_function_cache_size', 512),
             )
             self.bk_hyperbolic = BKCoreHyperbolicIntegration(bk_config)
         else:
@@ -176,11 +196,14 @@ class Phase8IntegratedModel(nn.Module):
                 d_state=config.d_model // 4,  # 状態次元はd_modelの1/4
                 max_rank=config.ar_ssm_max_rank,
                 min_rank=config.ar_ssm_min_rank,
-                curvature=1.0,
+                curvature=getattr(config, 'curvature_initial', 1.0),
                 distance_threshold=config.ar_ssm_hyperbolic_rank_threshold,
                 curvature_adjustment_rate=config.ar_ssm_curvature_adaptation_rate,
                 use_physics_gating=True,
                 use_adaptive_rank=True,
+                # Phase 8 kernel optimizations
+                use_parallel_ssm_scan=getattr(config, 'use_parallel_ssm_scan', True),
+                use_batched_hyperbolic_distance=getattr(config, 'use_batched_hyperbolic_distance', True),
             )
             self.ar_ssm_fusion = ARSSMHyperbolicFusion(ar_ssm_config)
         else:

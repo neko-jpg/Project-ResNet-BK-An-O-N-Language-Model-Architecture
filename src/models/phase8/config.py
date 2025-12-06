@@ -127,6 +127,34 @@ class Phase8Config(Phase7Config):
     
     # Gradient accumulation
     gradient_accumulation_steps: int = 1  # Number of steps to accumulate gradients
+    
+    # ========== Phase 8 Optimization Kernels (NEW) ==========
+    # Fused Möbius operations (hyperbolic_mobius_chain.py)
+    use_fused_mobius: bool = True
+    
+    # Green function caching (green_function_cache.py)
+    use_green_function_cache: bool = True
+    green_function_cache_size: int = 512
+    
+    # Low-rank SSM parallel scan (low_rank_ssm_scan.py)
+    use_parallel_ssm_scan: bool = True
+    
+    # Fused scattering gate (scattering_gate_fused.py)
+    use_fused_scattering_gate: bool = True
+    
+    # Batched hyperbolic distance (hyperbolic_distance_batch.py)
+    use_batched_hyperbolic_distance: bool = True
+    
+    # Resonance adaptive curvature (resonance_adaptive_curvature.py)
+    use_resonance_adaptive_curvature: bool = True
+    resonance_threshold: float = 0.5
+    curvature_adjustment_rate: float = 0.01
+    
+    # Ternary Möbius matmul (ternary_mobius_matmul.py)
+    use_ternary_mobius_matmul: bool = True
+    
+    # Quantized HTT / TT contraction (tt_contraction.py)
+    use_quantized_htt_fusion: bool = True
 
 @dataclass
 class Phase8Diagnostics:

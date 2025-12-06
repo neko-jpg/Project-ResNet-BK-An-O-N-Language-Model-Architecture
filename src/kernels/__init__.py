@@ -114,3 +114,127 @@ if _SAFE_OPS_AVAILABLE:
         'safe_atanh_pytorch',
         'K_THRESHOLD',
     ])
+
+# =============================================================================
+# Phase 8: Custom Optimization Kernels
+# =============================================================================
+
+# Hyperbolic Möbius Chain Fusion
+try:
+    from .hyperbolic_mobius_chain import (
+        FusedMobiusOperations,
+        mobius_add_fused,
+        mobius_chain_fused,
+        exp_map_fused,
+    )
+    _MOBIUS_CHAIN_AVAILABLE = True
+except ImportError:
+    _MOBIUS_CHAIN_AVAILABLE = False
+    FusedMobiusOperations = None
+    mobius_add_fused = None
+    mobius_chain_fused = None
+    exp_map_fused = None
+
+# Green Function Cache
+try:
+    from .green_function_cache import (
+        GreenFunctionCache,
+        AdaptiveGreenFunctionCache,
+        CachedBKCoreWrapper,
+    )
+    _GREEN_CACHE_AVAILABLE = True
+except ImportError:
+    _GREEN_CACHE_AVAILABLE = False
+    GreenFunctionCache = None
+    AdaptiveGreenFunctionCache = None
+    CachedBKCoreWrapper = None
+
+# Low-Rank SSM Parallel Scan
+try:
+    from .low_rank_ssm_scan import (
+        LowRankSSMScan,
+        AdaptiveLowRankSSM,
+        parallel_prefix_scan,
+    )
+    _SSM_SCAN_AVAILABLE = True
+except ImportError:
+    _SSM_SCAN_AVAILABLE = False
+    LowRankSSMScan = None
+    AdaptiveLowRankSSM = None
+    parallel_prefix_scan = None
+
+# Scattering Gate Fused
+try:
+    from .scattering_gate_fused import (
+        FusedScatteringGate,
+        FusedScatteringAttention,
+    )
+    _SCATTERING_FUSED_AVAILABLE = True
+except ImportError:
+    _SCATTERING_FUSED_AVAILABLE = False
+    FusedScatteringGate = None
+    FusedScatteringAttention = None
+
+# Hyperbolic Distance Batch
+try:
+    from .hyperbolic_distance_batch import (
+        BatchedHyperbolicDistance,
+        HyperbolicRankGatingOptimized,
+        poincare_distance_from_origin,
+        poincare_distance,
+    )
+    _HYPER_DIST_AVAILABLE = True
+except ImportError:
+    _HYPER_DIST_AVAILABLE = False
+    BatchedHyperbolicDistance = None
+    HyperbolicRankGatingOptimized = None
+    poincare_distance_from_origin = None
+    poincare_distance = None
+
+# Resonance Adaptive Curvature
+try:
+    from .resonance_adaptive_curvature import (
+        ResonanceAdaptiveCurvature,
+        StabilityMonitor,
+    )
+    _RESONANCE_AVAILABLE = True
+except ImportError:
+    _RESONANCE_AVAILABLE = False
+    ResonanceAdaptiveCurvature = None
+    StabilityMonitor = None
+
+# Ternary Möbius MatMul
+try:
+    from .ternary_mobius_matmul import (
+        TernaryMobiusLinear,
+        TernaryMobiusMLP,
+        ternary_matmul,
+    )
+    _TERNARY_MOBIUS_AVAILABLE = True
+except ImportError:
+    _TERNARY_MOBIUS_AVAILABLE = False
+    TernaryMobiusLinear = None
+    TernaryMobiusMLP = None
+    ternary_matmul = None
+
+# Add to __all__
+if _MOBIUS_CHAIN_AVAILABLE:
+    __all__.extend(['FusedMobiusOperations', 'mobius_add_fused', 'mobius_chain_fused', 'exp_map_fused'])
+
+if _GREEN_CACHE_AVAILABLE:
+    __all__.extend(['GreenFunctionCache', 'AdaptiveGreenFunctionCache', 'CachedBKCoreWrapper'])
+
+if _SSM_SCAN_AVAILABLE:
+    __all__.extend(['LowRankSSMScan', 'AdaptiveLowRankSSM', 'parallel_prefix_scan'])
+
+if _SCATTERING_FUSED_AVAILABLE:
+    __all__.extend(['FusedScatteringGate', 'FusedScatteringAttention'])
+
+if _HYPER_DIST_AVAILABLE:
+    __all__.extend(['BatchedHyperbolicDistance', 'HyperbolicRankGatingOptimized', 'poincare_distance_from_origin', 'poincare_distance'])
+
+if _RESONANCE_AVAILABLE:
+    __all__.extend(['ResonanceAdaptiveCurvature', 'StabilityMonitor'])
+
+if _TERNARY_MOBIUS_AVAILABLE:
+    __all__.extend(['TernaryMobiusLinear', 'TernaryMobiusMLP', 'ternary_matmul'])
