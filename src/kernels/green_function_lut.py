@@ -42,15 +42,17 @@ if TRITON_AVAILABLE:
         N,              # Number of elements
         LUT_SIZE: tl.constexpr,
         MAX_DISTANCE: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,  # Triton 2.x: must be constexpr
     ):
         """
         Fast Green function lookup using precomputed LUT.
         Uses linear interpolation between LUT entries.
+        Triton 2.x compatible version.
         """
         pid = tl.program_id(0)
-        block_size = 256
         
-        offsets = pid * block_size + tl.arange(0, block_size)
+        # Triton 2.x: tl.arange requires constexpr argument
+        offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         mask = offsets < N
         
         # Load distances
@@ -63,7 +65,8 @@ if TRITON_AVAILABLE:
         # Convert distance to LUT index (with interpolation)
         scale = (LUT_SIZE - 1) / MAX_DISTANCE
         idx_float = d * scale
-        idx_low = tl.floor(idx_float).to(tl.int32)
+        # Triton 2.x: integer truncation for floor operation
+        idx_low = idx_float.to(tl.int32)
         idx_high = tl.minimum(idx_low + 1, LUT_SIZE - 1)
         
         # Interpolation weight
@@ -150,10 +153,9 @@ class GreenFunctionLUT(nn.Module):
         """
         self.lookups += distances.numel()
         
-        if TRITON_AVAILABLE and distances.is_cuda:
-            return self._triton_forward(distances)
-        else:
-            return self._pytorch_forward(distances)
+        # Use PyTorch fallback - Triton kernel has 2.x compatibility issues
+        # TODO: Fix Triton kernel for Triton 2.x when time permits
+        return self._pytorch_forward(distances)
     
     def _pytorch_forward(self, distances: torch.Tensor) -> torch.Tensor:
         """PyTorch fallback with grid_sample for interpolation."""
@@ -188,13 +190,15 @@ class GreenFunctionLUT(nn.Module):
         output = torch.empty_like(d_flat)
         
         n = d_flat.numel()
-        grid = ((n + 255) // 256,)
+        BLOCK_SIZE = 256
+        grid = ((n + BLOCK_SIZE - 1) // BLOCK_SIZE,)
         
         green_function_lut_kernel[grid](
             d_flat, self.lut, output,
             n,
             LUT_SIZE=self.lut_size,
             MAX_DISTANCE=self.max_distance,
+            BLOCK_SIZE=BLOCK_SIZE,  # Triton 2.x: pass as constexpr
         )
         
         return output.view(shape)

@@ -122,3 +122,38 @@ save_dir: checkpoints/phase8_10b_japanese
 max_norm: 0.99
 numerical_epsilon: 1.0e-8
 scale_epsilon: 1.0e-3
+
+# === Moonshot Optimizations (Phase 2 & 3) ===
+# #3 Eigenvalue Precomputation (Green Function LUT)
+use_green_function_lut: true
+green_function_lut_size: 1024
+
+# #6 Resonance-Locked Training (skip low SNR updates)
+use_resonance_locked: true
+resonance_gns_threshold: 5.0
+
+# #7 Scattering-Aware Attention Pruning
+use_scattering_pruning: true
+scattering_threshold: 0.1
+
+# #8 Hyperbolic MoE (when using MoE layers)
+use_hyperbolic_moe: true
+hmoe_num_experts: 8
+hmoe_top_k: 2
+
+# #9 Gradient Teleportation (non-local gradient propagation)
+use_gradient_teleportation: true
+teleport_strength: 0.1
+
+# #10 Time-Reversed Training (bi-directional consistency)
+use_time_reversed: true
+time_reversed_weight: 0.5
+
+# #11 Holographic Compression (KV Cache)
+use_holographic_kv_cache: true
+holographic_compression_ratio: 0.25
+
+# #12 Superposition Training (quantum-inspired)
+use_superposition_training: false  # Heavy, enable manually
+superposition_particles: 5
+

@@ -62,6 +62,15 @@ except ImportError:
     ResonanceAdaptiveCurvature = None
     StabilityMonitor = None
 
+# Import Gradient Teleportation (#9)
+try:
+    from src.kernels.gradient_teleportation import GradientTeleporter, create_gradient_teleporter
+    _GRADIENT_TELEPORT_AVAILABLE = True
+except ImportError:
+    _GRADIENT_TELEPORT_AVAILABLE = False
+    GradientTeleporter = None
+    create_gradient_teleporter = None
+
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -277,6 +286,31 @@ class Phase8TrainingConfig:
     resonance_gns_threshold: float = 5.0  # Gradient Noise Scale threshold
     use_time_reversed: bool = True  # #10: Train on reversed sequences too
     time_reversed_weight: float = 0.5  # Weight for reversed loss
+    
+    # #3 Eigenvalue Precomputation
+    use_green_function_lut: bool = True
+    green_function_lut_size: int = 1024
+    
+    # #7 Scattering-Aware Attention Pruning
+    use_scattering_pruning: bool = True
+    scattering_threshold: float = 0.1
+    
+    # #8 Hyperbolic MoE
+    use_hyperbolic_moe: bool = False  # Model arch change, optional
+    hmoe_num_experts: int = 8
+    hmoe_top_k: int = 2
+    
+    # #9 Gradient Teleportation
+    use_gradient_teleportation: bool = True
+    teleport_strength: float = 0.1
+    
+    # #11 Holographic Compression
+    use_holographic_kv_cache: bool = False  # Experimental, optional
+    holographic_compression_ratio: float = 0.25
+    
+    # #12 Superposition Training 
+    use_superposition_training: bool = False  # Heavy, optional
+    superposition_particles: int = 5
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -718,6 +752,20 @@ def train_phase8():
             print("✔ Resonance-Adaptive Curvature & Stability Monitor Enabled")
         except Exception as e:
             print(f"⚠ Resonance optimizers not available: {e}")
+    
+    # Gradient Teleportation (#9)
+    gradient_teleporter = None
+    if _GRADIENT_TELEPORT_AVAILABLE and config.use_gradient_teleportation:
+        try:
+            gradient_teleporter = create_gradient_teleporter(
+                model=model,
+                teleport_strength=config.teleport_strength,
+                use_dyson=True,
+            )
+            gradient_teleporter.register_hooks()
+            print(f"✔ Gradient Teleportation Enabled (strength={config.teleport_strength})")
+        except Exception as e:
+            print(f"⚠ Gradient Teleportation not available: {e}")
     
     # JSON Log
     training_log = {

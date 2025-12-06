@@ -143,8 +143,9 @@ def parallel_prefix_scan(
         b_left = b[:, left_indices, :]
         b_right = b[:, indices, :]
         
-        a[:, indices, :] = a_left * a_right
-        b[:, indices, :] = a_left * b_right + b_left
+        # Maintain dtype consistency for mixed precision
+        a[:, indices, :] = (a_left * a_right).to(a.dtype)
+        b[:, indices, :] = (a_left * b_right + b_left).to(b.dtype)
     
     # Down-sweep phase
     a[:, -1, :] = 1.0
@@ -164,8 +165,9 @@ def parallel_prefix_scan(
         a[:, left_indices, :] = a_right
         b[:, left_indices, :] = b_right
         
-        a[:, indices, :] = a_left * a_right
-        b[:, indices, :] = a_left * b_right + b_left
+        # Maintain dtype consistency for mixed precision
+        a[:, indices, :] = (a_left * a_right).to(a.dtype)
+        b[:, indices, :] = (a_left * b_right + b_left).to(b.dtype)
     
     # Result is in b (the offset part contains the scan result)
     # But we need to compute final h = a * h_init + b
@@ -241,7 +243,7 @@ class LowRankSSMScan(nn.Module):
         self,
         x: torch.Tensor,
         rank_weights: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, dict]:
         """
         Forward pass with parallel scan.
         
@@ -251,6 +253,7 @@ class LowRankSSMScan(nn.Module):
         
         Returns:
             output: (B, L, D)
+            diagnostics: Dict with diagnostic info
         """
         B, L, D = x.shape
         
@@ -277,7 +280,13 @@ class LowRankSSMScan(nn.Module):
         gate = torch.sigmoid(self.gate(x))
         output = gate * h
         
-        return output
+        # Diagnostics to match AdaptiveRankSSM interface
+        diagnostics = {
+            'state_norm_mean': h.norm(dim=-1).mean(),
+            'decay_mean': self.decay.mean(),
+        }
+        
+        return output, diagnostics
 
 
 class AdaptiveLowRankSSM(nn.Module):

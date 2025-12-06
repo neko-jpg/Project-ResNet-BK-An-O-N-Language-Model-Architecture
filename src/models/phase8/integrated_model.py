@@ -321,10 +321,12 @@ class Phase8IntegratedModel(nn.Module):
             # G_iiを物理情報として渡す
             ar_ssm_output, ar_ssm_diag = self.ar_ssm_fusion(x, G_ii)
             
-            # 診断情報を収集
+            # 診断情報を収集 (handle both tensor and float values)
             if return_diagnostics:
-                self.diagnostics.ar_ssm_rank_mean = ar_ssm_diag.get('effective_rank_mean', torch.tensor(0.0)).item()
-                self.diagnostics.ar_ssm_hyperbolic_distance_mean = ar_ssm_diag.get('distance_mean', torch.tensor(0.0)).item()
+                rank_val = ar_ssm_diag.get('effective_rank_mean', 0.0)
+                dist_val = ar_ssm_diag.get('distance_mean', 0.0)
+                self.diagnostics.ar_ssm_rank_mean = rank_val.item() if hasattr(rank_val, 'item') else float(rank_val)
+                self.diagnostics.ar_ssm_hyperbolic_distance_mean = dist_val.item() if hasattr(dist_val, 'item') else float(dist_val)
             
                 # 曲率調整の提案があれば記録
                 if 'suggested_curvature' in ar_ssm_diag:

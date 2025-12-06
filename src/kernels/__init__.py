@@ -312,3 +312,49 @@ except ImportError:
 
 if _SUPERPOSITION_AVAILABLE:
     __all__.extend(['SuperpositionOptimizer', 'ImaginaryTimeEvolution', 'QuantumEnsembleDistillation', 'create_superposition_optimizer'])
+
+# =============================================================================
+# Phase 3 Moonshot Optimizations
+# =============================================================================
+
+# Gradient Teleportation (Moonshot #9)
+try:
+    from .gradient_teleportation import (
+        GradientTeleporter,
+        DysonPropagator,
+        NesterovTeleportOptimizer,
+        create_gradient_teleporter,
+    )
+    _GRADIENT_TELEPORT_AVAILABLE = True
+except ImportError:
+    _GRADIENT_TELEPORT_AVAILABLE = False
+    GradientTeleporter = None
+    DysonPropagator = None
+    NesterovTeleportOptimizer = None
+    create_gradient_teleporter = None
+
+if _GRADIENT_TELEPORT_AVAILABLE:
+    __all__.extend(['GradientTeleporter', 'DysonPropagator', 'NesterovTeleportOptimizer', 'create_gradient_teleporter'])
+
+# Holographic Compression (Moonshot #11)
+try:
+    from .holographic_compression import (
+        HolographicEncoder,
+        HolographicDecoder,
+        HolographicKVCache,
+        BulkBoundaryKernel,
+        create_holographic_kv_cache,
+        create_holographic_encoder,
+    )
+    _HOLOGRAPHIC_AVAILABLE = True
+except ImportError:
+    _HOLOGRAPHIC_AVAILABLE = False
+    HolographicEncoder = None
+    HolographicDecoder = None
+    HolographicKVCache = None
+    BulkBoundaryKernel = None
+    create_holographic_kv_cache = None
+    create_holographic_encoder = None
+
+if _HOLOGRAPHIC_AVAILABLE:
+    __all__.extend(['HolographicEncoder', 'HolographicDecoder', 'HolographicKVCache', 'BulkBoundaryKernel', 'create_holographic_kv_cache', 'create_holographic_encoder'])
