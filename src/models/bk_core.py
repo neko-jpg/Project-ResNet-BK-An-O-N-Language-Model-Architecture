@@ -16,6 +16,14 @@ import logging
 # Configure logger for BK-Core
 logger = logging.getLogger(__name__)
 
+# Try to import parallel scan kernel
+try:
+    from src.kernels.bk_parallel_scan import bk_parallel_inverse_diagonal, is_parallel_scan_available
+    PARALLEL_SCAN_AVAILABLE = is_parallel_scan_available()
+except ImportError:
+    PARALLEL_SCAN_AVAILABLE = False
+    bk_parallel_inverse_diagonal = None
+
 def get_tridiagonal_inverse_diagonal(a, b, c, z):
     """
     Compute diagonal of tridiagonal matrix inverse: diag((T - zI)^-1)
@@ -221,12 +229,14 @@ class BKCoreFunction(torch.autograd.Function):
       - Hybrid: dL/dv = (1-α)*theoretical + α*hypothesis7
     
     Supports both PyTorch (vmap) and Triton implementations.
+    Now also supports O(log N) parallel scan via use_parallel_scan=True.
     """
     GRAD_BLEND = 0.5  # 0.0 = pure theoretical, 1.0 = pure hypothesis-7
     USE_TRITON = None  # Auto-detect on first use
+    USE_PARALLEL_SCAN = True  # NEW: Use O(log N) parallel scan by default
 
     @staticmethod
-    def forward(ctx, he_diag, h0_super, h0_sub, z, use_triton=None):
+    def forward(ctx, he_diag, h0_super, h0_sub, z, use_triton=None, use_parallel_scan=None):
         """
         Forward pass: compute G_ii features.
         
@@ -236,6 +246,7 @@ class BKCoreFunction(torch.autograd.Function):
             h0_sub: (B, N-1) sub-diagonal
             z: complex scalar shift
             use_triton: bool or None - force Triton on/off, None=auto-detect
+            use_parallel_scan: bool or None - use O(log N) parallel scan (NEW)
         
         Returns:
             features: (B, N, 2) [real(G_ii), imag(G_ii)]
@@ -264,8 +275,15 @@ class BKCoreFunction(torch.autograd.Function):
                     BKCoreFunction.USE_TRITON = False
             use_triton = False
         
-        # Strict Triton implementation (No Fallback)
-        if use_triton:
+        # NEW: Check parallel scan preference
+        if use_parallel_scan is None:
+            use_parallel_scan = BKCoreFunction.USE_PARALLEL_SCAN and PARALLEL_SCAN_AVAILABLE
+        
+        # Try parallel scan first (O(log N) - fastest option)
+        if use_parallel_scan and PARALLEL_SCAN_AVAILABLE:
+            G_ii = bk_parallel_inverse_diagonal(he_diag, h0_super, h0_sub, z)
+        # Fallback to Triton implementation
+        elif use_triton:
             from src.kernels.bk_scan import bk_scan_triton
             G_ii = bk_scan_triton(he_diag, h0_super, h0_sub, z)
         else:
@@ -363,8 +381,8 @@ class BKCoreFunction(torch.autograd.Function):
 
         grad_he_diag = grad_v.to(torch.float32)
 
-        # No gradients for h0_super, h0_sub, z, use_triton
-        return grad_he_diag, None, None, None, None
+        # No gradients for h0_super, h0_sub, z, use_triton, use_parallel_scan
+        return grad_he_diag, None, None, None, None, None
 
 
 

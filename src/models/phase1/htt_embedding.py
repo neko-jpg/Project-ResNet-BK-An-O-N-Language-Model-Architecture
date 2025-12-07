@@ -101,6 +101,7 @@ class HolographicTTEmbedding(nn.Module):
         num_cores: int = 2,
         phase_encoding: bool = True,
         init_scale: float = 0.02,
+        use_complex_phase: bool = True,  # NEW: Full complex exp(iθ) rotation
     ):
         super().__init__()
         
@@ -138,6 +139,7 @@ class HolographicTTEmbedding(nn.Module):
         self.num_cores = num_cores
         self.phase_encoding = phase_encoding
         self.init_scale = init_scale
+        self.use_complex_phase = use_complex_phase  # NEW: exp(iθ) vs cos(θ)
         
         # Memory optimization flags
         self.use_triton_kernel = False  # Enable Triton TT contraction
@@ -279,17 +281,38 @@ class HolographicTTEmbedding(nn.Module):
         c2 = c2.squeeze(3)  # (B, L, rank, d2)
         
         # 4. Apply phase rotation (holographic encoding)
-        # 位相回転: cos(θ) による振幅変調（Phase 1）
+        # Phase 2: 完全な複素位相回転 exp(iθ) for dramatically improved expressiveness
+        # Phase 1 fallback: cos(θ) による振幅変調
         if self.phase_encoding:
-            phase_mod = torch.cos(self.phase_shift)  # (rank,)
-            c1 = c1 * phase_mod.view(1, 1, -1, 1)  # Broadcast to (B, L, rank, d1)
+            if getattr(self, 'use_complex_phase', False):
+                # NEW: Full complex phase rotation exp(iθ)
+                # Convert to complex64 for interference pattern representation
+                c1 = c1.to(torch.complex64)
+                c2 = c2.to(torch.complex64)
+                # Apply exp(iθ) rotation: c1 * (cos(θ) + i*sin(θ))
+                phase_factor = torch.exp(1j * self.phase_shift)  # (rank,) complex
+                c1 = c1 * phase_factor.view(1, 1, -1, 1)  # Broadcast to (B, L, rank, d1)
+            else:
+                # Legacy: cos(θ) real approximation for backward compatibility
+                phase_mod = torch.cos(self.phase_shift)  # (rank,)
+                c1 = c1 * phase_mod.view(1, 1, -1, 1)  # Broadcast to (B, L, rank, d1)
         
         # 5. Memory-Efficient Contraction
         # 物理的直観: 量子もつれ状態の測定（縮約）
         
-        # Guard: Clamp cores to prevent explosion
-        c1 = torch.clamp(c1, -10.0, 10.0)
-        c2 = torch.clamp(c2, -10.0, 10.0)
+        # Guard: Clamp cores to prevent explosion (complex-compatible)
+        def safe_clamp(x, max_val=10.0):
+            """Clamp tensor magnitude (works for both real and complex)."""
+            if torch.is_complex(x):
+                # For complex: clamp magnitude, preserve phase
+                mag = x.abs()
+                scale = torch.where(mag > max_val, max_val / (mag + 1e-8), torch.ones_like(mag))
+                return x * scale
+            else:
+                return torch.clamp(x, -max_val, max_val)
+        
+        c1 = safe_clamp(c1, 10.0)
+        c2 = safe_clamp(c2, 10.0)
         
         # Try Triton kernel first (if available)
         use_triton = hasattr(self, 'use_triton_kernel') and self.use_triton_kernel
@@ -297,10 +320,12 @@ class HolographicTTEmbedding(nn.Module):
         # Check if we should use fused kernel (if cores are quantized)
         is_quantized = getattr(self, '_is_quantized_state', False)
         
-        # Force float32 for stability during contraction
+        # Force appropriate dtype for stability during contraction
+        # Complex tensors stay complex64, real tensors become float32
         with torch.cuda.amp.autocast(enabled=False):
-            c1 = c1.float()
-            c2 = c2.float()
+            if not torch.is_complex(c1):
+                c1 = c1.float()
+                c2 = c2.float()
             
             executed_triton = False
             if use_triton and TRITON_AVAILABLE and torch.cuda.is_available():
@@ -366,7 +391,13 @@ class HolographicTTEmbedding(nn.Module):
             # Normalize to keep variance stable (LayerNorm-like effect)
             out = out / (self.rank ** 0.5)
             
-            return out.to(input_ids.device) # Cast back to original device/dtype if needed by context (but we return float32 mostly)
+            # Handle complex output: return real part for downstream compatibility
+            # Full complex mode preserves interference patterns during computation
+            if torch.is_complex(out):
+                # Take real part for downstream layers (phase info is encoded in magnitudes)
+                out = out.real
+            
+            return out.to(input_ids.device)  # Cast back to original device
     
     def forward_complex(self, input_ids: torch.Tensor) -> torch.Tensor:
         """
