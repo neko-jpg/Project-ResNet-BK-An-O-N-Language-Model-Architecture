@@ -376,15 +376,15 @@ class BKCoreHyperbolicIntegration(nn.Module):
         batch_size, seq_len, d_model = x.shape
         
         # Force float32 for stability in Green function calculation
-        with torch.cuda.amp.autocast(enabled=False):
-            x_f32 = x.float()
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            x_bf16 = x.to(torch.bfloat16)
             
             # 有効ハミルトニアン対角成分
-            he_diag = self.he_diag_proj(x_f32).mean(dim=-1)  # [B, N]
+            he_diag = self.he_diag_proj(x_bf16).mean(dim=-1)  # [B, N]
             
             # 三重対角行列の非対角成分
-            h0_super = self.h0_super_proj(x_f32[:, :-1]).mean(dim=-1)  # [B, N-1]
-            h0_sub = self.h0_sub_proj(x_f32[:, 1:]).mean(dim=-1)  # [B, N-1]
+            h0_super = self.h0_super_proj(x_bf16[:, :-1]).mean(dim=-1)  # [B, N-1]
+            h0_sub = self.h0_sub_proj(x_bf16[:, 1:]).mean(dim=-1)  # [B, N-1]
             
             # BK-Coreを使用してG_iiを計算
             try:

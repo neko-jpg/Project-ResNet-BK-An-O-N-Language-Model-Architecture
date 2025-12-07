@@ -18,15 +18,36 @@ EPS = 1e-5
 # Maximum norm for tangent vectors (prevents explosion in exp_map)
 MAX_TANGENT_NORM = 5.0  # Conservative limit for Poincaré ball operations
 
+# Try to import CUDA kernels for hyperbolic operations
+import sys
+import os as _os
+_cuda_ext_path = _os.path.join(_os.path.dirname(__file__), '..', '..', 'cuda')
+if _os.path.isdir(_cuda_ext_path) and _cuda_ext_path not in sys.path:
+    sys.path.insert(0, _os.path.abspath(_cuda_ext_path))
+
+try:
+    import hyperbolic_cuda
+    HYPERBOLIC_CUDA_AVAILABLE = True
+except ImportError:
+    HYPERBOLIC_CUDA_AVAILABLE = False
+
 def poincare_distance(x, y, c, dim=-1):
     """
     Computes pairwise Poincaré distance with curvature c.
     d(x,y) = (1/sqrt(c)) * acosh(1 + 2*c*||x-y||^2 / ((1-c*||x||^2)(1-c*||y||^2)))
     """
-    with torch.cuda.amp.autocast(enabled=False):
-        x = x.float()
-        y = y.float()
-        c = c.float()
+    # Fast path: CUDA kernel
+    if HYPERBOLIC_CUDA_AVAILABLE and x.is_cuda and y.is_cuda:
+        # Reshape to [1, batch*heads*seq, dim] if needed or handle properly
+        # The kernel expects inputs of shape [B, H, N, D]
+        # x: [B, H, N, D], y: [B, H, N, D]
+        if x.dim() == 4 and y.dim() == 4:
+            return hyperbolic_cuda.poincare_distance(x, y, c.item())
+            
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        x = x.to(torch.bfloat16)
+        y = y.to(torch.bfloat16)
+        c = c.to(torch.bfloat16)
 
         sqrt_c = torch.sqrt(c)
         x_norm_sq = (x * x).sum(dim=dim, keepdim=True)
@@ -58,10 +79,14 @@ def exp_map_at_origin(v, c, dim=-1):
     
     CRITICAL: Clamps tangent vector norm to prevent numerical explosion.
     """
-    with torch.cuda.amp.autocast(enabled=False):
-        v = v.float()
-        c = c.float()
-        sqrt_c = torch.sqrt(c)
+    # Fast path: CUDA kernel
+    if HYPERBOLIC_CUDA_AVAILABLE and v.is_cuda:
+        return hyperbolic_cuda.exp_map(v, c.item())
+
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        v = v.to(torch.bfloat16)
+        c = c.to(torch.bfloat16)
+        sqrt_c = torch.sqrt(c.clamp(min=1e-6))
         
         # CRITICAL: Clamp tangent vector norm BEFORE computing exp_map
         # This prevents ||v|| from growing unboundedly
@@ -83,11 +108,15 @@ def log_map_at_origin(y, c, dim=-1):
     Logarithmic map with curvature c.
     Formula: (1/sqrt(c)) * atanh(sqrt(c) * ||y||) * (y / ||y||)
     """
-    with torch.cuda.amp.autocast(enabled=False):
-        y = y.float()
-        c = c.float()
-        sqrt_c = torch.sqrt(c)
-        y_norm = y.norm(dim=dim, keepdim=True).clamp_min(EPS)
+    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        # Fast path: CUDA kernel
+        if HYPERBOLIC_CUDA_AVAILABLE and y.is_cuda:
+            return hyperbolic_cuda.log_map(y, c.item())
+
+        y = y.to(torch.bfloat16)
+        c = c.to(torch.bfloat16)
+        sqrt_c = torch.sqrt(c.clamp(min=1e-6))
+        y_norm = y.norm(dim=dim, keepdim=True).clamp(min=EPS)
 
         # Clamp arg of atanh to be < 1.0 with safety margin
         # sqrt(c) * ||y|| < 1  => ||y|| < 1/sqrt(c)
@@ -278,16 +307,16 @@ class HyperbolicMultiHeadAttention(nn.Module):
         batch_size, seq_len, _ = x.shape
 
         # --- Start of Numerical Stability Section ---
-        # All hyperbolic computations are wrapped in autocast(enabled=False) to enforce float32
-        # and prevent numerical instability issues common in mixed-precision training.
-        with torch.cuda.amp.autocast(enabled=False):
-            x_f32 = x.float()
+        # All hyperbolic computations use bfloat16 for stability (wider exponent range than fp16)
+        # while still benefiting from AMP speedup
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            x_bf16 = x.to(torch.bfloat16)
 
             c = F.softplus(self.log_c.float())
 
-            q_tangent = self.W_q(x_f32)
-            k_tangent = self.W_k(x_f32)
-            v_tangent = self.W_v(x_f32)
+            q_tangent = self.W_q(x_bf16)
+            k_tangent = self.W_k(x_bf16)
+            v_tangent = self.W_v(x_bf16)
 
             q_tangent = q_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
             k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
@@ -315,7 +344,7 @@ class HyperbolicMultiHeadAttention(nn.Module):
                 causal = mask_bool is not None  # Use causal masking if mask provided
                 
                 if self.use_e2e_kernel:
-                    residual_heads = x_f32.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2).contiguous()
+                    residual_heads = x_bf16.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2).contiguous()
                     output_tangent_heads = self.triton_kernel_function(
                         q_tangent,
                         k_tangent,

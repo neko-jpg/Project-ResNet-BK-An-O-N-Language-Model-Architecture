@@ -232,14 +232,14 @@ class HyperbolicAttentionTritonV2(torch.autograd.Function):
         v = v.contiguous()
         
         # 事前計算: exp_map (カーネル外で1回だけ)
-        with torch.cuda.amp.autocast(enabled=False):
-            q_f32 = q.float()
-            k_f32 = k.float()
-            v_f32 = v.float()
-            c_f32 = c.float()
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            q_bf16 = q.to(torch.bfloat16)
+            k_bf16 = k.to(torch.bfloat16)
+            v_bf16 = v.to(torch.bfloat16)
+            c_bf16 = c.to(torch.bfloat16)
             
-            q_hyp = exp_map_batched(q_f32, c_f32)
-            k_hyp = exp_map_batched(k_f32, c_f32)
+            q_hyp = exp_map_batched(q_bf16, c_bf16)
+            k_hyp = exp_map_batched(k_bf16, c_bf16)
             # vは接空間のまま
         
         out = torch.empty_like(q)
@@ -250,7 +250,7 @@ class HyperbolicAttentionTritonV2(torch.autograd.Function):
         grid = (triton.cdiv(N, 64), B * H)  # 初期値、autotuneで調整
         
         _hyperbolic_fwd_kernel_v2[grid](
-            q_hyp, k_hyp, v_f32, c_f32, beta.float(),
+            q_hyp, k_hyp, v_bf16, c_bf16, beta.to(torch.bfloat16),
             out, L,
             N, D, H,
             q_hyp.stride(0), q_hyp.stride(1), q_hyp.stride(2), q_hyp.stride(3),
@@ -262,8 +262,8 @@ class HyperbolicAttentionTritonV2(torch.autograd.Function):
         )
         
         # 出力にexp_mapを適用（接空間→双曲空間）
-        with torch.cuda.amp.autocast(enabled=False):
-            out_hyp = exp_map_batched(out.float(), c_f32)
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            out_hyp = exp_map_batched(out.to(torch.bfloat16), c_bf16)
         
         ctx.save_for_backward(q, k, v, c, beta, out_hyp, L)
         ctx.causal = causal

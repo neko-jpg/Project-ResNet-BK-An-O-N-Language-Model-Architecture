@@ -157,3 +157,6 @@ holographic_compression_ratio: 0.25
 use_superposition_training: false  # Heavy, enable manually
 superposition_particles: 5
 
+# === Revolutionary Training (7 Algorithms) ===
+use_revolutionary_training: true
+revolutionary_algorithms: "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"

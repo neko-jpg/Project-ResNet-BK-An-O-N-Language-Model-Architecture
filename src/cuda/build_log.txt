@@ -1,0 +1,83 @@
+running build_ext
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py:414: UserWarning: The detected CUDA version (12.6) has a minor version mismatch with the version that was used to compile PyTorch (12.4). Most likely this shouldn't be a problem.
+  warnings.warn(CUDA_MISMATCH_WARN.format(cuda_str_version, torch.version.cuda))
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py:424: UserWarning: There are no x86_64-linux-gnu-g++ version bounds defined for CUDA version 12.6
+  warnings.warn(f'There are no {compiler_name} version bounds defined for CUDA version {cuda_str_version}')
+building 'holographic_cuda' extension
+Emitting ninja build file /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/build.ninja...
+Compiling objects...
+Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+ninja: no work to do.
+x86_64-linux-gnu-g++ -shared -Wl,-O1 -Wl,-Bsymbolic-functions -Wl,-Bsymbolic-functions -Wl,-z,relro -g -fwrapv -O2 /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/holographic_binding.o /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/holographic_kernel.o -L/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/lib -L/usr/local/cuda/lib64 -L/usr/lib/x86_64-linux-gnu -lcufft -lc10 -ltorch -ltorch_cpu -ltorch_python -lcudart -lc10_cuda -ltorch_cuda -o build/lib.linux-x86_64-cpython-312/holographic_cuda.cpython-312-x86_64-linux-gnu.so
+building 'hyperbolic_cuda' extension
+Emitting ninja build file /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/build.ninja...
+Compiling objects...
+Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+[1/1] c++ -MMD -MF /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.o.d -fno-strict-overflow -Wsign-compare -DNDEBUG -g -O2 -Wall -fPIC -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include/TH -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include/THC -I/usr/local/cuda/include -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/include -I/usr/include/python3.12 -c -c /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp -o /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.o -O3 -std=c++17 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=hyperbolic_cuda -D_GLIBCXX_USE_CXX11_ABI=0
+FAILED: /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.o 
+c++ -MMD -MF /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.o.d -fno-strict-overflow -Wsign-compare -DNDEBUG -g -O2 -Wall -fPIC -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include/TH -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/include/THC -I/usr/local/cuda/include -I/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/include -I/usr/include/python3.12 -c -c /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp -o /mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/build/temp.linux-x86_64-cpython-312/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.o -O3 -std=c++17 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=hyperbolic_cuda -D_GLIBCXX_USE_CXX11_ABI=0
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp: In function ‘at::Tensor exp_map_cuda(at::Tensor, float)’:
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp:30:37: error: ‘getCurrentCUDAStream’ is not a member of ‘at::cuda’
+   30 |     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      |                                     ^~~~~~~~~~~~~~~~~~~~
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp: In function ‘at::Tensor log_map_cuda(at::Tensor, float)’:
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp:56:37: error: ‘getCurrentCUDAStream’ is not a member of ‘at::cuda’
+   56 |     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      |                                     ^~~~~~~~~~~~~~~~~~~~
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp: In function ‘at::Tensor poincare_distance_cuda(at::Tensor, at::Tensor, float)’:
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp:87:37: error: ‘getCurrentCUDAStream’ is not a member of ‘at::cuda’
+   87 |     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      |                                     ^~~~~~~~~~~~~~~~~~~~
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp: In function ‘at::Tensor fused_hyperbolic_attention_cuda(at::Tensor, at::Tensor, at::Tensor, float, float, bool)’:
+/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/hyperbolic_binding.cpp:124:37: error: ‘getCurrentCUDAStream’ is not a member of ‘at::cuda’
+  124 |     cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      |                                     ^~~~~~~~~~~~~~~~~~~~
+ninja: build stopped: subcommand failed.
+Traceback (most recent call last):
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py", line 2105, in _run_ninja_build
+    subprocess.run(
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['ninja', '-v']' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/src/cuda/setup.py", line 21, in <module>
+    setup(
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/__init__.py", line 103, in setup
+    return distutils.core.setup(**attrs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/core.py", line 184, in setup
+    return run_commands(dist)
+           ^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/core.py", line 200, in run_commands
+    dist.run_commands()
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/dist.py", line 970, in run_commands
+    self.run_command(cmd)
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/dist.py", line 974, in run_command
+    super().run_command(command)
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/dist.py", line 989, in run_command
+    cmd_obj.run()
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/command/build_ext.py", line 93, in run
+    _build_ext.run(self)
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/command/build_ext.py", line 359, in run
+    self.build_extensions()
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py", line 866, in build_extensions
+    build_ext.build_extensions(self)
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/command/build_ext.py", line 479, in build_extensions
+    self._build_extensions_serial()
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/command/build_ext.py", line 505, in _build_extensions_serial
+    self.build_extension(ext)
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/command/build_ext.py", line 254, in build_extension
+    _build_ext.build_extension(self, ext)
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/setuptools/_distutils/command/build_ext.py", line 560, in build_extension
+    objects = self.compiler.compile(
+              ^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py", line 679, in unix_wrap_ninja_compile
+    _write_ninja_file_and_compile_objects(
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py", line 1785, in _write_ninja_file_and_compile_objects
+    _run_ninja_build(
+  File "/mnt/c/dev/Project-ResNet-BK-An-O-N-Language-Model-Architecture/.venv_wsl/lib/python3.12/site-packages/torch/utils/cpp_extension.py", line 2121, in _run_ninja_build
+    raise RuntimeError(message) from e
+RuntimeError: Error compiling objects for extension

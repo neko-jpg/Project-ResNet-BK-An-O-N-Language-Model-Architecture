@@ -146,12 +146,12 @@ class MoEResNetBKLayer(nn.Module):
             z = 1.0j * epsilon + 1j * gamma_val
             z = z.to(dtype=torch.complex64, device=he_diag.device)
             
-            # Force float32 for BK-Core stability
-            with torch.cuda.amp.autocast(enabled=False):
-                he_diag_f = he_diag.float()
-                h0_super_f = h0_super.float()
-                h0_sub_f = h0_sub.float()
-                z_f = z # z is complex64, which is compatible with float32 logic usually
+            # Use bfloat16 for BK-Core (wider exponent range than fp16)
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                he_diag_f = he_diag.to(torch.bfloat16)
+                h0_super_f = h0_super.to(torch.bfloat16)
+                h0_sub_f = h0_sub.to(torch.bfloat16)
+                z_f = z  # z is complex64, compatible with bfloat16
                 
                 features, g_ii_scalar = self.bk_core(he_diag_f, h0_super_f, h0_sub_f, z_f)
                 

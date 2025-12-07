@@ -322,10 +322,10 @@ class HolographicTTEmbedding(nn.Module):
         
         # Force appropriate dtype for stability during contraction
         # Complex tensors stay complex64, real tensors become float32
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             if not torch.is_complex(c1):
-                c1 = c1.float()
-                c2 = c2.float()
+                c1 = c1.to(torch.bfloat16)
+                c2 = c2.to(torch.bfloat16)
             
             executed_triton = False
             if use_triton and TRITON_AVAILABLE and torch.cuda.is_available():

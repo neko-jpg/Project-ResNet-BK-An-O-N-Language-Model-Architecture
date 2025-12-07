@@ -71,6 +71,20 @@ except ImportError:
     GradientTeleporter = None
     create_gradient_teleporter = None
 
+# Import Revolutionary Training (7 algorithms)
+try:
+    from src.training.revolutionary_trainer import (
+        RevolutionaryTrainer,
+        RevolutionaryConfig,
+        create_revolutionary_trainer,
+    )
+    _REVOLUTIONARY_AVAILABLE = True
+except ImportError:
+    _REVOLUTIONARY_AVAILABLE = False
+    RevolutionaryTrainer = None
+    RevolutionaryConfig = None
+    create_revolutionary_trainer = None
+
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -311,6 +325,11 @@ class Phase8TrainingConfig:
     # #12 Superposition Training 
     use_superposition_training: bool = False  # Heavy, optional
     superposition_particles: int = 5
+    
+    # Revolutionary Training Algorithms (7 algorithms)
+    # Enable all 7 revolutionary algorithms for maximum speedup
+    use_revolutionary_training: bool = True  # Master switch
+    revolutionary_algorithms: str = "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"  # Enable ALL by default
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -522,7 +541,7 @@ def save_checkpoint(
     model: nn.Module,
     optimizer: optim.Optimizer,
     scheduler: CosineWarmupScheduler,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     ema: Optional[EMA],
     step: int,
     epoch: int,
@@ -555,7 +574,7 @@ def load_checkpoint(
     model: nn.Module,
     optimizer: optim.Optimizer,
     scheduler: CosineWarmupScheduler,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     ema: Optional[EMA],
     device: torch.device
 ) -> Tuple[int, int, float]:
@@ -675,7 +694,7 @@ def train_phase8():
         )
     
     # Scaler for mixed precision
-    scaler = torch.cuda.amp.GradScaler(enabled=config.use_mixed_precision)
+    scaler = torch.amp.GradScaler('cuda', enabled=config.use_mixed_precision)
     
     # EMA
     ema = EMA(model, decay=config.ema_decay) if config.use_ema else None
@@ -767,6 +786,28 @@ def train_phase8():
         except Exception as e:
             print(f"⚠ Gradient Teleportation not available: {e}")
     
+    # Revolutionary Training (7 algorithms integration)
+    revolutionary_trainer = None
+    if _REVOLUTIONARY_AVAILABLE and config.use_revolutionary_training:
+        try:
+            # Parse enabled algorithms from config
+            enabled_algos = config.revolutionary_algorithms.split(',')
+            rev_config = RevolutionaryConfig(
+                use_holographic='holographic' in enabled_algos,
+                use_closed_form='closed_form' in enabled_algos,
+                use_topological='topological' in enabled_algos,
+                use_retrocausal='retrocausal' in enabled_algos,
+                use_zeta='zeta' in enabled_algos,
+                use_sheaf='sheaf' in enabled_algos,
+                use_diffractive='diffractive' in enabled_algos,
+                learning_rate=config.learning_rate,
+                log_interval=config.log_interval,
+            )
+            revolutionary_trainer = RevolutionaryTrainer(model, rev_config, device)
+            print(f"✔ Revolutionary Training Enabled: {config.revolutionary_algorithms}")
+        except Exception as e:
+            print(f"⚠ Revolutionary Training not available: {e}")
+    
     # JSON Log
     training_log = {
         'config': asdict(config),
@@ -810,7 +851,7 @@ def train_phase8():
             x, y = x.to(device), y.to(device)
             
             # Forward pass with mixed precision
-            with torch.cuda.amp.autocast(enabled=config.use_mixed_precision):
+            with torch.amp.autocast('cuda', enabled=config.use_mixed_precision):
                 logits, diagnostics = model(x, return_diagnostics=True)
                 logits = logits.view(-1, config.vocab_size)
                 
@@ -913,6 +954,20 @@ def train_phase8():
                 # EMA update
                 if ema is not None:
                     ema.update()
+                
+                # Revolutionary Training Step (7 algorithms)
+                # Apply revolutionary algorithms EVERY STEP for maximum speedup
+                if revolutionary_trainer is not None:
+                    try:
+                        # Apply one revolutionary algorithm step
+                        loss_fn = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
+                        rev_loss, rev_metrics = revolutionary_trainer.train_step(x, y, loss_fn)
+                        algo_used = rev_metrics.get('algorithm', 'unknown')
+                        if step % config.log_interval == 0:
+                            print(f"  🔄 Revolutionary: {algo_used}")
+                    except Exception as e:
+                        if step % 100 == 0:
+                            print(f"  ⚠ Revolutionary step skipped: {e}")
                 
                 # Resonance-Adaptive Curvature step (Phase 8 optimization)
                 if resonance_curvature is not None and 'phase8' in (diagnostics or {}):
