@@ -90,7 +90,7 @@ class MoEResNetBKLayer(nn.Module):
         # Initialize v_proj with very small weights to prevent NaN in BK Core
         # Poincaré Centering: Initialize < 1e-3 to stay in hyperbolic safe zone
         with torch.no_grad():
-            nn.init.normal_(self.v_proj.weight, mean=0.0, std=1e-4)
+            nn.init.normal_(self.v_proj.weight, mean=0.0, std=0.02)  # Increased from 1e-4 to 0.02 for gradient flow
             if self.v_proj.bias is not None:
                 nn.init.zeros_(self.v_proj.bias)
 
@@ -118,7 +118,7 @@ class MoEResNetBKLayer(nn.Module):
             self.epsilon_param = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
             self.bk_core = BKCoreFunction.apply
 
-        self.v_max = 1.0  # Reduced from 3.0 for stability
+        self.v_max = 5.0  # Increased from 1.0 back to 5.0 for gradient flow
         self.feature_clamp = 5.0  # Reduced from 10.0 for stability
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -147,7 +147,7 @@ class MoEResNetBKLayer(nn.Module):
             z = z.to(dtype=torch.complex64, device=he_diag.device)
             
             # Use bfloat16 for BK-Core (wider exponent range than fp16)
-            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
                 he_diag_f = he_diag.to(torch.bfloat16)
                 h0_super_f = h0_super.to(torch.bfloat16)
                 h0_sub_f = h0_sub.to(torch.bfloat16)
@@ -346,6 +346,11 @@ class LanguageModel(nn.Module):
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.position_embedding = nn.Embedding(config.n_seq, config.d_model)
+        
+        # Register gradient clamp hook for position embedding (prevents NaN in backward)
+        def clamp_position_grad(grad):
+            return torch.clamp(grad, -10.0, 10.0) if grad is not None else grad
+        self.position_embedding.weight.register_hook(clamp_position_grad)
 
         if config.use_birman_schwinger and config.prime_bump_init:
             self.prime_bump_potential = PrimeBumpPotential(
@@ -437,6 +442,11 @@ class LanguageModel(nn.Module):
         pos = torch.arange(0, n_seq, dtype=torch.long, device=x.device).unsqueeze(0)
         pos_emb = self.position_embedding(pos)
         h = tok_emb + pos_emb
+        
+        # === Embedding → Block Safety Zone ===
+        # Clamp magnitude to prevent explosion before entering first LayerNorm
+        h = torch.nan_to_num(h, nan=0.0, posinf=10.0, neginf=-10.0)
+        h = torch.clamp(h, -10.0, 10.0)
 
         for block in self.blocks:
             if self.use_gradient_checkpointing and self.training:

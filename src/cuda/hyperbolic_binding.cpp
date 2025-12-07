@@ -13,7 +13,7 @@ extern "C" {
 
 // exp_map: tangent space -> Poincaré ball
 torch::Tensor exp_map_cuda(torch::Tensor v, float c) {
-    TORCH_CHECK(v.is_cuda(), "Input must be a CUDA tensor");
+    // TORCH_CHECK(v.is_cuda(), "Input must be a CUDA tensor");
     TORCH_CHECK(v.dim() >= 2, "Input must have at least 2 dimensions");
     
     auto v_contig = v.contiguous().to(torch::kFloat32);
@@ -39,7 +39,7 @@ torch::Tensor exp_map_cuda(torch::Tensor v, float c) {
 
 // log_map: Poincaré ball -> tangent space
 torch::Tensor log_map_cuda(torch::Tensor y, float c) {
-    TORCH_CHECK(y.is_cuda(), "Input must be a CUDA tensor");
+    // TORCH_CHECK(y.is_cuda(), "Input must be a CUDA tensor");
     TORCH_CHECK(y.dim() >= 2, "Input must have at least 2 dimensions");
     
     auto y_contig = y.contiguous().to(torch::kFloat32);
@@ -65,7 +65,7 @@ torch::Tensor log_map_cuda(torch::Tensor y, float c) {
 
 // poincare_distance: compute pairwise distances
 torch::Tensor poincare_distance_cuda(torch::Tensor Q, torch::Tensor K, float c) {
-    TORCH_CHECK(Q.is_cuda() && K.is_cuda(), "Inputs must be CUDA tensors");
+    // TORCH_CHECK(Q.is_cuda() && K.is_cuda(), "Inputs must be CUDA tensors");
     TORCH_CHECK(Q.dim() == 4 && K.dim() == 4, "Inputs must be 4D [B, H, N, D]");
     TORCH_CHECK(Q.sizes() == K.sizes(), "Q and K must have same shape");
     
@@ -102,7 +102,7 @@ torch::Tensor fused_hyperbolic_attention_cuda(
     float beta,
     bool causal
 ) {
-    TORCH_CHECK(Q.is_cuda() && K.is_cuda() && V.is_cuda(), "Inputs must be CUDA tensors");
+    // TORCH_CHECK(Q.is_cuda() && K.is_cuda() && V.is_cuda(), "Inputs must be CUDA tensors");
     TORCH_CHECK(Q.dim() == 4, "Q must be 4D [B, H, N, D]");
     
     auto Q_contig = Q.contiguous().to(torch::kFloat32);

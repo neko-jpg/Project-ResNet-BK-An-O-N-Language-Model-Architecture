@@ -97,6 +97,9 @@ class RevolutionaryTrainer:
         # Initialize revolutionary algorithms
         self._init_algorithms()
         
+        # Warmup mode - skip weight modifications during warmup for stability
+        self._warmup_mode = False
+        
         # Metrics
         self.step_count = 0
         self.metrics_history = []
@@ -188,6 +191,10 @@ class RevolutionaryTrainer:
         
         return 'base'  # Fallback to standard optimizer
     
+    def set_warmup_mode(self, enabled: bool):
+        """Enable/disable warmup mode. In warmup mode, all weight modifications are skipped."""
+        self._warmup_mode = enabled
+    
     def train_step(
         self,
         data: torch.Tensor,
@@ -207,6 +214,18 @@ class RevolutionaryTrainer:
         """
         if loss_fn is None:
             loss_fn = nn.CrossEntropyLoss()
+        
+        # Skip weight modifications during warmup for stability
+        if self._warmup_mode:
+            with torch.no_grad():
+                outputs = self.model(data)
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
+                if outputs.dim() == 3:
+                    outputs = outputs.view(-1, outputs.size(-1))
+                    targets = targets.view(-1)
+                loss = loss_fn(outputs, targets)
+            return loss, {'algorithm': 'warmup_skip', 'skipped': True, 'step': self.step_count}
         
         start_time = time.perf_counter()
         

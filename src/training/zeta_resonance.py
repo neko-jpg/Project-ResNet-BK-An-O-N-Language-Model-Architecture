@@ -243,11 +243,17 @@ class RiemannZetaResonance:
         num_samples = 50
         loss_samples = []
         
+        # Save original weights ONCE before sampling (CRITICAL FIX)
+        original_weights = {}
+        with torch.no_grad():
+            for name, p in self.model.named_parameters():
+                original_weights[name] = p.data.clone()
+        
         with torch.no_grad():
             for _ in range(num_samples):
                 # Random perturbation
                 for p in self.model.parameters():
-                    p.data += torch.randn_like(p.data) * 0.01
+                    p.data.add_(torch.randn_like(p.data) * 0.01)
                 
                 outputs = self.model(data)
                 if isinstance(outputs, tuple):
@@ -261,9 +267,9 @@ class RiemannZetaResonance:
                 
                 loss_samples.append(loss.item())
                 
-                # Restore
-                for p in self.model.parameters():
-                    p.data -= torch.randn_like(p.data) * 0.01
+                # Restore EXACT original weights (CRITICAL FIX - was using new random!)
+                for name, p in self.model.named_parameters():
+                    p.data.copy_(original_weights[name])
         
         losses_tensor = torch.tensor(loss_samples)
         
@@ -277,13 +283,17 @@ class RiemannZetaResonance:
         if zeros:
             weight_updates = self.zeros_to_weights(zeros)
             
-            # Apply updates
+            # Apply updates with clipping for stability
             with torch.no_grad():
                 offset = 0
                 for p in self.model.parameters():
                     numel = p.numel()
                     update = weight_updates[offset:offset + numel].view(p.shape)
-                    p.data -= update.to(p.device)
+                    update = update.to(p.device)
+                    # Clip update magnitude to prevent large weight changes
+                    update = torch.clamp(update, -0.01, 0.01)
+                    update = torch.nan_to_num(update, nan=0.0, posinf=0.0, neginf=0.0)
+                    p.data.sub_(update)
                     offset += numel
         
         elapsed = (time.perf_counter() - start_time) * 1000

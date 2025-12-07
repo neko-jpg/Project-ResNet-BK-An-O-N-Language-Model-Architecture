@@ -253,15 +253,17 @@ class SheafCohomologyCompilation:
             else:
                 obs = obstruction[:total_params]
             
-            # Normalize
-            obs = obs / (obs.abs().max() + 1e-8) * 0.01
+            # Normalize with stricter clipping for stability
+            obs = obs / (obs.abs().max() + 1e-8) * 0.001  # Reduced from 0.01 to 0.001
+            obs = torch.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
             
-            # Apply
+            # Apply with per-parameter clipping
             offset = 0
             for p in self.model.parameters():
                 numel = p.numel()
                 update = obs[offset:offset + numel].view(p.shape)
-                p.data -= update.to(p.device)
+                update = torch.clamp(update.to(p.device), -0.001, 0.001)
+                p.data.sub_(update)
                 offset += numel
     
     def compile_to_zero_cohomology(

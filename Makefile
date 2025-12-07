@@ -1,9 +1,16 @@
 .PHONY: help setup install clean recipe chat start-japanese train-japanese prepare-japanese-data dry-run-japanese resume-japanese resume list-checkpoints test benchmark export-model
 
-# Default shell
-SHELL := /bin/bash
+# WSL Configuration
+# All training commands run inside WSL Ubuntu
+WSL := wsl -d ubuntu
+WSL_BASH := $(WSL) bash -c
+
+# Virtual environment paths (inside WSL)
 VENV := venv_ubuntu
 export PYTHONPATH := .
+
+# For local (non-WSL) commands
+SHELL := /bin/bash
 PYTHON := $(shell if [ -f $(VENV)/bin/python ]; then echo $(VENV)/bin/python; else echo python3; fi)
 PIP := $(shell if [ -f $(VENV)/bin/pip ]; then echo $(VENV)/bin/pip; else echo pip; fi)
 
@@ -14,6 +21,7 @@ help:
 	@echo ""
 	@echo "🚀 Quick Start:"
 	@echo "  make start-japanese      🎯 Full: Download data + Train 10B Japanese"
+	@echo "  make train-japanese      🚀 Fast: Skip data download (Train only)"
 	@echo "  make dry-run-japanese    Test model config (no training)"
 	@echo ""
 	@echo "💾 Resume & Checkpoints:"
@@ -117,8 +125,28 @@ start-japanese:
 	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --compile
 
 dry-run-japanese:
-	@echo "🧪 Dry Run: Japanese 10B Model..."
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --dry-run --compile
+	@echo "==========================================="
+	@echo "🧪 Dry Run: Japanese 10B Model (Stability Check)"
+	@echo "==========================================="
+	@echo ""
+	@echo "📋 Expected Results (Stability Check):"
+	@echo "   ✅ NaN/Inf in gradients → 0"
+	@echo "   ✅ grad_norm in range 0.3〜2.0"
+	@echo "   ✅ Loss decreasing from initial"
+	@echo ""
+	@echo "❌ Failure Indicators:"
+	@echo "   ⚠ 'NaN/Inf in N parameter gradients'"
+	@echo "   ⚠ 'Grad norm X > 10.0, skipping step'"
+	@echo ""
+	@echo "-------------------------------------------"
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --dry-run
+	@echo ""
+	@echo "==========================================="
+	@echo "🔍 Check the output above for:"
+	@echo "   - No 'NaN/Inf' warnings"
+	@echo "   - grad values in 0.3~2.0 range"
+	@echo "   - Loss decreasing each step"
+	@echo "==========================================="
 
 # ==========================================
 # 💾 Checkpoint Management

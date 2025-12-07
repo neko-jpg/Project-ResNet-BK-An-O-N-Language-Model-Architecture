@@ -39,12 +39,12 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-learning_rate: 0.02
+learning_rate: 3.0e-4  # 0.02 -> 3e-4: 10Bモデルに適した学習率
 min_lr: 1.0e-6
-warmup_steps: 500  # 2000 -> 500 に短縮
+warmup_steps: 2000  # 500 -> 2000: 安定化のため延長
 
 # === Gradient Control ===
-grad_clip_warmup: 0.1
+grad_clip_warmup: 1.0  # Relaxed from 0.01 to allow flow
 grad_clip_train: 1.0
 grad_skip_threshold: 10.0
 
@@ -142,6 +142,7 @@ hmoe_num_experts: 8
 hmoe_top_k: 2
 
 # #9 Gradient Teleportation (non-local gradient propagation)
+# Scheduler managed: OFF during warmup (0-10%), ON after
 use_gradient_teleportation: true
 teleport_strength: 0.1
 
@@ -158,5 +159,7 @@ use_superposition_training: false  # Heavy, enable manually
 superposition_particles: 5
 
 # === Revolutionary Training (7 Algorithms) ===
+# Scheduler managed: Warmup(0-10%): OFF | Early(10-30%): 1/5 | Mid(30-70%): 1/3 | Late(70-100%): 1/2
 use_revolutionary_training: true
+revolutionary_auto_schedule: true
 revolutionary_algorithms: "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"

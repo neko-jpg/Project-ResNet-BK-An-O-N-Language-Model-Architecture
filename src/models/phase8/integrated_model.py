@@ -73,7 +73,12 @@ class Phase8IntegratedModel(nn.Module):
         # Phase 7IntegratedModelをコアとして使用
         # これにはResNetBK, HTT Embedding, Hybrid Hyperbolic Attentionが含まれる
         # Phase8固有のパラメータを除外してPhase7Configを作成
-        phase7_config_dict = config.__dict__.copy()
+        # Use dataclasses.fields() to properly get all inherited fields
+        from dataclasses import fields as dc_fields
+        
+        phase7_config_dict = {}
+        for f in dc_fields(config):
+            phase7_config_dict[f.name] = getattr(config, f.name)
         
         # Phase8固有のパラメータを除外
         phase8_specific_params = [

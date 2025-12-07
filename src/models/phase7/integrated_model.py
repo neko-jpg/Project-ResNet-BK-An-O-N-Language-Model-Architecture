@@ -47,22 +47,34 @@ class Phase7IntegratedModel(nn.Module):
         self.config = config
 
         # 1. Instantiate the core LanguageModel, ensuring Hybrid Attention is enabled
-        # We pass a copy of the config, converted to a dict, after forcing hybrid attention
-        model_config = config.__dict__.copy()
+        # Use dataclasses.asdict() to properly get all inherited fields
+        from dataclasses import asdict, fields
+        
+        # Get all fields from the config (including inherited ones)
+        model_config = {}
+        for f in fields(config):
+            model_config[f.name] = getattr(config, f.name)
+        
         model_config['use_hybrid_attention'] = True
 
         # Pop htt_rank as it's not a parameter for the base LanguageModel
         model_config.pop('htt_rank', None)
 
+        # Filter to only include fields that exist in ResNetBKConfig
+        resnet_bk_fields = {f.name for f in fields(ResNetBKConfig)}
+        filtered_config = {k: v for k, v in model_config.items() if k in resnet_bk_fields}
+
         # Ensure the config object passed to LanguageModel is of the correct base type
-        base_config = ResNetBKConfig(**model_config)
+        base_config = ResNetBKConfig(**filtered_config)
         self.model = LanguageModel(config=base_config)
 
         # 2. Instantiate the HTT Embedding
+        # use_complex_phase=False for stability (complex exp(iθ) causes NaN in mixed precision)
         self.htt_embedding = HolographicTTEmbedding(
             vocab_size=config.vocab_size,
             d_model=config.d_model,
-            rank=config.htt_rank
+            rank=config.htt_rank,
+            use_complex_phase=False,  # cos(θ) approximation for stability
         )
         self.htt_embedding.use_triton_kernel = config.use_triton_kernel
 

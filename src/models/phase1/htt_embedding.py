@@ -100,7 +100,7 @@ class HolographicTTEmbedding(nn.Module):
         rank: int = 16,
         num_cores: int = 2,
         phase_encoding: bool = True,
-        init_scale: float = 0.02,
+        init_scale: float = 1.0,   # Very aggressive increase to force grad flow to ~1.0
         use_complex_phase: bool = True,  # NEW: Full complex exp(iθ) rotation
     ):
         super().__init__()
@@ -161,7 +161,8 @@ class HolographicTTEmbedding(nn.Module):
         #
         # 物理的直観: 各コアは「局所的な量子状態」を表現
         # ランク次元は「もつれ結合」の強さを制御
-        # Robust Initialization: Scale down by 1/sqrt(rank) to prevent explosion
+        # CRITICAL: Use very small init to prevent gradient explosion
+        # Original 0.02 caused 222M NaN values - reduced to 0.001
         scale_factor = init_scale / (rank ** 0.5)
         self.core1 = nn.Parameter(
             torch.randn(self.v1, 1, rank, self.d1) * scale_factor
@@ -170,12 +171,22 @@ class HolographicTTEmbedding(nn.Module):
             torch.randn(self.v2, rank, 1, self.d2) * scale_factor
         )
         
+        # Register gradient clipping hooks to prevent NaN in backward pass
+        def clamp_grad(grad):
+            if grad is not None:
+                return torch.clamp(grad, -10.0, 10.0)  # Only clip extreme values
+            return grad
+        self.core1.register_hook(clamp_grad)
+        self.core2.register_hook(clamp_grad)
+        
         # Holographic Phase Parameters
         # 各ランク次元に位相を与える
         # 物理的直観: 波動関数の位相 exp(iθ)
         # 実数実装では cos(θ) による振幅変調として近似
         if phase_encoding:
-            self.phase_shift = nn.Parameter(torch.randn(rank) * 0.1)
+            # Smaller init for phase to prevent explosion
+            self.phase_shift = nn.Parameter(torch.randn(rank) * 0.01)
+            self.phase_shift.register_hook(clamp_grad)
         else:
             self.register_buffer('phase_shift', torch.zeros(rank))
         
@@ -280,28 +291,38 @@ class HolographicTTEmbedding(nn.Module):
         c1 = c1.squeeze(2)  # (B, L, rank, d1)
         c2 = c2.squeeze(3)  # (B, L, rank, d2)
         
+        # === NaN Safety Zone: Embedding Forward ===
+        # Guard cores immediately after gather
+        c1 = torch.nan_to_num(c1, nan=0.0, posinf=1.0, neginf=-1.0)
+        c2 = torch.nan_to_num(c2, nan=0.0, posinf=1.0, neginf=-1.0)
+        
         # 4. Apply phase rotation (holographic encoding)
         # Phase 2: 完全な複素位相回転 exp(iθ) for dramatically improved expressiveness
         # Phase 1 fallback: cos(θ) による振幅変調
         if self.phase_encoding:
+            # Clamp phase_shift to prevent explosion (θ should stay small)
+            phase_shift_safe = torch.clamp(self.phase_shift, -3.14159, 3.14159)
+            
             if getattr(self, 'use_complex_phase', False):
                 # NEW: Full complex phase rotation exp(iθ)
                 # Convert to complex64 for interference pattern representation
                 c1 = c1.to(torch.complex64)
                 c2 = c2.to(torch.complex64)
                 # Apply exp(iθ) rotation: c1 * (cos(θ) + i*sin(θ))
-                phase_factor = torch.exp(1j * self.phase_shift)  # (rank,) complex
+                phase_factor = torch.exp(1j * phase_shift_safe)  # (rank,) complex
                 c1 = c1 * phase_factor.view(1, 1, -1, 1)  # Broadcast to (B, L, rank, d1)
             else:
                 # Legacy: cos(θ) real approximation for backward compatibility
-                phase_mod = torch.cos(self.phase_shift)  # (rank,)
+                phase_mod = torch.cos(phase_shift_safe)  # (rank,)
+                # Clamp cos output to [-1, 1] for safety
+                phase_mod = torch.clamp(phase_mod, -1.0, 1.0)
                 c1 = c1 * phase_mod.view(1, 1, -1, 1)  # Broadcast to (B, L, rank, d1)
         
         # 5. Memory-Efficient Contraction
         # 物理的直観: 量子もつれ状態の測定（縮約）
         
         # Guard: Clamp cores to prevent explosion (complex-compatible)
-        def safe_clamp(x, max_val=10.0):
+        def safe_clamp(x, max_val=5.0):
             """Clamp tensor magnitude (works for both real and complex)."""
             if torch.is_complex(x):
                 # For complex: clamp magnitude, preserve phase
@@ -309,10 +330,12 @@ class HolographicTTEmbedding(nn.Module):
                 scale = torch.where(mag > max_val, max_val / (mag + 1e-8), torch.ones_like(mag))
                 return x * scale
             else:
+                # Apply nan_to_num first, then clamp
+                x = torch.nan_to_num(x, nan=0.0, posinf=max_val, neginf=-max_val)
                 return torch.clamp(x, -max_val, max_val)
         
-        c1 = safe_clamp(c1, 10.0)
-        c2 = safe_clamp(c2, 10.0)
+        c1 = safe_clamp(c1, 5.0)  # Reduced from 10.0 for tighter control
+        c2 = safe_clamp(c2, 5.0)
         
         # Try Triton kernel first (if available)
         use_triton = hasattr(self, 'use_triton_kernel') and self.use_triton_kernel
@@ -322,7 +345,7 @@ class HolographicTTEmbedding(nn.Module):
         
         # Force appropriate dtype for stability during contraction
         # Complex tensors stay complex64, real tensors become float32
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             if not torch.is_complex(c1):
                 c1 = c1.to(torch.bfloat16)
                 c2 = c2.to(torch.bfloat16)

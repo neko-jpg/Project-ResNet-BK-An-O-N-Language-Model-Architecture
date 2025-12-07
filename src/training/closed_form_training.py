@@ -271,17 +271,21 @@ class BKCoreClosedFormOptimizer:
         # Solve for optimal update: H^{-1} @ gradient
         update = self._solve_tridiagonal(a, b, c, gradient)
         
-        # Apply trust region constraint
+        # Apply stricter trust region constraint for stability
+        update = torch.nan_to_num(update, nan=0.0, posinf=0.0, neginf=0.0)
         update_norm = update.norm()
-        if update_norm > self.trust_region:
-            update = update * (self.trust_region / update_norm)
+        trust_region = min(self.trust_region, 0.1)  # Stricter: max 0.1
+        if update_norm > trust_region:
+            update = update * (trust_region / (update_norm + 1e-8))
         
-        # Apply update to parameters
+        # Apply update to parameters with per-element clipping
         with torch.no_grad():
             offset = 0
             for p in self.model.parameters():
                 numel = p.numel()
-                p.data -= update[offset:offset + numel].view(p.shape)
+                param_update = update[offset:offset + numel].view(p.shape)
+                param_update = torch.clamp(param_update, -0.01, 0.01)
+                p.data.sub_(param_update)
                 offset += numel
         
         elapsed = (time.perf_counter() - start_time) * 1000  # ms

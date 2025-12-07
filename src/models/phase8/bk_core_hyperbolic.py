@@ -376,7 +376,7 @@ class BKCoreHyperbolicIntegration(nn.Module):
         batch_size, seq_len, d_model = x.shape
         
         # Force float32 for stability in Green function calculation
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             x_bf16 = x.to(torch.bfloat16)
             
             # 有効ハミルトニアン対角成分

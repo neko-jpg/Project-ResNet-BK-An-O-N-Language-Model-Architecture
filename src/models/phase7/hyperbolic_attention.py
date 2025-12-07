@@ -36,15 +36,17 @@ def poincare_distance(x, y, c, dim=-1):
     Computes pairwise Poincaré distance with curvature c.
     d(x,y) = (1/sqrt(c)) * acosh(1 + 2*c*||x-y||^2 / ((1-c*||x||^2)(1-c*||y||^2)))
     """
-    # Fast path: CUDA kernel
+    # Fast path: CUDA kernel (only for 4D tensors with proper shape)
     if HYPERBOLIC_CUDA_AVAILABLE and x.is_cuda and y.is_cuda:
-        # Reshape to [1, batch*heads*seq, dim] if needed or handle properly
         # The kernel expects inputs of shape [B, H, N, D]
-        # x: [B, H, N, D], y: [B, H, N, D]
         if x.dim() == 4 and y.dim() == 4:
-            return hyperbolic_cuda.poincare_distance(x, y, c.item())
+            try:
+                c_val = c.item() if torch.is_tensor(c) else float(c)
+                return hyperbolic_cuda.poincare_distance(x, y, c_val)
+            except (RuntimeError, IndexError):
+                pass  # Fall back to PyTorch implementation
             
-    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
         x = x.to(torch.bfloat16)
         y = y.to(torch.bfloat16)
         c = c.to(torch.bfloat16)
@@ -79,11 +81,15 @@ def exp_map_at_origin(v, c, dim=-1):
     
     CRITICAL: Clamps tangent vector norm to prevent numerical explosion.
     """
-    # Fast path: CUDA kernel
-    if HYPERBOLIC_CUDA_AVAILABLE and v.is_cuda:
-        return hyperbolic_cuda.exp_map(v, c.item())
+    # Fast path: CUDA kernel (only for 4D tensors with proper shape)
+    if HYPERBOLIC_CUDA_AVAILABLE and v.is_cuda and v.dim() == 4:
+        try:
+            c_val = c.item() if torch.is_tensor(c) else float(c)
+            return hyperbolic_cuda.exp_map(v, c_val)
+        except (RuntimeError, IndexError):
+            pass  # Fall back to PyTorch implementation
 
-    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
         v = v.to(torch.bfloat16)
         c = c.to(torch.bfloat16)
         sqrt_c = torch.sqrt(c.clamp(min=1e-6))
@@ -108,10 +114,14 @@ def log_map_at_origin(y, c, dim=-1):
     Logarithmic map with curvature c.
     Formula: (1/sqrt(c)) * atanh(sqrt(c) * ||y||) * (y / ||y||)
     """
-    with torch.amp.autocast('cuda', dtype=torch.bfloat16):
-        # Fast path: CUDA kernel
-        if HYPERBOLIC_CUDA_AVAILABLE and y.is_cuda:
-            return hyperbolic_cuda.log_map(y, c.item())
+    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        # Fast path: CUDA kernel (only for 4D tensors with proper shape)
+        if HYPERBOLIC_CUDA_AVAILABLE and y.is_cuda and y.dim() == 4:
+            try:
+                c_val = c.item() if torch.is_tensor(c) else float(c)
+                return hyperbolic_cuda.log_map(y, c_val)
+            except (RuntimeError, IndexError):
+                pass  # Fall back to PyTorch implementation
 
         y = y.to(torch.bfloat16)
         c = c.to(torch.bfloat16)
@@ -309,7 +319,7 @@ class HyperbolicMultiHeadAttention(nn.Module):
         # --- Start of Numerical Stability Section ---
         # All hyperbolic computations use bfloat16 for stability (wider exponent range than fp16)
         # while still benefiting from AMP speedup
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             x_bf16 = x.to(torch.bfloat16)
 
             c = F.softplus(self.log_c.float())
