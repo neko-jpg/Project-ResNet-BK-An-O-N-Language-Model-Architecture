@@ -48,6 +48,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.models.phase8.integrated_model import Phase8IntegratedModel, Phase8Config
 from src.optimizers.muon import Muon
 
+# Import new Riemannian-Muon-Bit optimizer (Phase 1: Hyperbolic Training)
+try:
+    from src.optimizers.riemannian_muon_bit import RiemannianMuonBit, create_riemannian_muon_bit
+    _RIEMANNIAN_MUON_AVAILABLE = True
+except ImportError:
+    _RIEMANNIAN_MUON_AVAILABLE = False
+    RiemannianMuonBit = None
+
 # Lazy import for data_utils (requires datasets library)
 def get_mixed_data_loader(*args, **kwargs):
     from src.utils.data_utils import get_mixed_data_loader as _loader
@@ -395,7 +403,7 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--dry-run", action="store_true")
     
     # Optimizer
-    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "muon"])
+    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "muon", "riemannian_muon"])
     parser.add_argument("--beta1", type=float, default=0.9)
     parser.add_argument("--beta2", type=float, default=0.95)
     parser.add_argument("--weight-decay", type=float, default=0.01)
@@ -477,7 +485,7 @@ def parse_args() -> Phase8TrainingConfig:
         min_lr=get_val('min_lr', 1e-6),
         warmup_steps=get_val('warmup_steps', 500),
         max_steps=get_val('max_steps', None),
-        optimizer_type=get_val('optimizer_type', 'adamw'),
+        optimizer_type=args.optimizer,  # CLI always takes priority for optimizer
         beta1=get_val('beta1', 0.9),
         beta2=get_val('beta2', 0.95),
         eps=get_val('eps', 1e-8),
@@ -568,6 +576,27 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
     
     # Apply weight initialization
     init_weights(model)
+    
+    # ========== Global Gradient Sanitization ==========
+    # Register gradient hooks on ALL parameters to sanitize NaN/Inf
+    # This prevents gradient explosion from any source
+    def create_sanitize_hook(param_name):
+        def sanitize_grad(grad):
+            if grad is not None:
+                if torch.isnan(grad).any() or torch.isinf(grad).any():
+                    # Replace NaN/Inf with zeros
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+                # Clamp to reasonable range
+                return torch.clamp(grad, -1.0, 1.0)
+            return grad
+        return sanitize_grad
+    
+    num_hooks = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            param.register_hook(create_sanitize_hook(name))
+            num_hooks += 1
+    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters")
     
     model = model.to(device)
     
@@ -778,6 +807,25 @@ def train_phase8():
     print(f"Trainable Parameters: {trainable_params:,}")
     
     # Optimizer
+    if config.optimizer_type == 'riemannian_muon':
+        if not _RIEMANNIAN_MUON_AVAILABLE:
+            print("⚠ RiemannianMuonBit not available, falling back to Muon")
+            config.optimizer_type = 'muon'
+        else:
+            print("🌀 Using Riemannian-Muon-Bit Optimizer (Hyperbolic + 1.58-bit)")
+            optimizer = RiemannianMuonBit(
+                model.parameters(),
+                lr=config.learning_rate,
+                momentum=0.95,
+                nesterov=True,
+                hs_steps=5,
+                curvature=-1.0,
+                use_j_orthogonal=True,
+                use_stochastic_rounding=False,  # Disable for now (can enable later)
+                adamw_lr=1e-4,
+                warmup_steps=config.warmup_steps,
+            )
+    
     if config.optimizer_type == 'muon':
         print("⚛ Using Muon Optimizer (Stabilized)")
         optimizer = Muon(

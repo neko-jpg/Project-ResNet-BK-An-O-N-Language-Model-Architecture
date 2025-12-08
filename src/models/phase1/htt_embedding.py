@@ -163,7 +163,8 @@ class HolographicTTEmbedding(nn.Module):
         # ランク次元は「もつれ結合」の強さを制御
         # CRITICAL: Use very small init to prevent gradient explosion
         # Original 0.02 caused 222M NaN values - reduced to 0.001
-        scale_factor = init_scale / (rank ** 0.5)
+        # Further reduced for stability with Riemannian optimizer
+        scale_factor = init_scale * 0.001 / (rank ** 0.5)  # Much smaller init
         self.core1 = nn.Parameter(
             torch.randn(self.v1, 1, rank, self.d1) * scale_factor
         )
@@ -172,9 +173,13 @@ class HolographicTTEmbedding(nn.Module):
         )
         
         # Register gradient clipping hooks to prevent NaN in backward pass
+        # TIGHTER CLIPPING: Reduced from ±10 to ±1.0 for Riemannian optimizer
         def clamp_grad(grad):
             if grad is not None:
-                return torch.clamp(grad, -10.0, 10.0)  # Only clip extreme values
+                # Check for NaN/Inf first
+                if torch.isnan(grad).any() or torch.isinf(grad).any():
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+                return torch.clamp(grad, -1.0, 1.0)  # Tighter clipping
             return grad
         self.core1.register_hook(clamp_grad)
         self.core2.register_hook(clamp_grad)
@@ -185,7 +190,7 @@ class HolographicTTEmbedding(nn.Module):
         # 実数実装では cos(θ) による振幅変調として近似
         if phase_encoding:
             # Smaller init for phase to prevent explosion
-            self.phase_shift = nn.Parameter(torch.randn(rank) * 0.01)
+            self.phase_shift = nn.Parameter(torch.randn(rank) * 0.001)  # Even smaller
             self.phase_shift.register_hook(clamp_grad)
         else:
             self.register_buffer('phase_shift', torch.zeros(rank))
@@ -334,8 +339,15 @@ class HolographicTTEmbedding(nn.Module):
                 x = torch.nan_to_num(x, nan=0.0, posinf=max_val, neginf=-max_val)
                 return torch.clamp(x, -max_val, max_val)
         
-        c1 = safe_clamp(c1, 5.0)  # Reduced from 10.0 for tighter control
-        c2 = safe_clamp(c2, 5.0)
+        c1 = safe_clamp(c1, 2.0)  # Reduced from 5.0 for tighter control
+        c2 = safe_clamp(c2, 2.0)
+        
+        # CRITICAL: Normalize cores before contraction to prevent explosion
+        # This keeps the einsum output bounded
+        c1_norm = c1.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        c2_norm = c2.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        c1 = c1 / c1_norm
+        c2 = c2 / c2_norm
         
         # Try Triton kernel first (if available)
         use_triton = hasattr(self, 'use_triton_kernel') and self.use_triton_kernel

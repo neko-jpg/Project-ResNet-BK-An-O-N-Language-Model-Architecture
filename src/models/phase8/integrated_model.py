@@ -49,6 +49,14 @@ from .quantized_htt import (
     AdaptiveQuantizedHTTDecoder,
 )
 
+# Import Hyperbolic Normalization (Phase 1)
+try:
+    from src.models.hyperbolic_normalization import HyperbolicRMSNorm
+    _HYPERBOLIC_NORM_AVAILABLE = True
+except ImportError:
+    _HYPERBOLIC_NORM_AVAILABLE = False
+    HyperbolicRMSNorm = None
+
 
 class Phase8IntegratedModel(nn.Module):
     """
@@ -251,6 +259,15 @@ class Phase8IntegratedModel(nn.Module):
         # 診断情報の初期化
         self.diagnostics = Phase8Diagnostics()
         self.last_topology_loss: Optional[torch.Tensor] = None
+        
+        # ========== Hyperbolic Normalization (Phase 1) ==========
+        # Add post-embedding normalization to stabilize gradients
+        if _HYPERBOLIC_NORM_AVAILABLE:
+            self.embedding_norm = HyperbolicRMSNorm(config.d_model, eps=1e-6)
+            print("Phase 8: ✔ HyperbolicRMSNorm enabled for embedding stabilization")
+        else:
+            self.embedding_norm = nn.LayerNorm(config.d_model)
+            print("Phase 8: Using standard LayerNorm (HyperbolicRMSNorm not available)")
     
     def forward(
         self,
@@ -294,6 +311,11 @@ class Phase8IntegratedModel(nn.Module):
         # 中間表現を取得（Phase 7の埋め込み層から）
         # HTT Embedding (Quantized or Standard)
         x = self.phase7_model.htt_embedding(input_ids)  # [batch, seq_len, d_model]
+        
+        # ========== Apply Hyperbolic Normalization ==========
+        # Stabilize embeddings to prevent NaN in gradients
+        x = self.embedding_norm(x)
+        
         batch_size, seq_len, d_model = x.shape
         topology_loss_value = None
         

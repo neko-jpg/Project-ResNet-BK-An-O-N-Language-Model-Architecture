@@ -357,11 +357,20 @@ class LanguageModel(nn.Module):
         
         # Register gradient clamp hooks for embeddings (Muon用: より厳しく)
         def clamp_position_grad(grad):
-            return torch.clamp(grad, -1.0, 1.0) if grad is not None else grad  # 10.0 → 1.0
+            if grad is not None:
+                # CRITICAL: Sanitize NaN/Inf BEFORE clamping
+                if torch.isnan(grad).any() or torch.isinf(grad).any():
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+                return torch.clamp(grad, -1.0, 1.0)
+            return grad
         self.position_embedding.weight.register_hook(clamp_position_grad)
         
         def clamp_token_grad(grad):
-            return torch.clamp(grad, -1.0, 1.0) if grad is not None else grad
+            if grad is not None:
+                if torch.isnan(grad).any() or torch.isinf(grad).any():
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
+                return torch.clamp(grad, -1.0, 1.0)
+            return grad
         self.token_embedding.weight.register_hook(clamp_token_grad)
 
         if config.use_birman_schwinger and config.prime_bump_init:
