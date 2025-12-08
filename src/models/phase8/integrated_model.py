@@ -1,7 +1,7 @@
 """
 Phase 8 Integrated Model - ResNetBK Based Implementation
 
-Phase 8はPhase 7（ResNetBK + HTT Embedding + Hybrid Hyperbolic Attention）の拡張です。
+Phase 8はPhase 7（ResNetBK + HTT + Hybrid Hyperbolic Attention）の拡張です。
 Phase 7の全機能を継承し、以下の拡張を追加します：
 
 1. BK-Core Hyperbolic Integration: BK-CoreのG_iiを使用した物理ベースゲーティング
@@ -49,7 +49,7 @@ from .quantized_htt import (
     AdaptiveQuantizedHTTDecoder,
 )
 
-# Import Hyperbolic Normalization (Phase 1)
+# Import Hyperbolic Normalization (Phase 1 Research)
 try:
     from src.models.hyperbolic_normalization import HyperbolicRMSNorm
     _HYPERBOLIC_NORM_AVAILABLE = True
@@ -137,6 +137,9 @@ class Phase8IntegratedModel(nn.Module):
             'use_batched_hyperbolic_distance', 'use_resonance_adaptive_curvature',
             'resonance_threshold', 'curvature_adjustment_rate',
             'use_ternary_mobius_matmul', 'use_quantized_htt_fusion',
+            # Research Flags (Phase 1 & 2)
+            'use_hyperbolic_loss', 'use_koopman_consistency', 'koopman_weight',
+            'use_stochastic_resonance', 'sr_noise_scale', 'use_geodesic_backprop',
         ]
 
         # Phase 7Configに存在しないキーを削除
@@ -260,8 +263,8 @@ class Phase8IntegratedModel(nn.Module):
         self.diagnostics = Phase8Diagnostics()
         self.last_topology_loss: Optional[torch.Tensor] = None
         
-        # ========== Hyperbolic Normalization (Phase 1) ==========
-        # Add post-embedding normalization to stabilize gradients
+        # ========== Hyperbolic Normalization (Phase 1 Research) ==========
+        # Replace LayerNorm with HyperbolicRMSNorm to preserve radial hierarchy
         if _HYPERBOLIC_NORM_AVAILABLE:
             self.embedding_norm = HyperbolicRMSNorm(config.d_model, eps=1e-6)
             print("Phase 8: ✔ HyperbolicRMSNorm enabled for embedding stabilization")
@@ -312,8 +315,8 @@ class Phase8IntegratedModel(nn.Module):
         # HTT Embedding (Quantized or Standard)
         x = self.phase7_model.htt_embedding(input_ids)  # [batch, seq_len, d_model]
         
-        # ========== Apply Hyperbolic Normalization ==========
-        # Stabilize embeddings to prevent NaN in gradients
+        # ========== Apply Hyperbolic Normalization (Phase 1 Research) ==========
+        # Stabilize embeddings to prevent NaN in gradients by preserving radial hierarchy
         x = self.embedding_norm(x)
         
         batch_size, seq_len, d_model = x.shape

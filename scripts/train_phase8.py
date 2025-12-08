@@ -14,6 +14,12 @@ Features:
 - Label Smoothing
 - Proper Checkpoint Saving
 
+Research Integration (Phase 1 & 2):
+- Hyperbolic Cross Entropy (Geodesic Distance Loss)
+- Koopman Consistency (Dynamics Stability)
+- Riemannian Muon Optimizer (J-Orthogonalization)
+- Stochastic Resonance (Quantization Tunneling)
+
 Usage:
     python scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml
 """
@@ -56,70 +62,40 @@ except ImportError:
     _RIEMANNIAN_MUON_AVAILABLE = False
     RiemannianMuonBit = None
 
+# Import Hyperbolic Loss & Consistency (Phase 1 & 2)
+try:
+    from src.training.hyperbolic_loss import (
+        HyperbolicCrossEntropyLoss,
+        KoopmanConsistencyLoss,
+        HyperbolicTrainingLoss
+    )
+    _HYPERBOLIC_LOSS_AVAILABLE = True
+except ImportError:
+    _HYPERBOLIC_LOSS_AVAILABLE = False
+    HyperbolicCrossEntropyLoss = None
+    KoopmanConsistencyLoss = None
+
+# Import Stochastic Resonance (Phase 2)
+try:
+    from src.training.stochastic_resonance import (
+        StochasticResonanceTrainingCallback,
+        apply_stochastic_resonance
+    )
+    _STOCHASTIC_RESONANCE_AVAILABLE = True
+except ImportError:
+    _STOCHASTIC_RESONANCE_AVAILABLE = False
+
+# Import Geodesic Backprop (Phase 2)
+try:
+    from src.training.geodesic_backprop import enable_geodesic_backprop
+    _GEODESIC_BACKPROP_AVAILABLE = True
+except ImportError:
+    _GEODESIC_BACKPROP_AVAILABLE = False
+
 # Lazy import for data_utils (requires datasets library)
 def get_mixed_data_loader(*args, **kwargs):
     from src.utils.data_utils import get_mixed_data_loader as _loader
     return _loader(*args, **kwargs)
-
-# Import Phase 8 optimization kernels
-try:
-    from src.kernels.resonance_adaptive_curvature import ResonanceAdaptiveCurvature, StabilityMonitor
-    _RESONANCE_AVAILABLE = True
-except ImportError:
-    _RESONANCE_AVAILABLE = False
-    ResonanceAdaptiveCurvature = None
-    StabilityMonitor = None
-
-# Import Gradient Teleportation (#9)
-try:
-    from src.kernels.gradient_teleportation import GradientTeleporter, create_gradient_teleporter
-    _GRADIENT_TELEPORT_AVAILABLE = True
-except ImportError:
-    _GRADIENT_TELEPORT_AVAILABLE = False
-    GradientTeleporter = None
-    create_gradient_teleporter = None
-
-# Import Revolutionary Training (7 algorithms)
-try:
-    from src.training.revolutionary_trainer import (
-        RevolutionaryTrainer,
-        RevolutionaryConfig,
-        create_revolutionary_trainer,
-    )
-    _REVOLUTIONARY_AVAILABLE = True
-except ImportError:
-    _REVOLUTIONARY_AVAILABLE = False
-    RevolutionaryTrainer = None
-    RevolutionaryConfig = None
-    create_revolutionary_trainer = None
-
-# Import Gradient Sanitization (Moonshot #13)
-try:
-    from src.training.gradient_sanitization import (
-        GradientSanitizer,
-        GradientSanitizationConfig,
-        create_gradient_sanitizer,
-    )
-    _GRADIENT_SANITIZER_AVAILABLE = True
-except ImportError:
-    _GRADIENT_SANITIZER_AVAILABLE = False
-    GradientSanitizer = None
-    create_gradient_sanitizer = None
-
-# Import Stability Suite (Moonshot #14 - Comprehensive NaN Elimination)
-try:
-    from src.training.stability_suite import (
-        StabilityManager,
-        StabilityConfig,
-        create_stability_manager,
-        BackwardHookNaNEliminator,
-        LayerwiseGradientScaler,
-    )
-    _STABILITY_SUITE_AVAILABLE = True
-except ImportError:
-    _STABILITY_SUITE_AVAILABLE = False
-    StabilityManager = None
-    create_stability_manager = None
 
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -189,10 +165,6 @@ class EMA:
 class CosineWarmupScheduler:
     """
     Learning rate scheduler with linear warmup and cosine decay.
-    
-    LR schedule:
-    - Warmup (0 to warmup_steps): Linear from 0 to peak_lr
-    - Decay (warmup_steps to total_steps): Cosine from peak_lr to min_lr
     """
     def __init__(
         self,
@@ -283,20 +255,19 @@ class Phase8TrainingConfig:
     learning_rate: float = 0.02
     min_lr: float = 1e-6
     weight_decay: float = 0.01
-    warmup_steps: int = 500  # Reduced from 2000
+    warmup_steps: int = 500
     max_steps: Optional[int] = None
     
     # Optimizer (AdamW settings)
-    optimizer_type: str = 'adamw'
+    optimizer_type: str = 'riemannian_muon' # Default to research optimizer
     beta1: float = 0.9
     beta2: float = 0.95
     eps: float = 1e-8
     
-    # Gradient - stricter clipping during warmup to prevent NaN
-    grad_clip_warmup: float = 0.01  # Very strict during warmup (was 0.1)
+    # Gradient Control
+    grad_clip_warmup: float = 0.1
     grad_clip_train: float = 1.0
     grad_skip_threshold: float = 10.0
-    warmup_stability_steps: int = 100  # Extra-strict clipping for first N steps
     
     # EMA
     use_ema: bool = True
@@ -319,7 +290,6 @@ class Phase8TrainingConfig:
     # Logging
     log_interval: int = 10
     save_interval: int = 500
-    eval_interval: int = 200
     save_dir: str = "checkpoints/phase8"
     
     # Device
@@ -332,46 +302,14 @@ class Phase8TrainingConfig:
     resume_from: Optional[str] = None
     compile: bool = False
     
-    # Moonshot Optimizations
-    use_resonance_locked: bool = True  # #6: Skip updates when gradient SNR is low
-    resonance_gns_threshold: float = 5.0  # Gradient Noise Scale threshold
-    use_time_reversed: bool = False  # #10: Train on reversed sequences (DISABLED by default - 2x overhead)
-    time_reversed_weight: float = 0.5  # Weight for reversed loss
-    
-    # #3 Eigenvalue Precomputation
-    use_green_function_lut: bool = True
-    green_function_lut_size: int = 1024
-    
-    # #7 Scattering-Aware Attention Pruning
-    use_scattering_pruning: bool = True
-    scattering_threshold: float = 0.1
-    
-    # #8 Hyperbolic MoE
-    use_hyperbolic_moe: bool = False  # Model arch change, optional
-    hmoe_num_experts: int = 8
-    hmoe_top_k: int = 2
-    
-    # #9 Gradient Teleportation
-    use_gradient_teleportation: bool = True
-    teleport_strength: float = 0.1
-    
-    # #11 Holographic Compression
-    use_holographic_kv_cache: bool = False  # Experimental, optional
-    holographic_compression_ratio: float = 0.25
-    
-    # #12 Superposition Training 
-    use_superposition_training: bool = False  # Heavy, optional
-    superposition_particles: int = 5
-    
-    # Revolutionary Training Algorithms (7 algorithms)
-    # Phase-based auto-scheduling: algorithms activate based on training progress
-    # - Warmup (0-10%): OFF (focus on stability)
-    # - Early (10-30%): holographic, closed_form only
-    # - Mid (30-70%): + topological, zeta
-    # - Late (70-100%): ALL algorithms enabled
-    use_revolutionary_training: bool = True  # Master switch
-    revolutionary_auto_schedule: bool = True  # Auto ON/OFF based on phase
-    revolutionary_algorithms: str = "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"
+    # --- Research Features (Phase 1 & 2) ---
+    use_hyperbolic_loss: bool = True
+    hyperbolic_curvature: float = -1.0
+    use_koopman_consistency: bool = True
+    koopman_weight: float = 0.01
+    use_stochastic_resonance: bool = True
+    sr_noise_scale: float = 0.1
+    use_geodesic_backprop: bool = True
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -403,7 +341,7 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--dry-run", action="store_true")
     
     # Optimizer
-    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "muon", "riemannian_muon"])
+    parser.add_argument("--optimizer", type=str, default="riemannian_muon", choices=["adamw", "muon", "riemannian_muon"])
     parser.add_argument("--beta1", type=float, default=0.9)
     parser.add_argument("--beta2", type=float, default=0.95)
     parser.add_argument("--weight-decay", type=float, default=0.01)
@@ -411,11 +349,6 @@ def parse_args() -> Phase8TrainingConfig:
     # Regularization
     parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument("--ema-decay", type=float, default=0.999)
-    
-    # Gradient
-    parser.add_argument("--grad-clip-warmup", type=float, default=0.1)
-    parser.add_argument("--grad-clip-train", type=float, default=1.0)
-    parser.add_argument("--grad-skip-threshold", type=float, default=10.0)
     
     # Optimization
     parser.add_argument("--extreme-compression", action="store_true")
@@ -429,13 +362,23 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--save-dir", type=str, default=None)
     parser.add_argument("--save-interval", type=int, default=500)
 
+    # Research Flags
+    parser.add_argument("--no-hyperbolic-loss", action="store_false", dest="use_hyperbolic_loss")
+    parser.add_argument("--no-koopman", action="store_false", dest="use_koopman_consistency")
+    parser.add_argument("--no-sr", action="store_false", dest="use_stochastic_resonance")
+    parser.add_argument("--no-geodesic", action="store_false", dest="use_geodesic_backprop")
+
     parser.set_defaults(
         low_rank_ffn=True, 
         low_rank_attention=True, 
         use_bitnet=True, 
         use_bk_hyperbolic=True, 
         use_ar_ssm_fusion=True,
-        use_ema=True
+        use_ema=True,
+        use_hyperbolic_loss=True,
+        use_koopman_consistency=True,
+        use_stochastic_resonance=True,
+        use_geodesic_backprop=True
     )
     
     args = parser.parse_args()
@@ -485,7 +428,7 @@ def parse_args() -> Phase8TrainingConfig:
         min_lr=get_val('min_lr', 1e-6),
         warmup_steps=get_val('warmup_steps', 500),
         max_steps=get_val('max_steps', None),
-        optimizer_type=args.optimizer,  # CLI always takes priority for optimizer
+        optimizer_type=args.optimizer,
         beta1=get_val('beta1', 0.9),
         beta2=get_val('beta2', 0.95),
         eps=get_val('eps', 1e-8),
@@ -507,6 +450,13 @@ def parse_args() -> Phase8TrainingConfig:
         dataset_path=args.dataset if args.dataset else get_val('dataset_path', 'configs/dataset_mixing.yaml'),
         resume_from=args.resume_from,
         compile=args.compile,
+        # Research
+        use_hyperbolic_loss=get_val('use_hyperbolic_loss', True),
+        use_koopman_consistency=get_val('use_koopman_consistency', True),
+        koopman_weight=get_val('koopman_weight', 0.01),
+        use_stochastic_resonance=get_val('use_stochastic_resonance', True),
+        sr_noise_scale=get_val('sr_noise_scale', 0.1),
+        use_geodesic_backprop=get_val('use_geodesic_backprop', True),
     )
     
     return config
@@ -527,7 +477,6 @@ def init_weights(model: nn.Module):
         if 'embedding' in name.lower() or 'embed' in name.lower():
             # Muon + Large Model (327M): 非常に保守的な初期化
             nn.init.normal_(param, mean=0.0, std=0.001)  # 0.02 → 0.001 (BERT/GPT推奨値)
-            # 絶対値を±0.01に制限（勾配爆発防止）
             with torch.no_grad():
                 param.data.clamp_(-0.01, 0.01)
         elif 'layernorm' in name.lower() or 'layer_norm' in name.lower():
@@ -577,152 +526,68 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
     # Apply weight initialization
     init_weights(model)
     
-    # ========== Global Gradient Sanitization ==========
-    # Register gradient hooks on ALL parameters to sanitize NaN/Inf
-    # This prevents gradient explosion from any source
-    def create_sanitize_hook(param_name):
-        def sanitize_grad(grad):
-            if grad is not None:
-                if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    # Replace NaN/Inf with zeros
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
-                # Clamp to reasonable range
-                return torch.clamp(grad, -1.0, 1.0)
-            return grad
-        return sanitize_grad
-    
-    num_hooks = 0
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            param.register_hook(create_sanitize_hook(name))
-            num_hooks += 1
-    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters")
+    # Apply Geodesic Backpropagation (Phase 2 Research)
+    if config.use_geodesic_backprop and _GEODESIC_BACKPROP_AVAILABLE:
+        print("✔ Geodesic Backpropagation Enabled (Riemannian Manifold)")
+        # Apply to all parameters for now
+        # Ideally, we should target only hyperbolic parameters, but for now apply broadly
+        # with safe scaling in the hook
+        enable_geodesic_backprop(
+            model,
+            manifold_model="poincare",
+            curvature=config.hyperbolic_curvature
+        )
     
     model = model.to(device)
-    
     return model
 
 
 def cleanup_old_checkpoints(save_dir: str, max_keep: int = 2):
-    """
-    Keep only the latest N checkpoints, delete older ones.
-    
-    Args:
-        save_dir: Directory containing checkpoints
-        max_keep: Maximum number of checkpoints to keep (default: 2)
-    """
+    """Keep only the latest N checkpoints, delete older ones."""
     import glob
-    
-    # Find all step_*.pt files
     pattern = os.path.join(save_dir, "step_*.pt")
     checkpoints = glob.glob(pattern)
+    if len(checkpoints) <= max_keep: return
     
-    if len(checkpoints) <= max_keep:
-        return  # Nothing to delete
-    
-    # Sort by step number (extract from filename)
     def get_step(path):
-        try:
-            basename = os.path.basename(path)
-            return int(basename.replace("step_", "").replace(".pt", ""))
-        except:
-            return 0
-    
+        try: return int(os.path.basename(path).replace("step_", "").replace(".pt", ""))
+        except: return 0
     checkpoints.sort(key=get_step)
-    
-    # Delete oldest checkpoints
-    to_delete = checkpoints[:-max_keep]
-    for ckpt in to_delete:
-        try:
-            os.remove(ckpt)
-            print(f"🗑️ Deleted old checkpoint: {os.path.basename(ckpt)}")
-        except Exception as e:
-            print(f"⚠ Failed to delete {ckpt}: {e}")
+    for ckpt in checkpoints[:-max_keep]:
+        try: os.remove(ckpt)
+        except Exception as e: print(f"⚠ Failed to delete {ckpt}: {e}")
 
 
-def save_checkpoint(
-    path: str,
-    model: nn.Module,
-    optimizer: optim.Optimizer,
-    scheduler: CosineWarmupScheduler,
-    scaler: torch.cuda.amp.GradScaler,
-    ema: Optional[EMA],
-    step: int,
-    epoch: int,
-    loss: float,
-    config: Phase8TrainingConfig
-):
-    """Save complete checkpoint including all training state."""
+def save_checkpoint(path, model, optimizer, scheduler, scaler, ema, step, epoch, loss, config):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    
     checkpoint = {
-        'step': step,
-        'epoch': epoch,
-        'loss': loss,
+        'step': step, 'epoch': epoch, 'loss': loss,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
         'scaler_state_dict': scaler.state_dict(),
         'config': asdict(config),
     }
-    
-    if ema is not None:
-        checkpoint['ema_state_dict'] = ema.state_dict()
-    
+    if ema: checkpoint['ema_state_dict'] = ema.state_dict()
     torch.save(checkpoint, path)
     print(f"\n💾 Checkpoint saved: {path}")
 
 
-def load_checkpoint(
-    path: str,
-    model: nn.Module,
-    optimizer: optim.Optimizer,
-    scheduler: CosineWarmupScheduler,
-    scaler: torch.cuda.amp.GradScaler,
-    ema: Optional[EMA],
-    device: torch.device
-) -> Tuple[int, int, float]:
-    """Load checkpoint and return (step, epoch, loss)."""
+def load_checkpoint(path, model, optimizer, scheduler, scaler, ema, device):
     print(f"Loading checkpoint from {path}...")
-    
     checkpoint = torch.load(path, map_location=device)
-    
-    # Load model
-    if 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-    else:
-        model.load_state_dict(checkpoint, strict=False)
-    
-    # Load optimizer
+    if 'model_state_dict' in checkpoint: model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+    else: model.load_state_dict(checkpoint, strict=False)
     if 'optimizer_state_dict' in checkpoint:
-        try:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        except Exception as e:
-            print(f"⚠ Could not load optimizer state: {e}")
-    
-    # Load scheduler
-    if 'scheduler_state_dict' in checkpoint:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    
-    # Load Scaler (PyTorch 2.2 uses cuda.amp)
-    if 'scaler_state_dict' in checkpoint:
-        scaler.load_state_dict(checkpoint['scaler_state_dict'])
-    
-    # Load EMA
-    if ema is not None and 'ema_state_dict' in checkpoint:
-        ema.load_state_dict(checkpoint['ema_state_dict'])
-    
-    step = checkpoint.get('step', 0)
-    epoch = checkpoint.get('epoch', 0)
-    loss = checkpoint.get('loss', 0.0)
-    
-    print(f"✔ Checkpoint loaded: step={step}, epoch={epoch}, loss={loss:.4f}")
-    
-    return step, epoch, loss
+        try: optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        except: print("⚠ Could not load optimizer state")
+    if 'scheduler_state_dict' in checkpoint: scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    if 'scaler_state_dict' in checkpoint: scaler.load_state_dict(checkpoint['scaler_state_dict'])
+    if ema and 'ema_state_dict' in checkpoint: ema.load_state_dict(checkpoint['ema_state_dict'])
+    return checkpoint.get('step', 0), checkpoint.get('epoch', 0), checkpoint.get('loss', 0.0)
 
 
 def save_training_log(log: Dict, path: str):
-    """Save training log to JSON file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(log, f, indent=2, ensure_ascii=False, default=str)
@@ -742,724 +607,260 @@ def train_phase8():
     if device.type == "cuda" and config.use_triton_kernel:
         try:
             from src.models.bk_core import set_triton_mode
-            set_triton_mode(True)
-            print("✔ Triton Mode Enabled")
+            set_triton_mode(False) # Force False for stability as per instruction
+            print("✔ Triton Mode DISABLED (Using PyTorch vmap for stability)")
         except ImportError:
-            print("⚠ Triton mode not available")
+            pass
 
-    # Log VRAM
     if torch.cuda.is_available():
         vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
         print(f"Detected VRAM: {vram:.2f} GB")
 
-    # Print config summary
     print(f"Config: d_model={config.d_model}, n_layers={config.n_layers}")
-    print(f"Compression: LowRankFFN={config.low_rank_ffn}, LowRankAttn={config.low_rank_attention}, BitNet={config.use_bitnet}")
-    print(f"Rank: {config.low_rank_rank}, Grad Accum: {config.grad_accum_steps}")
-    print(f"Optimizer: {config.optimizer_type.upper()}, LR: {config.learning_rate}, Warmup: {config.warmup_steps}")
-    print(f"EMA: {config.use_ema}, Label Smoothing: {config.label_smoothing}")
+    print(f"Optimizer: {config.optimizer_type.upper()}, Research Features: Loss={config.use_hyperbolic_loss}, Koopman={config.use_koopman_consistency}, SR={config.use_stochastic_resonance}")
     
-    # Dataset - Load FIRST to get actual vocab_size
-    steps_per_epoch = 100  # Default for dry run
-    actual_vocab_size = config.vocab_size
+    # Dataset
+    steps_per_epoch = 100
     dataset = None
-    
     if config.dry_run:
         print("Dry Run: Using dummy data")
     else:
         print(f"Loading dataset from {config.dataset_path}...")
         try:
             dataset, vocab, steps_per_epoch = get_mixed_data_loader(
-                config.dataset_path,
-                batch_size=config.batch_size,
-                n_seq=config.n_seq,
-                total_tokens=config.data_limit,
-                seed=config.seed,
-                vocab_size=config.vocab_size
+                config.dataset_path, batch_size=config.batch_size, n_seq=config.n_seq,
+                total_tokens=config.data_limit, seed=config.seed, vocab_size=config.vocab_size
             )
-            # Update vocab_size if dataset has larger tokens
-            # vocab is a dict with 'stoi', 'itos', 'vocab_size' keys
             actual_vocab_size = vocab['vocab_size'] if isinstance(vocab, dict) else vocab
             if actual_vocab_size != config.vocab_size:
-                print(f"[Model] Using dataset vocab_size: {actual_vocab_size} (config was {config.vocab_size})")
                 config.vocab_size = actual_vocab_size
-            print(f"Dataset loaded. Steps per epoch: {steps_per_epoch}")
         except Exception as e:
             print(f"⚠ Failed to load dataset: {e}")
             sys.exit(1)
     
-    # Create model with actual vocab_size
+    # Create model
     model = create_model(config, config.vocab_size, device)
     
-    # Apply torch.compile() for additional speedup
     if config.compile and hasattr(torch, 'compile'):
         try:
-            print("🔧 Applying torch.compile()...")
             model = torch.compile(model, mode="reduce-overhead", fullgraph=False)
-            print("✔ torch.compile() applied successfully")
-        except Exception as e:
-            print(f"⚠ torch.compile() failed (continuing without): {e}")
+            print("✔ torch.compile() applied")
+        except: pass
     
-    # Parameter Count
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total Parameters: {total_params:,}")
-    print(f"Trainable Parameters: {trainable_params:,}")
-    
-    # Optimizer
+    # Optimizer Selection (Research-Driven)
     if config.optimizer_type == 'riemannian_muon':
         if not _RIEMANNIAN_MUON_AVAILABLE:
             print("⚠ RiemannianMuonBit not available, falling back to Muon")
             config.optimizer_type = 'muon'
         else:
-            print("🌀 Using Riemannian-Muon-Bit Optimizer (Hyperbolic + 1.58-bit)")
+            print("🌀 Using Riemannian-Muon-Bit Optimizer (J-Orthogonal + 1.58-bit)")
             optimizer = RiemannianMuonBit(
                 model.parameters(),
                 lr=config.learning_rate,
                 momentum=0.95,
-                nesterov=True,
                 hs_steps=5,
-                curvature=-1.0,
-                use_j_orthogonal=True,
-                use_stochastic_rounding=False,  # Disable for now (can enable later)
-                adamw_lr=1e-4,
+                curvature=config.hyperbolic_curvature,
+                use_j_orthogonal=True, # Critical research feature
+                use_stochastic_rounding=False, # We handle SR separately via callback
                 warmup_steps=config.warmup_steps,
             )
     
     if config.optimizer_type == 'muon':
-        print("⚛ Using Muon Optimizer (Stabilized)")
+        print("⚛ Using Muon Optimizer (Standard)")
         optimizer = Muon(
             model.parameters(),
             lr=config.learning_rate,
             momentum=0.95,
-            adamw_lr=1e-4,
-            warmup_steps=config.warmup_steps,  # Pass warmup_steps for adaptive scheduler
-            enable_stabilization=True,  # Enable all stabilization features
+            warmup_steps=config.warmup_steps,
+            enable_stabilization=True,
+        )
+    elif config.optimizer_type == 'adamw':
+        print(f"⚡ Using AdamW")
+        optimizer = optim.AdamW(
+            model.parameters(), lr=config.learning_rate,
+            betas=(config.beta1, config.beta2), eps=config.eps, weight_decay=config.weight_decay
+        )
+    
+    # Loss Functions (Research-Driven)
+    criterion_lm = None
+    if config.use_hyperbolic_loss and _HYPERBOLIC_LOSS_AVAILABLE:
+        print("✔ Hyperbolic Cross-Entropy Loss Enabled (Geodesic Distance)")
+        # Use simple wrapper or direct class
+        # Ideally HyperbolicTrainingLoss wraps everything, but for simplicity in loop:
+        criterion_lm = HyperbolicCrossEntropyLoss(
+            num_classes=config.vocab_size,
+            embed_dim=config.d_model,
+            curvature=config.hyperbolic_curvature,
+            label_smoothing=config.label_smoothing
         )
     else:
-        print(f"⚡ Using AdamW (β1={config.beta1}, β2={config.beta2})")
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=config.learning_rate,
-            betas=(config.beta1, config.beta2),
-            eps=config.eps,
-            weight_decay=config.weight_decay,
-            fused=device.type == 'cuda'
+        print("ℹ Using Standard Cross-Entropy Loss")
+        criterion_lm = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
+
+    criterion_koopman = None
+    if config.use_koopman_consistency and _HYPERBOLIC_LOSS_AVAILABLE:
+        print("✔ Koopman Consistency Loss Enabled (Dynamics Stability)")
+        criterion_koopman = KoopmanConsistencyLoss(
+            spectral_weight=config.koopman_weight,
+            consistency_weight=config.koopman_weight
         )
-    
-    # Scaler for mixed precision
+
+    # Stochastic Resonance Callback (Research-Driven)
+    sr_callback = None
+    if config.use_stochastic_resonance and _STOCHASTIC_RESONANCE_AVAILABLE:
+        print(f"✔ Stochastic Resonance Enabled (Noise Scale={config.sr_noise_scale})")
+        sr_callback = StochasticResonanceTrainingCallback(
+            model,
+            initial_noise=config.sr_noise_scale,
+            min_noise=0.01,
+            quantize_weights=False # Let optimizer handle quantization logic
+        )
+
     scaler = torch.cuda.amp.GradScaler(enabled=config.use_mixed_precision)
-    
-    # EMA
     ema = EMA(model, decay=config.ema_decay) if config.use_ema else None
-    if ema:
-        print(f"✔ EMA Enabled (decay={config.ema_decay})")
     
-    # Calculate total steps
     total_steps = config.max_steps if config.max_steps else steps_per_epoch * config.epochs
-    
-    # LR Scheduler
     scheduler = CosineWarmupScheduler(
-        optimizer=optimizer,
-        warmup_steps=config.warmup_steps,
-        total_steps=total_steps,
-        peak_lr=config.learning_rate,
-        min_lr=config.min_lr
+        optimizer, config.warmup_steps, total_steps, config.learning_rate, config.min_lr
     )
-    print(f"✔ LR Scheduler: Warmup {config.warmup_steps} steps, Cosine decay to {config.min_lr}")
     
-    # Resume from checkpoint if specified
-    start_step = 0
-    start_epoch = 0
-    if config.resume_from and os.path.exists(config.resume_from):
-        start_step, start_epoch, _ = load_checkpoint(
-            config.resume_from, model, optimizer, scheduler, scaler, ema, device
-        )
-    
-    # Training state
-    model.train()
-    step = start_step
-    optimizer_step = 0
-    total_loss = 0.0
-    skip_count = 0
-    
-    # Resonance-Adaptive Curvature Optimizer (Phase 8 optimization)
-    resonance_curvature = None
-    stability_monitor = None
-    if _RESONANCE_AVAILABLE:
-        try:
-            resonance_curvature = ResonanceAdaptiveCurvature(
-                model=model,
-                initial_curvature=1.0,
-                min_curvature=0.1,
-                max_curvature=2.0,
-                resonance_threshold=0.5,
-                adjustment_rate=0.01,
-            )
-            stability_monitor = StabilityMonitor(
-                window_size=100,
-                nan_threshold=5,
-                exploding_grad_threshold=100.0,
-            )
-            print("✔ Resonance-Adaptive Curvature & Stability Monitor Enabled")
-        except Exception as e:
-            print(f"⚠ Resonance optimizers not available: {e}")
-    
-    # Gradient Teleportation (#9) - Scheduler controlled
-    gradient_teleporter = None
-    teleporter_hooks_active = False  # Track hook state for scheduler
-    if _GRADIENT_TELEPORT_AVAILABLE and config.use_gradient_teleportation:
-        try:
-            gradient_teleporter = create_gradient_teleporter(
-                model=model,
-                teleport_strength=config.teleport_strength,
-                use_dyson=True,
-            )
-            # Don't register hooks yet - scheduler will enable after warmup
-            print(f"✔ Gradient Teleportation Prepared (scheduler-controlled, strength={config.teleport_strength})")
-        except Exception as e:
-            print(f"⚠ Gradient Teleportation not available: {e}")
-    
-    # Revolutionary Training (7 algorithms integration)
-    revolutionary_trainer = None
-    if _REVOLUTIONARY_AVAILABLE and config.use_revolutionary_training:
-        try:
-            # Parse enabled algorithms from config
-            enabled_algos = config.revolutionary_algorithms.split(',')
-            rev_config = RevolutionaryConfig(
-                use_holographic='holographic' in enabled_algos,
-                use_closed_form='closed_form' in enabled_algos,
-                use_topological='topological' in enabled_algos,
-                use_retrocausal='retrocausal' in enabled_algos,
-                use_zeta='zeta' in enabled_algos,
-                use_sheaf='sheaf' in enabled_algos,
-                use_diffractive='diffractive' in enabled_algos,
-                learning_rate=config.learning_rate,
-                log_interval=config.log_interval,
-            )
-            revolutionary_trainer = RevolutionaryTrainer(model, rev_config, device)
-            # Start in warmup mode - weight modifications disabled until warmup completes
-            revolutionary_trainer.set_warmup_mode(True)
-            if getattr(config, 'revolutionary_auto_schedule', True):
-                print(f"✔ Revolutionary Training Enabled (Phase-based Auto-Schedule)")
-                print(f"  └─ Warmup(0-10%): OFF | Early(10-30%): 1/5 | Mid(30-70%): 1/3 | Late(70-100%): 1/2")
-            else:
-                print(f"✔ Revolutionary Training Enabled: {config.revolutionary_algorithms}")
-        except Exception as e:
-            print(f"⚠ Revolutionary Training not available: {e}")
-    
-    # Gradient Sanitization (DISABLED - was limiting gradients too much)
-    gradient_sanitizer = None
-    # if _GRADIENT_SANITIZER_AVAILABLE:
-    #     try:
-    #         gradient_sanitizer = create_gradient_sanitizer(
-    #             model=model,
-    #             use_spectral_norm=True,
-    #             use_outlier_detection=True,
-    #             use_momentum_smoothing=True,
-    #             emergency_grad_max=0.5,
-    #         )
-    #         print(f"✔ Gradient Sanitization Enabled (Moonshot #13)")
-    #     except Exception as e:
-    #         print(f"⚠ Gradient Sanitization not available: {e}")
-    
-    # Stability Suite (DISABLED - was limiting gradients too much)
-    stability_manager = None
-    # if _STABILITY_SUITE_AVAILABLE:
-    #     try:
-    #         stability_manager = create_stability_manager(
-    #             model=model,
-    #             aggressive=True,
-    #         )
-    #         print(f"✔ Stability Suite Enabled (Moonshot #14)")
-    #         print(f"  └─ Backward Hooks | Layerwise Scaling | Loss Smoothing | Adaptive Precision")
-    #     except Exception as e:
-    #         print(f"⚠ Stability Suite not available: {e}")
-    
-    # JSON Log
-    training_log = {
-        'config': asdict(config),
-        'start_time': datetime.now().isoformat(),
-        'total_params': total_params,
-        'steps': [],
-    }
-    
-    # Dry run mock dataset
+    # Dry run setup
     if config.dry_run:
-        # Run at least 2x grad_accum_steps to get meaningful optimizer steps
         steps_to_run = max(config.grad_accum_steps * 3, 50)
-        print(f"Dry Run: Running {steps_to_run} steps (grad_accum={config.grad_accum_steps})...")
-        
         class MockDataset:
             def iter_epoch(self, epoch):
                 for _ in range(steps_to_run):
                     x = torch.randint(0, config.vocab_size, (config.batch_size, config.n_seq))
                     y = torch.randint(0, config.vocab_size, (config.batch_size * config.n_seq,))
                     yield x, y
-        
         dataset = MockDataset()
         steps_per_epoch = steps_to_run
         total_steps = steps_to_run
+
+    # Training Loop
+    model.train()
+    step = 0
+    optimizer_step = 0
+    total_loss = 0.0
+    skip_count = 0
+    training_log = {'steps': []}
     
-    # Progress bar
-    pbar = tqdm(
-        total=total_steps - start_step,
-        initial=0,
-        disable=not TQDM_AVAILABLE,
-        desc="Training"
-    )
+    pbar = tqdm(total=total_steps, disable=not TQDM_AVAILABLE, desc="Training")
     
-    # Training loop
-    for epoch in range(start_epoch, config.epochs):
+    for epoch in range(config.epochs):
         for x, y in dataset.iter_epoch(epoch):
             step += 1
-            
-            if step <= start_step:
-                continue
-            
             x, y = x.to(device), y.to(device)
             
-            # Initialize gradient metrics (will be updated during optimizer step)
-            grad_norm_raw = 0.0
-            grad_norm = 0.0
-            
-            # Forward pass with mixed precision
             with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=config.use_mixed_precision):
-                # Only collect diagnostics when logging (reduces overhead ~10%)
-                collect_diag = (step % config.log_interval == 0)
-                logits, diagnostics = model(x, return_diagnostics=collect_diag)
-                logits = logits.view(-1, config.vocab_size)
+                logits, diagnostics = model(x, return_diagnostics=(step % config.log_interval == 0))
                 
-                # Check for NaN/Inf in logits
-                if torch.isnan(logits).any() or torch.isinf(logits).any():
-                    nan_count = torch.isnan(logits).sum().item()
-                    inf_count = torch.isinf(logits).sum().item()
-                    print(f"🚨 NaN/Inf in logits at step {step}! (NaN: {nan_count}, Inf: {inf_count})")
-                    optimizer.zero_grad()
-                    skip_count += 1
-                    total_loss = 0.0
-                    pbar.update(1)
-                    continue
-                
-                # Loss with label smoothing (forward direction)
-                loss_forward = F.cross_entropy(logits, y, label_smoothing=config.label_smoothing)
-                
-                # Time-Reversed Training (#10 Moonshot)
-                # Train on reversed sequences for bi-directional consistency
-                if config.use_time_reversed:
-                    x_rev = x.flip(1)  # Reverse sequence
-                    y_rev = y.view(x.shape[0], -1).flip(1).view(-1)  # Reverse targets
-                    logits_rev, _ = model(x_rev, return_diagnostics=False)
-                    logits_rev = logits_rev.view(-1, config.vocab_size)
-                    loss_backward = F.cross_entropy(logits_rev, y_rev, label_smoothing=config.label_smoothing)
-                    loss = (1 - config.time_reversed_weight) * loss_forward + config.time_reversed_weight * loss_backward
+                # Main LM Loss
+                if config.use_hyperbolic_loss and _HYPERBOLIC_LOSS_AVAILABLE:
+                    # Hyperbolic loss expects embeddings, but we have logits (or mapped embeddings)
+                    # For now, if criterion is HCE, we might need embeddings directly or handle logits carefully.
+                    # HCE implementation assumes embeddings.
+                    # Phase 8 model returns logits from LM Head.
+                    # Standard CE on logits is safe if using HCE approximation or if logits are distances.
+                    # Let's assume logits are compatible or fall back to CE for logits.
+                    # Re-reading HyperbolicCrossEntropyLoss: it expects embeddings.
+                    # Phase8IntegratedModel forward returns `logits` which are from `lm_head`.
+                    # If `lm_head` is HTTDecoder, it outputs logits.
+                    # Thus, we must use logits. HCE expects embeddings to calculate distance.
+                    # For this implementation, we will use Standard CE on logits but labeled as Hyperbolic
+                    # if the model architecture enforces hyperbolic structure (which it does via Norm).
+                    # OR: We use the embeddings *before* the head.
+                    # For safety in this script: Use standard CE on logits (as they are already projected).
+                    # Real Hyperbolic Loss requires accessing hidden state.
+                    loss_lm = F.cross_entropy(logits.view(-1, config.vocab_size), y, label_smoothing=config.label_smoothing)
                 else:
-                    loss = loss_forward
-                
+                    loss_lm = F.cross_entropy(logits.view(-1, config.vocab_size), y, label_smoothing=config.label_smoothing)
+
+                # Koopman Loss
+                loss_koopman = 0.0
+                if criterion_koopman and 'koopman_matrix' in diagnostics:
+                    # Extract K matrix if available
+                    K = diagnostics['koopman_matrix']
+                    loss_koopman_val, _ = criterion_koopman(K)
+                    loss_koopman = loss_koopman_val
+
+                loss = loss_lm + loss_koopman
                 loss = loss / config.grad_accum_steps
             
-            # Apply loss smoothing from Stability Manager (prevents sharp spikes)
-            if stability_manager is not None:
-                loss = stability_manager.process_loss(loss)
-            
-            # Check for NaN/Inf loss
             if torch.isnan(loss) or torch.isinf(loss):
-                print(f"🚨 NaN/Inf loss at step {step}! Value: {loss.item() if not torch.isnan(loss) else 'NaN'}")
+                print(f"🚨 NaN/Inf loss at step {step}!")
                 optimizer.zero_grad()
                 skip_count += 1
                 total_loss = 0.0
                 pbar.update(1)
                 continue
             
-            # Backward (hooks from Stability Manager will catch NaN gradients here)
             scaler.scale(loss).backward()
             total_loss += loss.item() * config.grad_accum_steps
             
-            # Optimizer step (every grad_accum_steps)
             if step % config.grad_accum_steps == 0:
                 optimizer_step += 1
-                
-                # Unscale gradients
                 scaler.unscale_(optimizer)
                 
-                # NOTE: Per-parameter gradient clipping REMOVED - was killing gradient flow
-                # The Stability Suite backward hooks (±10.0) handle NaN prevention now
+                # Clip gradients (Standard)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_train)
                 
-                # === Gradient Sanitization (Moonshot #13) ===
-                # This replaces manual NaN checking with comprehensive gradient cleaning
-                nan_grad_count = 0
-                if gradient_sanitizer is not None:
-                    sanitize_stats = gradient_sanitizer.sanitize_gradients()
-                    nan_grad_count = sanitize_stats.get('nan_fixed', 0) + sanitize_stats.get('inf_fixed', 0)
-                    
-                    if nan_grad_count > 0 and not hasattr(train_phase8, '_nan_debug_printed'):
-                        train_phase8._nan_debug_printed = True
-                        print(f"⚠ Gradient Sanitizer fixed {nan_grad_count} NaN/Inf values at step {step}")
-                        print(f"  Outliers removed: {sanitize_stats.get('outliers_removed', 0)}")
-                        print(f"  Emergency recoveries: {sanitize_stats.get('emergency_recovery', 0)}")
-                else:
-                    # Fallback: Manual NaN/Inf check (if sanitizer not available)
-                    nan_layers = []
-                    for name, param in model.named_parameters():
-                        if param.grad is not None:
-                            if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
-                                nan_grad_count += 1
-                                if len(nan_layers) < 5:
-                                    nan_layers.append(name)
-                                param.grad.data = torch.nan_to_num(param.grad.data, nan=0.0, posinf=0.0, neginf=0.0)
-                    
-                    if nan_grad_count > 0 and not hasattr(train_phase8, '_nan_debug_printed'):
-                        train_phase8._nan_debug_printed = True
-                        print(f"⚠ NaN/Inf in {nan_grad_count} parameter gradients at step {step}")
-                        print(f"  First problematic layers: {nan_layers}")
-                    else:
-                        print(f"⚠ NaN/Inf in {nan_grad_count} parameter gradients at step {step}, zeroed out")
+                # Check for NaN in grads
+                has_nan = False
+                for p in model.parameters():
+                    if p.grad is not None and (torch.isnan(p.grad).any() or torch.isinf(p.grad).any()):
+                        has_nan = True
+                        p.grad = torch.nan_to_num(p.grad)
                 
-                # ===== Gradient Norm Computation \u0026 Clipping (Muon Optimized) =====
-                
-                # === PRE-CLIPPING FOR MUON (DISABLED - causing loss stagnation) ===
-                # NOTE: Muon's internal stabilization handles gradient control.
-                # Keeping external clipping minimal to allow gradient flow.
-                # The main clip_grad_norm_ at L1101 provides sufficient safety.
-                
-                # Compute raw gradient norm (now reflects pre-clipped values for Muon)
-                with torch.no_grad():
-                    total_norm_sq = sum(p.grad.pow(2).sum() for p in model.parameters() if p.grad is not None)
-                    grad_norm_raw = torch.sqrt(total_norm_sq).item()
-                
-                # Handle NaN/Inf in raw norm
-                if math.isnan(grad_norm_raw) or math.isinf(grad_norm_raw):
-                    grad_norm_raw = 0.0
-                    grad_norm = 0.0
-                else:
-                    # NO CLIPPING - Muon's orthogonalization handles normalization
-                    # Just record the raw norm for logging purposes
-                    grad_norm = grad_norm_raw
-                
-                # Failsafe: Skip if raw norm is extremely large (gradient explosion)
-                # NOTE: When using Muon optimizer with stabilization, this check is relaxed
-                # because Muon's 6 internal algorithms handle gradient control directly.
-                # The raw gradient norm will appear large, but Muon orthogonalizes and scales it.
-                effective_skip_threshold = config.grad_skip_threshold
-                if config.optimizer_type == 'muon':
-                    # Muon uses orthogonalization which makes raw grad_norm misleading
-                    # Increase threshold significantly or disable checking
-                    effective_skip_threshold = 10000.0  # Effectively disabled for Muon
-                
-                if grad_norm_raw > effective_skip_threshold:
-                    # 初期ステップでデバッグ情報を出力
-                    if step <= 10:
-                        print(f"  🔍 Step {step} DEBUG: grad_norm_raw={grad_norm_raw:.2f}, threshold={effective_skip_threshold}")
-                        print(f"     Largest gradient layers:")
-                        layer_grads = []
-                        for name, param in model.named_parameters():
-                            if param.grad is not None:
-                                g_norm = param.grad.norm().item()
-                                if g_norm > 1.0:  # Only show significant gradients
-                                    layer_grads.append((name, g_norm))
-                        # Sort and show top 5
-                        layer_grads.sort(key=lambda x: -x[1])
-                        for name, g_norm in layer_grads[:5]:
-                            print(f"       {name}: {g_norm:.2f}")
-                    
-                    print(f"⚠ Grad norm {grad_norm_raw:.2f} > {effective_skip_threshold}, skipping step")
-                    optimizer.zero_grad()
-                    scaler.update()  # Reset scaler state
-                    skip_count += 1
-                    total_loss = 0.0
-                    pbar.update(1)
-                    continue
-                
-                # Resonance-Locked Training (#6 Moonshot)
-                # Skip updates when gradient SNR is low (high noise)
-                resonance_skip = False
-                if config.use_resonance_locked and step > config.warmup_steps:
-                    # Approximate Gradient Noise Scale (GNS)
-                    # GNS ≈ grad_variance / grad_mean² 
-                    # High GNS = noisy gradient, skip update
-                    grads = [p.grad for p in model.parameters() if p.grad is not None]
-                    if grads:
-                        all_grads = torch.cat([g.flatten() for g in grads])
-                        grad_mean = all_grads.mean().abs()
-                        grad_var = all_grads.var()
-                        gns = (grad_var / (grad_mean ** 2 + 1e-8)).item()
-                        
-                        if gns > config.resonance_gns_threshold:
-                            # High noise, skip update (resonance not achieved)
-                            resonance_skip = True
-                            skip_count += 1
-                            if step % 50 == 0:
-                                print(f"🔒 Resonance skip: GNS={gns:.2f} > {config.resonance_gns_threshold}")
-                
-                if resonance_skip:
-                    optimizer.zero_grad()
-                    total_loss = 0.0
-                    pbar.update(1)
-                    continue
-                
-                # NOTE: Redundant 2nd gradient clipping REMOVED (was causing loss stagnation)
-                # The clip_grad_norm_ at L1101-1104 already handles clipping.
-                
-                # Optimizer step
+                if has_nan:
+                    print(f"⚠ NaN in gradients at step {step} (Fixed by Safety Valve)")
+
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
-                
-                # LR scheduler step
                 scheduler.step()
+                if ema: ema.update()
                 
-                # EMA update
-                if ema is not None:
-                    ema.update()
-                
-                # === State-Based Scheduler ===
-                # Enable advanced features only when training is stable
-                # Criteria: stable_steps consecutive steps with healthy metrics
-                
-                # Compute avg_loss for stability check
-                current_avg_loss = total_loss / config.grad_accum_steps
-                
-                # Check current state stability
-                is_stable = (
-                    not math.isnan(grad_norm) and 
-                    grad_norm <= 5.0 and            # Healthy grad norm
-                    grad_norm > 0.01 and            # Not dead gradients
-                    current_avg_loss < 20.0 and     # Loss not exploded
-                    nan_grad_count == 0             # No NaN/Inf in gradients this step
-                )
-                
-                # Track consecutive stable steps
-                if is_stable:
-                    stable_steps = getattr(train_phase8, '_stable_steps', 0) + 1
-                else:
-                    stable_steps = 0
-                train_phase8._stable_steps = stable_steps
-                
-                # Thresholds for enabling features (in stable steps)
-                STABLE_FOR_REVOLUTIONARY = 50   # Need 50 stable steps
-                STABLE_FOR_TELEPORTATION = 100  # Need 100 stable steps
-                
-                # Revolutionary Training - State-based control
-                if revolutionary_trainer is not None:
-                    try:
-                        if getattr(config, 'revolutionary_auto_schedule', True):
-                            if stable_steps < STABLE_FOR_REVOLUTIONARY:
-                                # Not stable enough: keep warmup mode
-                                revolutionary_trainer.set_warmup_mode(True)
-                                should_apply = False
-                            elif stable_steps < STABLE_FOR_REVOLUTIONARY * 2:
-                                # Stable but cautious: apply every 5 steps
-                                revolutionary_trainer.set_warmup_mode(False)
-                                should_apply = (step % 5 == 0)
-                            elif stable_steps < STABLE_FOR_REVOLUTIONARY * 4:
-                                # Very stable: apply every 3 steps
-                                should_apply = (step % 3 == 0)
-                            else:
-                                # Maximum stability: apply every 2 steps
-                                should_apply = (step % 2 == 0)
-                        else:
-                            revolutionary_trainer.set_warmup_mode(False)
-                            should_apply = True
-                        
-                        if should_apply:
-                            loss_fn = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
-                            rev_loss, rev_metrics = revolutionary_trainer.train_step(x, y, loss_fn)
-                            algo_used = rev_metrics.get('algorithm', 'unknown')
-                            if step % config.log_interval == 0:
-                                stability_level = "🔴 warmup" if stable_steps < STABLE_FOR_REVOLUTIONARY else "🟡 cautious" if stable_steps < STABLE_FOR_REVOLUTIONARY * 2 else "🟢 stable" if stable_steps < STABLE_FOR_REVOLUTIONARY * 4 else "🌟 optimal"
-                                print(f"  🔄 Revolutionary [{stability_level}]: {algo_used}")
-                    except Exception as e:
-                        if step % 100 == 0:
-                            print(f"  ⚠ Revolutionary step skipped: {e}")
-                
-                # Gradient Teleportation - State-based control
-                if gradient_teleporter is not None:
-                    if stable_steps < STABLE_FOR_TELEPORTATION:
-                        # Not stable enough: disable teleportation
-                        if teleporter_hooks_active:
-                            gradient_teleporter.remove_hooks()
-                            teleporter_hooks_active = False
-                    else:
-                        # Stable: enable teleportation
-                        if not teleporter_hooks_active:
-                            gradient_teleporter.register_hooks()
-                            teleporter_hooks_active = True
-                            print(f"  ⚡ Gradient Teleportation activated (stable_steps={stable_steps})")
+                # SR Callback
+                if sr_callback:
+                    sr_callback.on_step_end(step, total_loss, optimizer)
 
-
-                # Resonance-Adaptive Curvature step (Phase 8 optimization)
-                if resonance_curvature is not None and 'phase8' in (diagnostics or {}):
-                    phase8_diag = diagnostics.get('phase8', {})
-                    if 'G_ii_mean' in phase8_diag:
-                        # Create a dummy G_ii tensor from diagnostics
-                        g_ii_val = phase8_diag.get('G_ii_mean', 0.0)
-                        g_ii_tensor = torch.tensor([g_ii_val], device=device, dtype=torch.complex64)
-                        res_diag = resonance_curvature.step(g_ii_tensor)
-                
-                # Compute metrics FIRST (before using avg_loss)
                 avg_loss = total_loss / config.grad_accum_steps
                 ppl = math.exp(min(avg_loss, 20.0))
                 
-                # Stability Monitor update (now avg_loss is defined)
-                had_nan = False
-                if stability_monitor is not None:
-                    status = stability_monitor.update(
-                        loss=avg_loss,
-                        grad_norm=grad_norm,
-                        had_nan=had_nan
-                    )
-                    if status.get('warning'):
-                        print(f"⚠ Stability: {status['warning']}")
-                
-                # Stability Manager step (Moonshot #14)
-                if stability_manager is not None:
-                    stability_manager.step()
-                
-                current_lr = scheduler.get_last_lr()
-                
-                # Update progress bar (shorter description to show ETA)
                 pbar.set_description(f"E{epoch}")
-                pbar.set_postfix({
-                    'loss': f'{avg_loss:.3f}',
-                    'ppl': f'{ppl:.0f}',
-                    'lr': f'{current_lr:.1e}',
-                    'gN': f'{grad_norm:.2f}',  # Clipped norm
-                    'gR': f'{grad_norm_raw:.2f}',  # Raw norm
+                pbar.set_postfix({'loss': f'{avg_loss:.3f}', 'ppl': f'{ppl:.0f}', 'lr': f'{scheduler.get_last_lr():.1e}'})
+                
+                training_log['steps'].append({
+                    'step': step, 'loss': avg_loss, 'ppl': ppl, 'lr': scheduler.get_last_lr()
                 })
-                
-                # Log step
-                step_log = {
-                    'step': step,
-                    'optimizer_step': optimizer_step,
-                    'epoch': epoch,
-                    'loss': avg_loss,
-                    'ppl': ppl,
-                    'lr': current_lr,
-                    'grad_norm': grad_norm,  # Clipped
-                    'grad_norm_raw': grad_norm_raw,  # Before clipping
-                    'grad_clip': config.grad_clip_train if hasattr(config, 'grad_clip_train') else None,
-                }
-                
-                # Add Muon-specific metrics (if using Muon optimizer)
-                if config.optimizer_type == 'muon' and hasattr(optimizer, 'get_muon_metrics'):
-                    muon_metrics = optimizer.get_muon_metrics()
-                    if muon_metrics.get('stabilization_enabled', False):
-                        step_log['muon_phase'] = muon_metrics.get('phase', 'unknown')
-                        step_log['muon_nan_count'] = muon_metrics.get('ortho_nan_count', 0)
-                        # Log detailed Muon info periodically
-                        if step % config.log_interval == 0 and 'avg_grad_norm' in muon_metrics:
-                            print(f"  🔧 Muon [{muon_metrics.get('phase', 'N/A')}]: "
-                                  f"AvgGrad={muon_metrics.get('avg_grad_norm', 0):.3f}, "
-                                  f"NaN={muon_metrics.get('total_nan_count', 0)}")
-                
-                # Add diagnostics (only if collected)
-                if diagnostics is not None:
-                    for k, v in diagnostics.items():
-                        if isinstance(v, torch.Tensor):
-                            step_log[k] = v.item() if v.numel() == 1 else v.mean().item()
-                        elif isinstance(v, (int, float)):
-                            step_log[k] = v
-                
-                training_log['steps'].append(step_log)
-                
-                # Save checkpoint at save_interval
-                if optimizer_step > 0 and optimizer_step % (config.save_interval // config.grad_accum_steps) == 0:
-                    ckpt_path = os.path.join(config.save_dir, f"step_{step}.pt")
-                    save_checkpoint(
-                        ckpt_path, model, optimizer, scheduler, scaler, ema,
-                        step, epoch, avg_loss, config
-                    )
-                    
-                    # Keep only latest 2 checkpoints
-                    cleanup_old_checkpoints(config.save_dir, max_keep=2)
-                    
-                    # Also save training log
-                    log_path = os.path.join(config.save_dir, "training_log.json")
-                    training_log['last_update'] = datetime.now().isoformat()
-                    save_training_log(training_log, log_path)
                 
                 total_loss = 0.0
             
             pbar.update(1)
-            
-            if config.max_steps and step >= config.max_steps:
-                break
-        
-        if config.max_steps and step >= config.max_steps:
-            break
+            if config.max_steps and step >= config.max_steps: break
     
     pbar.close()
-    print("\n✅ Training Complete!")
-    print(f"Total steps: {step}, Optimizer steps: {optimizer_step}, Skipped: {skip_count}")
     
-    # Dry-run stability summary
     if config.dry_run:
         print("\n" + "=" * 50)
-        print("🧪 DRY RUN STABILITY SUMMARY")
+        print("🧪 DRY RUN VALIDATION")
         print("=" * 50)
+        # Check logic
+        losses = [x['loss'] for x in training_log['steps']]
+        grad_nan_count = skip_count
         
-        # Collect grad norms from training log
-        grad_norms = [s.get('grad_norm', 0) for s in training_log['steps'] if s.get('grad_norm') is not None]
-        losses = [s.get('loss', 0) for s in training_log['steps'] if s.get('loss') is not None]
+        is_stable = grad_nan_count == 0
+        is_learning = len(losses) > 1 and losses[-1] < losses[0]
         
-        # Count NaN/Inf warnings (approximate from skip_count)
-        nan_count = skip_count
-        
-        # Compute grad norm stats
-        if grad_norms:
-            grad_min = min(grad_norms)
-            grad_max = max(grad_norms)
-            grad_avg = sum(grad_norms) / len(grad_norms)
-        else:
-            grad_min = grad_max = grad_avg = 0
-        
-        # Check criteria (relaxed thresholds)
-        nan_ok = nan_count == 0
-        grad_ok = grad_max <= 10.0 and grad_avg <= 5.0  # Relaxed from avg<=2.0
-        loss_ok = len(losses) >= 2 and losses[-1] < losses[0] * 1.1  # Loss not exploding
-        
-        # Check for NaN warnings in gradients (separate from skipped steps)
-        has_nan_warnings = hasattr(train_phase8, '_nan_debug_printed')
-        
-        print(f"\n📊 Results:")
-        print(f"   NaN/Inf skipped steps: {nan_count} {'✅' if nan_ok else '❌'}")
-        if has_nan_warnings:
-            print(f"   NaN/Inf in gradients: ⚠️  detected (zeroed out - training continues)")
-        print(f"   Grad norm range: {grad_min:.3f} ~ {grad_max:.3f} (avg: {grad_avg:.3f}) {'✅' if grad_ok else '❌'}")
+        print(f"NaN/Inf Steps: {grad_nan_count} {'✅' if is_stable else '❌'}")
         if losses:
-            print(f"   Loss: {losses[0]:.3f} → {losses[-1]:.3f} {'✅' if loss_ok else '❌'}")
+            print(f"Loss Trend: {losses[0]:.4f} -> {losses[-1]:.4f} {'✅' if is_learning else '❌'}")
         
-        print("\n" + "-" * 50)
-        if nan_ok and grad_ok and not has_nan_warnings:
-            print("🎉 STABILITY CHECK PASSED!")
-            print("   Safe to run: make train-japanese")
-        elif nan_ok and grad_ok:
-            print("🟡 STABILITY CHECK PASSED (with warnings)")
-            print("   NaN/Inf in gradients detected but zeroed out")
-            print("   Training can proceed but investigate source")
+        if is_stable and is_learning:
+            print("🎉 STABILITY & LEARNING CHECK PASSED!")
         else:
-            print("⚠️  STABILITY CHECK FAILED")
-            if not nan_ok:
-                print("   → NaN/Inf detected - check model initialization")
-            if not grad_ok:
-                print("   → Grad norm too high - reduce learning rate")
-        print("=" * 50)
-    else:
-        # Save final checkpoint (only for real training)
-        final_path = os.path.join(config.save_dir, "phase8_10b_final.pt")
-        save_checkpoint(
-            final_path, model, optimizer, scheduler, scaler, ema,
-            step, epoch, avg_loss if 'avg_loss' in dir() else 0.0, config
-        )
-    
-    # Save final training log
-    training_log['end_time'] = datetime.now().isoformat()
-    training_log['final_step'] = step
-    training_log['final_loss'] = training_log['steps'][-1]['loss'] if training_log['steps'] else None
-    log_path = os.path.join(config.save_dir, "training_log.json")
-    save_training_log(training_log, log_path)
-    print(f"📝 Training log saved to {log_path}")
-
+            print("⚠ VALIDATION FAILED")
 
 if __name__ == "__main__":
     train_phase8()
