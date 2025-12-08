@@ -87,12 +87,20 @@ class MoEResNetBKLayer(nn.Module):
         self.gamma = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
         self.homeostasis = HomeostasisController()
         
-        # Initialize v_proj with very small weights to prevent NaN in BK Core
-        # Poincaré Centering: Initialize < 1e-3 to stay in hyperbolic safe zone
+        # Initialize v_proj with ultra-small weights (Muon + 327M model)
+        # Critical: v_proj feeds into BK Core - must be extremely conservative
         with torch.no_grad():
-            nn.init.normal_(self.v_proj.weight, mean=0.0, std=0.02)  # Increased from 1e-4 to 0.02 for gradient flow
+            nn.init.normal_(self.v_proj.weight, mean=0.0, std=0.0001)  # 0.02 → 0.0001 (200x smaller!)
             if self.v_proj.bias is not None:
                 nn.init.zeros_(self.v_proj.bias)
+        
+        # Add gradient clamp hook to v_proj (防止勾配爆発)
+        def clamp_v_proj_grad(grad):
+            if grad is None:
+                return grad
+            # Muon用: 非常に厳しいクランプ
+            return torch.clamp(grad, -0.1, 0.1)
+        self.v_proj.weight.register_hook(clamp_v_proj_grad)
 
         self.use_birman_schwinger = config.use_birman_schwinger
         if config.use_birman_schwinger:
@@ -142,7 +150,7 @@ class MoEResNetBKLayer(nn.Module):
             h0_sub   = self.h0_sub_base.expand(B, -1)
             h0_super = self.h0_super_base.expand(B, -1)
             he_diag = h0_diag + v_prelim
-            epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-6
+            epsilon = torch.nn.functional.softplus(self.epsilon_param) + 1e-4  # 1e-6 → 1e-4 (Muon安定化)
             z = 1.0j * epsilon + 1j * gamma_val
             z = z.to(dtype=torch.complex64, device=he_diag.device)
             
@@ -347,10 +355,14 @@ class LanguageModel(nn.Module):
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.position_embedding = nn.Embedding(config.n_seq, config.d_model)
         
-        # Register gradient clamp hook for position embedding (prevents NaN in backward)
+        # Register gradient clamp hooks for embeddings (Muon用: より厳しく)
         def clamp_position_grad(grad):
-            return torch.clamp(grad, -10.0, 10.0) if grad is not None else grad
+            return torch.clamp(grad, -1.0, 1.0) if grad is not None else grad  # 10.0 → 1.0
         self.position_embedding.weight.register_hook(clamp_position_grad)
+        
+        def clamp_token_grad(grad):
+            return torch.clamp(grad, -1.0, 1.0) if grad is not None else grad
+        self.token_embedding.weight.register_hook(clamp_token_grad)
 
         if config.use_birman_schwinger and config.prime_bump_init:
             self.prime_bump_potential = PrimeBumpPotential(

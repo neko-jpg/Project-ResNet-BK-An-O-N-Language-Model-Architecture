@@ -76,7 +76,14 @@ class BackwardHookNaNEliminator:
                 # Replace NaN/Inf with zeros
                 grad = torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
             
-            # Clamp to reasonable range
+            # Clamp to reasonable range (Muon用に厳格化済み)
+            grad_max = grad.abs().max().item()
+            if grad_max > self.max_grad_value:
+                # デバッグ: クリッピング発生をカウント
+                if not hasattr(self, 'clip_count'):
+                    self.clip_count = 0
+                self.clip_count += 1
+            
             grad = torch.clamp(grad, -self.max_grad_value, self.max_grad_value)
             
             return grad
@@ -558,15 +565,16 @@ def create_stability_manager(
         Configured StabilityManager instance
     """
     if aggressive:
+        # Muon Ultra-Aggressive Mode: 勾配を0.5-1.0に厳格に制限
         config = StabilityConfig(
             enable_backward_hooks=True,
-            backward_max_grad=10.0,  # Allow normal gradient flow (only clip extremes)
+            backward_max_grad=1.0,       # 10.0 → 1.0 (Muon: 通常時の上限)
             enable_embedding_stability=True,
             embedding_max_norm=5.0,
-            embedding_grad_max=10.0, # Allow normal gradient flow
-            enable_layerwise_scaling=False, # DISABLED - was killing gradients
-            embedding_scale=1.0,     # Full scale
-            early_layer_scale=1.0,   # Full scale
+            embedding_grad_max=0.5,      # 10.0 → 0.5 (Muon: embedding層は特に厳しく)
+            enable_layerwise_scaling=True,  # False → True (勾配爆発抑制)
+            embedding_scale=0.5,         # Embedding層の勾配を半分に
+            early_layer_scale=0.7,       # 初期層(0-25%)を70%に
             enable_loss_smoothing=True,
             max_loss=50.0,
             enable_adaptive_precision=True,

@@ -31,7 +31,7 @@ batch_size: 1
 gradient_accumulation_steps: 32
 effective_batch_size: 32
 
-# === Optimizer (AdamW) ===
+# === Optimizer (AdamW - stable choice) ===
 optimizer_type: adamw
 beta1: 0.9
 beta2: 0.95
@@ -39,14 +39,14 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-learning_rate: 3.0e-4  # 0.02 -> 3e-4: 10Bモデルに適した学習率
+learning_rate: 5.0e-3  # Increased LR to boost gradient magnitude
 min_lr: 1.0e-6
 warmup_steps: 2000  # 500 -> 2000: 安定化のため延長
 
-# === Gradient Control ===
-grad_clip_warmup: 1.0  # Relaxed from 0.01 to allow flow
-grad_clip_train: 1.0
-grad_skip_threshold: 10.0
+# === Gradient Control (Muon Optimized) ===
+grad_clip_warmup: 0.5  # Strict clipping during warmup (Muon用)
+grad_clip_train: 1.0   # 通常時: 最大1.0に制限 (目標: 0.5〜1.0)
+grad_skip_threshold: 10.0  # Failsafe: 異常な勾配爆発をスキップ
 
 # === EMA (Exponential Moving Average) ===
 use_ema: true

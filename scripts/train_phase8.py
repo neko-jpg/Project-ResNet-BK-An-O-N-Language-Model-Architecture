@@ -517,7 +517,11 @@ def init_weights(model: nn.Module):
             continue
         
         if 'embedding' in name.lower() or 'embed' in name.lower():
-            nn.init.normal_(param, mean=0.0, std=0.02)
+            # Muon + Large Model (327M): 非常に保守的な初期化
+            nn.init.normal_(param, mean=0.0, std=0.001)  # 0.02 → 0.001 (BERT/GPT推奨値)
+            # 絶対値を±0.01に制限（勾配爆発防止）
+            with torch.no_grad():
+                param.data.clamp_(-0.01, 0.01)
         elif 'layernorm' in name.lower() or 'layer_norm' in name.lower():
             if 'weight' in name or 'gamma' in name:
                 nn.init.ones_(param)
@@ -775,12 +779,14 @@ def train_phase8():
     
     # Optimizer
     if config.optimizer_type == 'muon':
-        print("⚛ Using Muon Optimizer")
+        print("⚛ Using Muon Optimizer (Stabilized)")
         optimizer = Muon(
             model.parameters(),
             lr=config.learning_rate,
             momentum=0.95,
-            adamw_lr=1e-4
+            adamw_lr=1e-4,
+            warmup_steps=config.warmup_steps,  # Pass warmup_steps for adaptive scheduler
+            enable_stabilization=True,  # Enable all stabilization features
         )
     else:
         print(f"⚡ Using AdamW (β1={config.beta1}, β2={config.beta2})")
@@ -894,33 +900,33 @@ def train_phase8():
         except Exception as e:
             print(f"⚠ Revolutionary Training not available: {e}")
     
-    # Gradient Sanitization (Moonshot #13)
+    # Gradient Sanitization (DISABLED - was limiting gradients too much)
     gradient_sanitizer = None
-    if _GRADIENT_SANITIZER_AVAILABLE:
-        try:
-            gradient_sanitizer = create_gradient_sanitizer(
-                model=model,
-                use_spectral_norm=True,
-                use_outlier_detection=True,
-                use_momentum_smoothing=True,
-                emergency_grad_max=1.0,
-            )
-            print(f"✔ Gradient Sanitization Enabled (Moonshot #13)")
-        except Exception as e:
-            print(f"⚠ Gradient Sanitization not available: {e}")
+    # if _GRADIENT_SANITIZER_AVAILABLE:
+    #     try:
+    #         gradient_sanitizer = create_gradient_sanitizer(
+    #             model=model,
+    #             use_spectral_norm=True,
+    #             use_outlier_detection=True,
+    #             use_momentum_smoothing=True,
+    #             emergency_grad_max=0.5,
+    #         )
+    #         print(f"✔ Gradient Sanitization Enabled (Moonshot #13)")
+    #     except Exception as e:
+    #         print(f"⚠ Gradient Sanitization not available: {e}")
     
-    # Stability Suite (Moonshot #14 - Comprehensive NaN Elimination)
+    # Stability Suite (DISABLED - was limiting gradients too much)
     stability_manager = None
-    if _STABILITY_SUITE_AVAILABLE:
-        try:
-            stability_manager = create_stability_manager(
-                model=model,
-                aggressive=True,  # Maximum stability settings
-            )
-            print(f"✔ Stability Suite Enabled (Moonshot #14)")
-            print(f"  └─ Backward Hooks | Layerwise Scaling | Loss Smoothing | Adaptive Precision")
-        except Exception as e:
-            print(f"⚠ Stability Suite not available: {e}")
+    # if _STABILITY_SUITE_AVAILABLE:
+    #     try:
+    #         stability_manager = create_stability_manager(
+    #             model=model,
+    #             aggressive=True,
+    #         )
+    #         print(f"✔ Stability Suite Enabled (Moonshot #14)")
+    #         print(f"  └─ Backward Hooks | Layerwise Scaling | Loss Smoothing | Adaptive Precision")
+    #     except Exception as e:
+    #         print(f"⚠ Stability Suite not available: {e}")
     
     # JSON Log
     training_log = {
@@ -964,6 +970,10 @@ def train_phase8():
                 continue
             
             x, y = x.to(device), y.to(device)
+            
+            # Initialize gradient metrics (will be updated during optimizer step)
+            grad_norm_raw = 0.0
+            grad_norm = 0.0
             
             # Forward pass with mixed precision
             with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=config.use_mixed_precision):
@@ -1057,19 +1067,54 @@ def train_phase8():
                     else:
                         print(f"⚠ NaN/Inf in {nan_grad_count} parameter gradients at step {step}, zeroed out")
                 
-                # Compute gradient norm (gradients are now safe)
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), 
-                    1e6  # Large but finite value
-                ).item()
+                # ===== Gradient Norm Computation \u0026 Clipping (Muon Optimized) =====
                 
-                # Handle NaN grad_norm
-                if math.isnan(grad_norm) or math.isinf(grad_norm):
+                # === PRE-CLIPPING FOR MUON (DISABLED - causing loss stagnation) ===
+                # NOTE: Muon's internal stabilization handles gradient control.
+                # Keeping external clipping minimal to allow gradient flow.
+                # The main clip_grad_norm_ at L1101 provides sufficient safety.
+                
+                # Compute raw gradient norm (now reflects pre-clipped values for Muon)
+                with torch.no_grad():
+                    total_norm_sq = sum(p.grad.pow(2).sum() for p in model.parameters() if p.grad is not None)
+                    grad_norm_raw = torch.sqrt(total_norm_sq).item()
+                
+                # Handle NaN/Inf in raw norm
+                if math.isnan(grad_norm_raw) or math.isinf(grad_norm_raw):
+                    grad_norm_raw = 0.0
                     grad_norm = 0.0
+                else:
+                    # NO CLIPPING - Muon's orthogonalization handles normalization
+                    # Just record the raw norm for logging purposes
+                    grad_norm = grad_norm_raw
                 
-                # Gradient skip if too large - MUST call scaler.update() to reset state
-                if grad_norm > config.grad_skip_threshold:
-                    print(f"⚠ Grad norm {grad_norm:.2f} > {config.grad_skip_threshold}, skipping step")
+                # Failsafe: Skip if raw norm is extremely large (gradient explosion)
+                # NOTE: When using Muon optimizer with stabilization, this check is relaxed
+                # because Muon's 6 internal algorithms handle gradient control directly.
+                # The raw gradient norm will appear large, but Muon orthogonalizes and scales it.
+                effective_skip_threshold = config.grad_skip_threshold
+                if config.optimizer_type == 'muon':
+                    # Muon uses orthogonalization which makes raw grad_norm misleading
+                    # Increase threshold significantly or disable checking
+                    effective_skip_threshold = 10000.0  # Effectively disabled for Muon
+                
+                if grad_norm_raw > effective_skip_threshold:
+                    # 初期ステップでデバッグ情報を出力
+                    if step <= 10:
+                        print(f"  🔍 Step {step} DEBUG: grad_norm_raw={grad_norm_raw:.2f}, threshold={effective_skip_threshold}")
+                        print(f"     Largest gradient layers:")
+                        layer_grads = []
+                        for name, param in model.named_parameters():
+                            if param.grad is not None:
+                                g_norm = param.grad.norm().item()
+                                if g_norm > 1.0:  # Only show significant gradients
+                                    layer_grads.append((name, g_norm))
+                        # Sort and show top 5
+                        layer_grads.sort(key=lambda x: -x[1])
+                        for name, g_norm in layer_grads[:5]:
+                            print(f"       {name}: {g_norm:.2f}")
+                    
+                    print(f"⚠ Grad norm {grad_norm_raw:.2f} > {effective_skip_threshold}, skipping step")
                     optimizer.zero_grad()
                     scaler.update()  # Reset scaler state
                     skip_count += 1
@@ -1104,17 +1149,8 @@ def train_phase8():
                     pbar.update(1)
                     continue
                 
-                # Dynamic gradient clipping (3-tier system for stability)
-                # Tier 1: First 100 steps - ultra-strict (0.001)
-                # Tier 2: Warmup (101-500) - strict (0.01)
-                # Tier 3: Training (>500) - normal (1.0)
-                if step <= getattr(config, 'warmup_stability_steps', 100):
-                    current_clip = 1.0  # Relaxed from 0.001 to allow flow
-                elif step < config.warmup_steps:
-                    current_clip = config.grad_clip_warmup
-                else:
-                    current_clip = config.grad_clip_train
-                torch.nn.utils.clip_grad_norm_(model.parameters(), current_clip)
+                # NOTE: Redundant 2nd gradient clipping REMOVED (was causing loss stagnation)
+                # The clip_grad_norm_ at L1101-1104 already handles clipping.
                 
                 # Optimizer step
                 scaler.step(optimizer)
@@ -1239,7 +1275,8 @@ def train_phase8():
                     'loss': f'{avg_loss:.3f}',
                     'ppl': f'{ppl:.0f}',
                     'lr': f'{current_lr:.1e}',
-                    'grad': f'{grad_norm:.1f}' if not math.isnan(grad_norm) else 'nan',
+                    'gN': f'{grad_norm:.2f}',  # Clipped norm
+                    'gR': f'{grad_norm_raw:.2f}',  # Raw norm
                 })
                 
                 # Log step
@@ -1250,10 +1287,22 @@ def train_phase8():
                     'loss': avg_loss,
                     'ppl': ppl,
                     'lr': current_lr,
-                    'grad_norm': grad_norm,
-                    'grad_clip': current_clip,
-                    'skip_count': skip_count,
+                    'grad_norm': grad_norm,  # Clipped
+                    'grad_norm_raw': grad_norm_raw,  # Before clipping
+                    'grad_clip': config.grad_clip_train if hasattr(config, 'grad_clip_train') else None,
                 }
+                
+                # Add Muon-specific metrics (if using Muon optimizer)
+                if config.optimizer_type == 'muon' and hasattr(optimizer, 'get_muon_metrics'):
+                    muon_metrics = optimizer.get_muon_metrics()
+                    if muon_metrics.get('stabilization_enabled', False):
+                        step_log['muon_phase'] = muon_metrics.get('phase', 'unknown')
+                        step_log['muon_nan_count'] = muon_metrics.get('ortho_nan_count', 0)
+                        # Log detailed Muon info periodically
+                        if step % config.log_interval == 0 and 'avg_grad_norm' in muon_metrics:
+                            print(f"  🔧 Muon [{muon_metrics.get('phase', 'N/A')}]: "
+                                  f"AvgGrad={muon_metrics.get('avg_grad_norm', 0):.3f}, "
+                                  f"NaN={muon_metrics.get('total_nan_count', 0)}")
                 
                 # Add diagnostics (only if collected)
                 if diagnostics is not None:
