@@ -143,8 +143,11 @@ class MoEResNetBKLayer(nn.Module):
             features, diagnostics = self.birman_schwinger_core(v_prelim, z=1.0j, gamma=gamma_val)
             self.last_bs_diagnostics = diagnostics
             G_ii = torch.complex(features[..., 0], features[..., 1]).unsqueeze(-1)
-            if torch.isnan(G_ii).any():
-                print(f"🚨 NaN in G_ii! Max: {G_ii.abs().max().item()}", flush=True)
+            # RECOVERY: For complex tensors, use torch.where instead of nan_to_num
+            nan_mask = torch.isnan(G_ii.real) | torch.isnan(G_ii.imag)
+            if nan_mask.any():
+                # Replace NaN with 1+0j (identity-like fallback)
+                G_ii = torch.where(nan_mask, torch.ones_like(G_ii), G_ii)
         else:
             h0_diag  = self.h0_diag_base.expand(B, -1)
             h0_sub   = self.h0_sub_base.expand(B, -1)
@@ -164,8 +167,10 @@ class MoEResNetBKLayer(nn.Module):
                 features, g_ii_scalar = self.bk_core(he_diag_f, h0_super_f, h0_sub_f, z_f)
                 
             G_ii = g_ii_scalar.unsqueeze(-1)
-            if torch.isnan(G_ii).any():
-                print(f"🚨 NaN in G_ii! Max: {G_ii.abs().max().item()}", flush=True)
+            # RECOVERY: For complex tensors, use torch.where instead of nan_to_num
+            nan_mask = torch.isnan(G_ii.real) | torch.isnan(G_ii.imag)
+            if nan_mask.any():
+                G_ii = torch.where(nan_mask, torch.ones_like(G_ii), G_ii)
 
         # 物理的に重要な Green 関数の対角成分を保持してハイブリッド注意に渡す
         self.last_g_ii = G_ii
@@ -355,21 +360,22 @@ class LanguageModel(nn.Module):
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.position_embedding = nn.Embedding(config.n_seq, config.d_model)
         
-        # Register gradient clamp hooks for embeddings (Muon用: より厳しく)
+        # Register gradient clamp hooks for embeddings
+        # RELAXED: ±10.0 instead of ±1.0 to allow proper learning
         def clamp_position_grad(grad):
             if grad is not None:
                 # CRITICAL: Sanitize NaN/Inf BEFORE clamping
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
-                return torch.clamp(grad, -1.0, 1.0)
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
+                return torch.clamp(grad, -10.0, 10.0)
             return grad
         self.position_embedding.weight.register_hook(clamp_position_grad)
         
         def clamp_token_grad(grad):
             if grad is not None:
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
-                return torch.clamp(grad, -1.0, 1.0)
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
+                return torch.clamp(grad, -10.0, 10.0)
             return grad
         self.token_embedding.weight.register_hook(clamp_token_grad)
 

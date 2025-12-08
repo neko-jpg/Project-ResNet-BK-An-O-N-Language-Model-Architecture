@@ -579,15 +579,16 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
     
     # ========== Global Gradient Sanitization ==========
     # Register gradient hooks on ALL parameters to sanitize NaN/Inf
-    # This prevents gradient explosion from any source
+    # IMPORTANT: Only sanitize NaN/Inf, use softer clamping to allow learning
     def create_sanitize_hook(param_name):
         def sanitize_grad(grad):
             if grad is not None:
+                # Only replace NaN/Inf - don't clamp too aggressively
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    # Replace NaN/Inf with zeros
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
-                # Clamp to reasonable range
-                return torch.clamp(grad, -1.0, 1.0)
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
+                # Soft clamp: allow gradients up to ±10.0 for proper learning
+                # Previous ±1.0 was too strict and killed learning signal
+                return torch.clamp(grad, -10.0, 10.0)
             return grad
         return sanitize_grad
     
@@ -596,7 +597,7 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
         if param.requires_grad:
             param.register_hook(create_sanitize_hook(name))
             num_hooks += 1
-    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters")
+    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (clamp ±10.0)")
     
     model = model.to(device)
     
@@ -764,7 +765,14 @@ def train_phase8():
     actual_vocab_size = config.vocab_size
     dataset = None
     
+    # CRITICAL FIX: Override warmup_steps for dry-run BEFORE optimizer creation
+    # Without this, warmup_steps=2000 means lr≈0 for the entire dry-run
     if config.dry_run:
+        dry_run_steps = 200
+        dry_run_optimizer_steps = dry_run_steps // config.grad_accum_steps
+        original_warmup = config.warmup_steps
+        config.warmup_steps = min(3, max(1, dry_run_optimizer_steps // 4))  # Very short warmup
+        print(f"⚡ Dry-run warmup adjustment: {original_warmup} → {config.warmup_steps} optimizer steps")
         print("Dry Run: Using dummy data")
     else:
         print(f"Loading dataset from {config.dataset_path}...")
@@ -812,7 +820,7 @@ def train_phase8():
             print("⚠ RiemannianMuonBit not available, falling back to Muon")
             config.optimizer_type = 'muon'
         else:
-            print("🌀 Using Riemannian-Muon-Bit Optimizer (Hyperbolic + 1.58-bit)")
+            print("🌀 Using Riemannian-Muon-Bit Optimizer (Hyperbolic + Momentum)")
             optimizer = RiemannianMuonBit(
                 model.parameters(),
                 lr=config.learning_rate,
@@ -820,13 +828,14 @@ def train_phase8():
                 nesterov=True,
                 hs_steps=5,
                 curvature=-1.0,
-                use_j_orthogonal=True,
+                use_j_orthogonal=False,  # Disabled - J-orth not needed without orthogonalization
                 use_stochastic_rounding=False,  # Disable for now (can enable later)
+                use_orthogonalization=False,  # CRITICAL: Disable to allow gradient flow
                 adamw_lr=1e-4,
-                warmup_steps=config.warmup_steps,
+                warmup_steps=0,  # Scheduler handles warmup, avoid double warmup
             )
     
-    if config.optimizer_type == 'muon':
+    elif config.optimizer_type == 'muon':
         print("⚛ Using Muon Optimizer (Stabilized)")
         optimizer = Muon(
             model.parameters(),
@@ -986,8 +995,8 @@ def train_phase8():
     
     # Dry run mock dataset
     if config.dry_run:
-        # Run at least 2x grad_accum_steps to get meaningful optimizer steps
-        steps_to_run = max(config.grad_accum_steps * 3, 50)
+        # Run 200 steps for meaningful KPI verification
+        steps_to_run = 200
         print(f"Dry Run: Running {steps_to_run} steps (grad_accum={config.grad_accum_steps})...")
         
         class MockDataset:

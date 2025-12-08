@@ -160,7 +160,7 @@ def riemannian_gradient(
     euclidean_grad: torch.Tensor,
     point: Optional[torch.Tensor] = None,
     curvature: float = -1.0,
-    model: str = "poincare"
+    model: str = "lorentz"  # Changed from "poincare" - Poincaré causes gradient vanishing
 ) -> torch.Tensor:
     """
     Convert Euclidean gradient to Riemannian gradient.
@@ -291,6 +291,7 @@ class RiemannianMuonBit(optim.Optimizer):
         curvature: float = -1.0,
         use_j_orthogonal: bool = True,
         use_stochastic_rounding: bool = True,
+        use_orthogonalization: bool = False,  # DISABLED by default - was killing gradient flow
         adamw_lr: float = 1e-4,
         adamw_betas: Tuple[float, float] = (0.9, 0.95),
         adamw_eps: float = 1e-8,
@@ -305,6 +306,7 @@ class RiemannianMuonBit(optim.Optimizer):
             curvature=curvature,
             use_j_orthogonal=use_j_orthogonal,
             use_stochastic_rounding=use_stochastic_rounding,
+            use_orthogonalization=use_orthogonalization,
             adamw_lr=adamw_lr,
             adamw_betas=adamw_betas,
             adamw_eps=adamw_eps,
@@ -368,6 +370,7 @@ class RiemannianMuonBit(optim.Optimizer):
             hs_steps = group['hs_steps']
             use_j_orthogonal = group['use_j_orthogonal']
             use_stochastic_rounding = group['use_stochastic_rounding']
+            use_orthogonalization = group['use_orthogonalization']
             curvature = group['curvature']
             
             adamw_lr = group['adamw_lr'] * warmup_factor
@@ -402,7 +405,8 @@ class RiemannianMuonBit(optim.Optimizer):
                     # ===== Riemannian-Muon Update =====
                     self._riemannian_muon_update(
                         p, grad, state, lr, momentum, nesterov,
-                        hs_steps, use_j_orthogonal, use_stochastic_rounding, curvature
+                        hs_steps, use_j_orthogonal, use_stochastic_rounding, 
+                        use_orthogonalization, curvature
                     )
                 else:
                     # ===== AdamW Update for small parameters =====
@@ -423,6 +427,7 @@ class RiemannianMuonBit(optim.Optimizer):
         hs_steps: int,
         use_j_orthogonal: bool,
         use_stochastic_rounding: bool,
+        use_orthogonalization: bool,
         curvature: float
     ):
         """Apply Riemannian-Muon update to a parameter."""
@@ -432,7 +437,7 @@ class RiemannianMuonBit(optim.Optimizer):
         if torch.isnan(grad).any() or torch.isinf(grad).any():
             return  # Skip this parameter
         
-        riemannian_grad = riemannian_gradient(grad, p, curvature, model="poincare")
+        riemannian_grad = riemannian_gradient(grad, p, curvature, model="lorentz")
         
         # Apply momentum
         buf.mul_(momentum).add_(riemannian_grad)
@@ -446,34 +451,37 @@ class RiemannianMuonBit(optim.Optimizer):
         if torch.isnan(update).any() or torch.isinf(update).any():
             update = torch.nan_to_num(update, nan=0.0, posinf=1.0, neginf=-1.0)
         
-        # Reshape for orthogonalization if needed
-        original_shape = update.shape
-        if update.dim() > 2:
-            update = update.view(update.shape[0], -1)
-        
-        # Apply orthogonalization with fallback
-        if update.dim() == 2 and update.shape[0] > 1 and update.shape[1] > 1:
-            try:
-                if use_j_orthogonal and update.shape[0] == update.shape[1]:
-                    # J-orthogonalization for square matrices (Lorentz space)
-                    J = lorentz_metric_tensor(update.shape[0], update.device, update.dtype)
-                    update_orth = higham_schulz_iteration(update, J, steps=hs_steps)
-                else:
-                    # Standard Euclidean orthogonalization
-                    update_orth = euclidean_newton_schulz(update, steps=hs_steps)
-                
-                # Check result is valid
-                if not torch.isnan(update_orth).any() and not torch.isinf(update_orth).any():
-                    update = update_orth
-                else:
-                    # Fallback to simple normalization
+        # === ORTHOGONALIZATION (only if enabled) ===
+        # When disabled, gradient updates flow directly without normalization
+        if use_orthogonalization:
+            # Reshape for orthogonalization if needed
+            original_shape = update.shape
+            if update.dim() > 2:
+                update = update.view(update.shape[0], -1)
+            
+            # Apply orthogonalization with fallback
+            if update.dim() == 2 and update.shape[0] > 1 and update.shape[1] > 1:
+                try:
+                    if use_j_orthogonal and update.shape[0] == update.shape[1]:
+                        # J-orthogonalization for square matrices (Lorentz space)
+                        J = lorentz_metric_tensor(update.shape[0], update.device, update.dtype)
+                        update_orth = higham_schulz_iteration(update, J, steps=hs_steps)
+                    else:
+                        # Standard Euclidean orthogonalization
+                        update_orth = euclidean_newton_schulz(update, steps=hs_steps)
+                    
+                    # Check result is valid
+                    if not torch.isnan(update_orth).any() and not torch.isinf(update_orth).any():
+                        update = update_orth
+                    else:
+                        # Fallback to simple normalization
+                        update = update / (update.norm() + 1e-8)
+                except Exception:
+                    # Fallback: just normalize
                     update = update / (update.norm() + 1e-8)
-            except Exception:
-                # Fallback: just normalize
-                update = update / (update.norm() + 1e-8)
-        
-        # Reshape back
-        update = update.view(original_shape)
+            
+            # Reshape back
+            update = update.view(original_shape)
         
         # Final NaN check on update
         if torch.isnan(update).any() or torch.isinf(update).any():

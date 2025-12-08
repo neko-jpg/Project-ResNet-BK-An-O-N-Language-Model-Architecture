@@ -162,9 +162,9 @@ class HolographicTTEmbedding(nn.Module):
         # 物理的直観: 各コアは「局所的な量子状態」を表現
         # ランク次元は「もつれ結合」の強さを制御
         # CRITICAL: Use very small init to prevent gradient explosion
-        # Original 0.02 caused 222M NaN values - reduced to 0.001
-        # Further reduced for stability with Riemannian optimizer
-        scale_factor = init_scale * 0.001 / (rank ** 0.5)  # Much smaller init
+        # Original 0.02 caused 222M NaN values - using 0.01 for balance
+        # (0.001 was too small - killed learning signal)
+        scale_factor = init_scale * 0.01 / (rank ** 0.5)  # Balanced init
         self.core1 = nn.Parameter(
             torch.randn(self.v1, 1, rank, self.d1) * scale_factor
         )
@@ -173,13 +173,13 @@ class HolographicTTEmbedding(nn.Module):
         )
         
         # Register gradient clipping hooks to prevent NaN in backward pass
-        # TIGHTER CLIPPING: Reduced from ±10 to ±1.0 for Riemannian optimizer
+        # RELAXED: ±10.0 to allow proper learning (±1.0 killed gradient signal)
         def clamp_grad(grad):
             if grad is not None:
                 # Check for NaN/Inf first
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=1.0, neginf=-1.0)
-                return torch.clamp(grad, -1.0, 1.0)  # Tighter clipping
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
+                return torch.clamp(grad, -10.0, 10.0)  # Relaxed clipping
             return grad
         self.core1.register_hook(clamp_grad)
         self.core2.register_hook(clamp_grad)
@@ -189,8 +189,8 @@ class HolographicTTEmbedding(nn.Module):
         # 物理的直観: 波動関数の位相 exp(iθ)
         # 実数実装では cos(θ) による振幅変調として近似
         if phase_encoding:
-            # Smaller init for phase to prevent explosion
-            self.phase_shift = nn.Parameter(torch.randn(rank) * 0.001)  # Even smaller
+            # Phase init: 0.01 for better gradient flow
+            self.phase_shift = nn.Parameter(torch.randn(rank) * 0.01)
             self.phase_shift.register_hook(clamp_grad)
         else:
             self.register_buffer('phase_shift', torch.zeros(rank))
