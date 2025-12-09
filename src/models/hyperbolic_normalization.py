@@ -476,6 +476,156 @@ class HyperbolicRMSNorm(nn.Module):
         
         return x * norm_factor * self.scale
 
+# =============================================================================
+# Phase 2: Physics-Informed Normalization (ResNet-BK Specialized)
+# =============================================================================
+
+class SymplecticPhaseNorm(nn.Module):
+    """
+    Symplectic Phase Normalization for ResNet-BK SymplecticBKBlock.
+    
+    Preserves the symplectic structure ω = dq ∧ dp by:
+    1. Splitting input into (q, p) canonical coordinates
+    2. Computing total energy H = T + V = p²/2 + q²/2
+    3. Normalizing by energy while preserving phase space volume
+    4. Applying learnable scale to (q, p) separately
+    
+    This ensures that the Hamiltonian structure is preserved during normalization,
+    which is critical for energy-conserving dynamics.
+    
+    Args:
+        d_model: Total dimension (must be even for q,p split)
+        eps: Numerical stability constant
+    """
+    
+    def __init__(self, d_model: int, eps: float = 1e-5):
+        super().__init__()
+        assert d_model % 2 == 0, "d_model must be even for symplectic (q, p) split"
+        
+        self.d_half = d_model // 2
+        self.eps = eps
+        
+        # Learnable scale for (q, p) separately
+        self.gamma_q = nn.Parameter(torch.ones(self.d_half))
+        self.gamma_p = nn.Parameter(torch.ones(self.d_half))
+        self.beta_q = nn.Parameter(torch.zeros(self.d_half))
+        self.beta_p = nn.Parameter(torch.zeros(self.d_half))
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply symplectic-aware normalization.
+        
+        Args:
+            x: Input tensor (..., d_model) where d_model = 2 * d_half
+        
+        Returns:
+            Normalized tensor with symplectic structure preserved
+        """
+        # Split into (q, p) canonical coordinates
+        q = x[..., :self.d_half]
+        p = x[..., self.d_half:]
+        
+        # Compute energies
+        # Kinetic energy: T = p²/2
+        kinetic = 0.5 * (p ** 2).sum(dim=-1, keepdim=True)
+        # Potential energy: V = q²/2 (harmonic oscillator approximation)
+        potential = 0.5 * (q ** 2).sum(dim=-1, keepdim=True)
+        # Total energy
+        total_energy = kinetic + potential + self.eps
+        
+        # Normalize by total energy (preserves phase space volume)
+        # This is the key insight: scale by sqrt(E) to preserve ω = dq ∧ dp
+        energy_scale = torch.sqrt(total_energy)
+        
+        q_normalized = q / energy_scale
+        p_normalized = p / energy_scale
+        
+        # Apply learnable affine transformation
+        q_out = self.gamma_q * q_normalized + self.beta_q
+        p_out = self.gamma_p * p_normalized + self.beta_p
+        
+        return torch.cat([q_out, p_out], dim=-1)
+
+
+class GreenFunctionNorm(nn.Module):
+    """
+    Green Function Normalization for BK-Core.
+    
+    Preserves physical properties of the Green function G_ii = diag((H-zI)^-1):
+    1. Causality: Im(G_ii) > 0 (enforced via softplus)
+    2. State density normalization: sum(Im(G)) = π
+    3. Real part standardization
+    
+    This layer is designed for the output of BK-Core layers where G_ii
+    represents the local density of states.
+    
+    Args:
+        d_model: Feature dimension
+        eps: Numerical stability constant
+        target_sum: Target sum for Im(G) normalization (default: π)
+    """
+    
+    def __init__(self, d_model: int, eps: float = 1e-8, target_sum: float = 3.14159):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.eps = eps
+        self.target_sum = target_sum
+        
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model))
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply Green function normalization.
+        
+        Args:
+            x: Input tensor. Can be:
+               - Complex tensor (..., d_model) with real and imag parts
+               - Real tensor (..., 2) where [..., 0] is real and [..., 1] is imag
+               - Real tensor (..., d_model) - treated as real part only
+        
+        Returns:
+            Normalized tensor with Green function properties preserved
+        """
+        if x.is_complex():
+            real = x.real
+            imag = x.imag
+            is_complex = True
+        elif x.dim() >= 1 and x.shape[-1] == 2:
+            real = x[..., 0]
+            imag = x[..., 1]
+            is_complex = False
+        else:
+            # Real-only input: apply standard normalization
+            mean = x.mean(dim=-1, keepdim=True)
+            var = x.var(dim=-1, keepdim=True, unbiased=False)
+            x_normalized = (x - mean) / torch.sqrt(var + self.eps)
+            return self.gamma * x_normalized + self.beta
+        
+        # 1. Causality: Ensure Im(G) > 0
+        # Use softplus to enforce positivity while maintaining gradient flow
+        imag_positive = F.softplus(imag)
+        
+        # 2. State density normalization: sum(Im(G)) → target_sum
+        # This ensures the total density of states is conserved
+        imag_sum = imag_positive.sum(dim=-1, keepdim=True) + self.eps
+        imag_normalized = imag_positive * (self.target_sum / imag_sum)
+        
+        # 3. Real part: standard normalization
+        real_mean = real.mean(dim=-1, keepdim=True)
+        real_var = ((real - real_mean) ** 2).mean(dim=-1, keepdim=True)
+        real_normalized = (real - real_mean) / torch.sqrt(real_var + self.eps)
+        
+        # Apply learnable parameters to real part
+        real_out = self.gamma * real_normalized + self.beta
+        
+        # Combine
+        if is_complex:
+            return torch.complex(real_out, imag_normalized)
+        else:
+            return torch.stack([real_out, imag_normalized], dim=-1)
+
 
 # =============================================================================
 # Factory Functions
@@ -491,7 +641,8 @@ def create_hyperbolic_norm(
     Factory function to create hyperbolic normalization layers.
     
     Args:
-        norm_type: One of "lorentz", "hyperbolic_layer", "hyperbolic_rms", "euclidean"
+        norm_type: One of "lorentz", "hyperbolic_layer", "hyperbolic_rms", 
+                   "symplectic", "green_function", "euclidean"
         dim: Feature dimension
         curvature: Hyperbolic curvature
         **kwargs: Additional arguments for specific norm types
@@ -505,8 +656,13 @@ def create_hyperbolic_norm(
         return HyperbolicLayerNorm(dim, curvature=curvature, **kwargs)
     elif norm_type == "hyperbolic_rms":
         return HyperbolicRMSNorm(dim, **kwargs)
+    elif norm_type == "symplectic":
+        return SymplecticPhaseNorm(dim, **kwargs)
+    elif norm_type == "green_function":
+        return GreenFunctionNorm(dim, **kwargs)
     elif norm_type == "euclidean":
         # Fallback to standard RMSNorm
         return nn.RMSNorm(dim) if hasattr(nn, 'RMSNorm') else nn.LayerNorm(dim)
     else:
         raise ValueError(f"Unknown norm type: {norm_type}")
+

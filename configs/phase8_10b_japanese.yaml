@@ -31,8 +31,8 @@ batch_size: 1
 gradient_accumulation_steps: 32
 effective_batch_size: 32
 
-# === Optimizer (AdamW - stable choice) ===
-optimizer_type: adamw
+# === Optimizer (BK-HyperSGD - ResNet-BK専用) ===
+optimizer_type: bk_hyper_sgd
 beta1: 0.9
 beta2: 0.95
 eps: 1.0e-8

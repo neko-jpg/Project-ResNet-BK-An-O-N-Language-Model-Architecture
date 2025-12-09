@@ -322,11 +322,16 @@ class HyperbolicMultiHeadAttention(nn.Module):
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             x_bf16 = x.to(torch.bfloat16)
 
-            c = F.softplus(self.log_c.float())
+            c = F.softplus(self.log_c.float()).clamp(min=0.01, max=10.0)  # Clamp curvature
 
             q_tangent = self.W_q(x_bf16)
             k_tangent = self.W_k(x_bf16)
             v_tangent = self.W_v(x_bf16)
+            
+            # CRITICAL: Clamp Q/K/V to prevent NaN propagation from LowRankLinear
+            q_tangent = torch.nan_to_num(q_tangent, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-10.0, 10.0)
+            k_tangent = torch.nan_to_num(k_tangent, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-10.0, 10.0)
+            v_tangent = torch.nan_to_num(v_tangent, nan=0.0, posinf=1.0, neginf=-1.0).clamp(-10.0, 10.0)
 
             q_tangent = q_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)
             k_tangent = k_tangent.view(batch_size, seq_len, self.num_heads, self.d_head).transpose(1, 2)

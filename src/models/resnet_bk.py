@@ -134,6 +134,8 @@ class MoEResNetBKLayer(nn.Module):
         assert N == self.n_seq, f"Sequence length mismatch: expected {self.n_seq}, got {N}"
         
         v_prelim = self.v_proj(x).squeeze(-1)
+        # NaN guard: catch potential NaN from v_proj early
+        v_prelim = torch.nan_to_num(v_prelim, nan=0.0, posinf=self.v_max, neginf=-self.v_max)
         # Use tanh for smoother saturation instead of hard clamp
         v_prelim = self.v_max * torch.tanh(v_prelim / self.v_max)
         gamma_val = self.gamma
