@@ -1,0 +1,117 @@
+# Phase 8: 3B Japanese LLM - Notebook Friendly (8GB VRAM)
+# =======================================================
+# 目標: ノートPC/シングル8GBで対話ファインチューニング可能な軽量プリセット
+
+# === Model Architecture (≈3B target) ===
+d_model: 2048
+n_layers: 24
+n_seq: 256
+num_heads: 16
+htt_rank: 32
+hyperbolic_window_size: 32
+
+# === Japanese Tokenizer ===
+vocab_size: 32000
+tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
+
+# === Compression / Memory ===
+low_rank_ffn: true
+low_rank_attention: true
+low_rank_rank: 64
+use_bitnet: false          # 安定優先。必要ならONにして試行
+use_gradient_checkpointing: true
+gradient_checkpointing_segments: 12
+use_mixed_precision: true
+mixed_precision_dtype: bfloat16
+
+# === Training ===
+batch_size: 1
+gradient_accumulation_steps: 8     # optimizer step頻度を確保
+effective_batch_size: 8
+
+# === Optimizer (BK-HyperSGD) ===
+optimizer_type: bk_hyper_sgd
+beta1: 0.9
+beta2: 0.95
+eps: 1.0e-8
+weight_decay: 0.01
+
+# === Learning Rate Scheduler ===
+learning_rate: 5.0e-4
+min_lr: 1.0e-5
+warmup_steps: 400
+
+# === Gradient Control ===
+grad_clip_warmup: 0.1
+grad_clip_train: 1.0
+grad_skip_threshold: 25.0   # 少し緩め
+
+# === EMA ===
+use_ema: true
+ema_decay: 0.999
+
+# === Regularization ===
+label_smoothing: 0.05
+dropout: 0.1
+attention_dropout: 0.1
+
+# === Phase 8 Components (軽量プリセット) ===
+use_bk_hyperbolic: true
+use_ar_ssm_fusion: true
+enable_numerical_guards: true
+
+# 重い/不安定なものは初期OFF（必要ならONにして検証）
+enable_entailment_cones: false
+enable_persistent_homology: false
+enable_sheaf_attention: false
+use_resonance_locked: false
+use_gradient_teleportation: false
+use_time_reversed: false
+use_revolutionary_training: false
+use_hyperbolic_moe: false
+use_holographic_kv_cache: false
+use_superposition_training: false
+
+# === Phase 8 Optimizations (必要最低限ON) ===
+use_fused_mobius: true
+use_green_function_cache: true
+green_function_cache_size: 256
+use_parallel_ssm_scan: true
+use_fused_scattering_gate: true
+use_batched_hyperbolic_distance: true
+use_ternary_mobius_matmul: false
+
+# === Triton Kernels / Flash Attn ===
+use_triton_kernel: true
+triton_kernel_version: fast
+triton_use_safe_ops: true
+use_fused_kernels: true
+use_flash_attention_2: true
+
+# === torch.compile ===
+use_torch_compile: false
+compile_mode: max-autotune
+
+# === DataLoader ===
+num_workers: 4
+pin_memory: true
+prefetch_factor: 2
+persistent_workers: true
+
+# === Logging / Checkpoints ===
+log_interval: 10
+save_interval: 500
+eval_interval: 500
+save_dir: checkpoints/phase8_3b_japanese
+
+# === Numerical Stability ===
+max_norm: 0.99
+numerical_epsilon: 1.0e-8
+scale_epsilon: 1.0e-3
+
+# === Moonshot options (OFF by default here) ===
+use_green_function_lut: false
+use_scattering_pruning: false
+
+# === Dataset ===
+dataset_path: "configs/dataset_mixing.yaml"

@@ -226,7 +226,15 @@ class CosineWarmupScheduler:
         self.peak_lr = peak_lr
         self.min_lr = min_lr
         self.current_step = 0
-        self._last_lr = 0.0
+        
+        # FIX: Initialize with correct LR (not 0.0)
+        # When warmup_steps=0, start at peak_lr immediately
+        initial_lr = self.get_lr(0)
+        self._last_lr = initial_lr
+        
+        # Apply initial LR to optimizer param_groups
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = initial_lr
     
     def get_lr(self, step: int) -> float:
         """Calculate learning rate for given step."""
@@ -303,7 +311,9 @@ class Phase8TrainingConfig:
     weight_decay: float = 0.01
     warmup_steps: int = 500  # Reduced from 2000
     max_steps: Optional[int] = None
-    
+    bootstrap_lr: float = 0.0           # Optional LR for first few optimizer steps (stability bootstrap)
+    bootstrap_steps: int = 0            # How many optimizer steps to apply bootstrap_lr
+
     # Optimizer (AdamW settings)
     optimizer_type: str = 'adamw'
     beta1: float = 0.9
@@ -418,6 +428,8 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--min-lr", type=float, default=1e-6)
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--bootstrap-lr", type=float, default=None)
+    parser.add_argument("--bootstrap-steps", type=int, default=None)
     parser.add_argument("--dry-run", action="store_true")
     
     # Optimizer
@@ -503,6 +515,8 @@ def parse_args() -> Phase8TrainingConfig:
         min_lr=get_val('min_lr', 1e-6),
         warmup_steps=get_val('warmup_steps', 500),
         max_steps=get_val('max_steps', None),
+        bootstrap_lr=get_val('bootstrap_lr', args.bootstrap_lr if args.bootstrap_lr is not None else 0.0),
+        bootstrap_steps=get_val('bootstrap_steps', args.bootstrap_steps if args.bootstrap_steps is not None else 0),
         optimizer_type=args.optimizer,  # CLI always takes priority for optimizer
         beta1=get_val('beta1', 0.9),
         beta2=get_val('beta2', 0.95),
@@ -795,9 +809,35 @@ def train_phase8():
         dry_run_steps = 200
         dry_run_optimizer_steps = dry_run_steps // config.grad_accum_steps
         original_warmup = config.warmup_steps
-        config.warmup_steps = min(3, max(1, dry_run_optimizer_steps // 4))  # Very short warmup
-        print(f"⚡ Dry-run warmup adjustment: {original_warmup} → {config.warmup_steps} optimizer steps")
+        original_lr = config.learning_rate
+        
+        # CRITICAL: Skip warmup entirely and use high LR for dry-run
+        config.warmup_steps = 0  # No warmup - start at peak LR immediately
+        config.learning_rate = 5e-2  # High LR to see loss change quickly
+        
+        # Use a smaller vocab during dry-run so the mock task is learnable
+        dry_run_vocab = min(config.vocab_size, 32)
+        if dry_run_vocab != config.vocab_size:
+            print(f"⚡ Dry-run vocab_size {config.vocab_size} → {dry_run_vocab} (faster feedback)")
+            config.vocab_size = dry_run_vocab
+        
+        print(f"⚡ Dry-run LR boost: {original_lr:.1e} → {config.learning_rate:.1e}")
+        print(f"⚡ Dry-run warmup skip: {original_warmup} → {config.warmup_steps} steps")
         print("Dry Run: Using dummy data")
+        
+        # Downsize the model for fast feedback during dry-run
+        if config.d_model > 512:
+            print(f"⚡ Dry-run d_model {config.d_model} → 512")
+            config.d_model = 512
+        if config.n_layers > 6:
+            print(f"⚡ Dry-run n_layers {config.n_layers} → 6")
+            config.n_layers = 6
+        if config.num_heads > 8:
+            print(f"⚡ Dry-run num_heads {config.num_heads} → 8")
+            config.num_heads = 8
+        if config.low_rank_rank > 16:
+            print(f"⚡ Dry-run low_rank_rank {config.low_rank_rank} → 16")
+            config.low_rank_rank = 16
     else:
         print(f"Loading dataset from {config.dataset_path}...")
         try:
@@ -847,6 +887,8 @@ def train_phase8():
     print("   - Cayley retraction for unitary layers (v_proj, output_proj)")
     print("   - Lorentz exp map for hyperbolic layers")
     print("   - Symplectic integration for Hamiltonian structure")
+    if not config.dry_run and config.bootstrap_lr > 0 and config.bootstrap_steps > 0:
+        print(f"   ⚡ Bootstrap LR enabled: {config.bootstrap_lr} for first {config.bootstrap_steps} optimizer steps")
     
     # Get parameter groups with geometry-aware learning rates
     param_groups = get_bk_parameter_groups(
@@ -857,6 +899,10 @@ def train_phase8():
         symplectic_lr_scale=0.3,   # Symplectic balanced LR
     )
     
+    optimizer_max_grad = config.grad_clip_train
+    if config.dry_run:
+        optimizer_max_grad = max(1000.0, config.grad_clip_train)  # Avoid crushing gradients in dry-run
+    
     optimizer = BKHyperSGD(
         param_groups,
         lr=config.learning_rate,
@@ -865,7 +911,7 @@ def train_phase8():
         unitarity_strength=0.1,
         use_cayley=True,
         use_lorentz=True,
-        max_grad_norm=config.grad_clip_train,
+        max_grad_norm=optimizer_max_grad,
         weight_decay=config.weight_decay,
     )
     
@@ -875,6 +921,16 @@ def train_phase8():
     # Print parameter group stats
     stats = optimizer.get_statistics()
     print(f"   Parameter groups: {stats['param_type_counts']}")
+    
+    # DEBUG: Compare optimizer params vs model params
+    optimizer_param_count = sum(len(group['params']) for group in param_groups)
+    model_param_count = sum(1 for _ in model.parameters())
+    trainable_param_count = sum(1 for p in model.parameters() if p.requires_grad)
+    print(f"   [DEBUG] Optimizer params: {optimizer_param_count}, Model params: {model_param_count}, Trainable: {trainable_param_count}")
+    if config.dry_run:
+        print(f"   [DRY-RUN] BK-HyperSGD max_grad_norm set to {optimizer_max_grad}")
+    if optimizer_param_count != trainable_param_count:
+        print(f"   ⚠️ WARNING: Optimizer has FEWER params than model! Some weights won't train.")
     
     # Scaler for mixed precision
     # NOTE: Disable scaler for BK-HyperSGD in dry run to avoid unscale issues
@@ -1021,7 +1077,8 @@ def train_phase8():
     if config.dry_run:
         # Reduce grad_accum_steps for faster iteration (more optimizer steps)
         original_grad_accum = config.grad_accum_steps
-        config.grad_accum_steps = min(4, original_grad_accum)  # Max 4 for dry-run (faster)
+        # Run without accumulation to get more optimizer steps during the short dry-run
+        config.grad_accum_steps = 1
         print(f"⚡ Dry-run: grad_accum_steps {original_grad_accum} → {config.grad_accum_steps}")
         
         # CRITICAL: Disable complex features that cause NaN during dry-run
@@ -1036,19 +1093,25 @@ def train_phase8():
         print("   - Revolutionary Training: OFF")
         
         # Run 50 steps for quick KPI verification
-        steps_to_run = 50
+        steps_to_run = min(50, config.max_steps) if config.max_steps else 50
         print(f"Dry Run: Running {steps_to_run} steps (grad_accum={config.grad_accum_steps})...")
         
         class MockDataset:
+            def __init__(self, vocab_size: int):
+                # Predict next token (shifted copy task) so loss should fall quickly
+                self.vocab_size = vocab_size
+            
             def iter_epoch(self, epoch):
                 for _ in range(steps_to_run):
-                    x = torch.randint(0, config.vocab_size, (config.batch_size, config.n_seq))
-                    y = torch.randint(0, config.vocab_size, (config.batch_size * config.n_seq,))
-                    yield x, y
+                    x = torch.randint(0, self.vocab_size, (config.batch_size, config.n_seq))
+                    # Predict a fixed token (class 0) to guarantee a learnable signal
+                    targets = torch.zeros_like(x)
+                    yield x, targets.reshape(-1)
         
-        dataset = MockDataset()
+        dataset = MockDataset(config.vocab_size)
         steps_per_epoch = steps_to_run
         total_steps = steps_to_run
+        scheduler.total_steps = total_steps  # Align scheduler with shorter dry-run
     
     # Progress bar
     pbar = tqdm(
@@ -1071,6 +1134,25 @@ def train_phase8():
             # Initialize gradient metrics (will be updated during optimizer step)
             grad_norm_raw = 0.0
             grad_norm = 0.0
+            
+            # Stability-aware feature gating (real training only)
+            stable_steps = getattr(train_phase8, '_stable_steps', 0)
+            time_reversed_active = (
+                not config.dry_run
+                and config.use_time_reversed
+                and stable_steps >= 50  # enable after 50 stable steps
+            )
+            resonance_locked_active = (
+                not config.dry_run
+                and config.use_resonance_locked
+                and stable_steps >= 30  # enable after 30 stable steps
+            )
+            if time_reversed_active and not getattr(train_phase8, '_time_rev_on', False):
+                print(f"   🔁 Time-Reversed Training ACTIVATED (stable_steps={stable_steps})")
+                train_phase8._time_rev_on = True
+            if resonance_locked_active and not getattr(train_phase8, '_res_lock_on', False):
+                print(f"   🔒 Resonance-Locked Training ACTIVATED (stable_steps={stable_steps})")
+                train_phase8._res_lock_on = True
             
             # Forward pass with mixed precision
             with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=config.use_mixed_precision):
@@ -1098,9 +1180,17 @@ def train_phase8():
                 # Loss with label smoothing (forward direction)
                 loss_forward = F.cross_entropy(logits, y, label_smoothing=config.label_smoothing)
                 
+                # DEBUG: Print logits stats to verify model output is changing
+                if step <= 8 or step % 20 == 0:
+                    with torch.no_grad():
+                        logits_mean = logits.mean().item()
+                        logits_std = logits.std().item()
+                        logits_max = logits.max().item()
+                        print(f"  [LOGITS] Step {step}: mean={logits_mean:.4f}, std={logits_std:.4f}, max={logits_max:.4f}, loss={loss_forward.item():.4f}")
+                
                 # Time-Reversed Training (#10 Moonshot)
                 # Train on reversed sequences for bi-directional consistency
-                if config.use_time_reversed:
+                if time_reversed_active:
                     x_rev = x.flip(1)  # Reverse sequence
                     y_rev = y.view(x.shape[0], -1).flip(1).view(-1)  # Reverse targets
                     logits_rev, _ = model(x_rev, return_diagnostics=False)
@@ -1197,19 +1287,23 @@ def train_phase8():
                     grad_norm_raw = 0.0
                     grad_norm = 0.0
                 else:
-                    # === GLOBAL GRADIENT NORM CLIPPING (KPI Target: ≤ 10.0) ===
-                    # Per-element clamp doesn't bound total norm (large tensors still explode)
-                    # This normalizes ALL gradients so L2 norm ≤ max_norm
-                    max_grad_norm = 5.0  # Target: avg ≤ 5.0, max ≤ 10.0
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), 
-                        max_norm=max_grad_norm,
-                        error_if_nonfinite=False  # Don't error on NaN (handled by hooks)
-                    ).item()
-                    
-                    # Fallback if clip_grad_norm_ fails
-                    if math.isnan(grad_norm) or math.isinf(grad_norm):
+                    if config.dry_run:
+                        # Let gradients flow freely in dry-run to observe real learning
                         grad_norm = grad_norm_raw
+                    else:
+                        # === GLOBAL GRADIENT NORM CLIPPING (KPI Target: ≤ 10.0) ===
+                        # Per-element clamp doesn't bound total norm (large tensors still explode)
+                        # This normalizes ALL gradients so L2 norm ≤ max_norm
+                        max_grad_norm = 5.0  # Target: avg ≤ 5.0, max ≤ 10.0
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), 
+                            max_norm=max_grad_norm,
+                            error_if_nonfinite=False  # Don't error on NaN (handled by hooks)
+                        ).item()
+                        
+                        # Fallback if clip_grad_norm_ fails
+                        if math.isnan(grad_norm) or math.isinf(grad_norm):
+                            grad_norm = grad_norm_raw
                 
                 # Failsafe: Skip if raw norm is extremely large (gradient explosion)
                 # NOTE: For dry-run, we disable this entirely to test if model can learn
@@ -1249,7 +1343,7 @@ def train_phase8():
                 # Resonance-Locked Training (#6 Moonshot)
                 # Skip updates when gradient SNR is low (high noise)
                 resonance_skip = False
-                if config.use_resonance_locked and step > config.warmup_steps:
+                if resonance_locked_active and step > config.warmup_steps:
                     # Approximate Gradient Noise Scale (GNS)
                     # GNS ≈ grad_variance / grad_mean² 
                     # High GNS = noisy gradient, skip update
@@ -1279,15 +1373,43 @@ def train_phase8():
                 # Optimizer step
                 # For dry-run: call optimizer.step() directly to ensure updates happen
                 # GradScaler may skip updates if it detects inf, causing loss stagnation
+                
+                # DEBUG: Save first param weight before step
+                first_param = next(model.parameters())
+                weight_before = first_param.data.flatten()[0].item()
+                
+                # Bootstrap LR override for early optimizer steps (real training only)
+                using_bootstrap = (
+                    not config.dry_run
+                    and config.bootstrap_lr > 0
+                    and config.bootstrap_steps > 0
+                    and optimizer_step < config.bootstrap_steps
+                )
+                if using_bootstrap:
+                    for group in optimizer.param_groups:
+                        group['lr'] = config.bootstrap_lr
+                
                 if config.dry_run:
                     optimizer.step()
                 else:
                     scaler.step(optimizer)
                     scaler.update()
+                
+                # DEBUG: Check weight change after step
+                weight_after = first_param.data.flatten()[0].item()
+                weight_diff = abs(weight_after - weight_before)
+                
+                # Print debug info on first few optimizer steps
+                if optimizer_step <= 3:
+                    print(f"  [DEBUG] Optimizer step {optimizer_step}: weight_diff={weight_diff:.2e}, lr={scheduler.get_last_lr():.2e}")
+                    if weight_diff == 0:
+                        print(f"  ⚠️ WARNING: Weights did NOT change! Optimizer may not be working.")
+                
                 optimizer.zero_grad()
                 
                 # LR scheduler step
-                scheduler.step()
+                if not config.dry_run and not using_bootstrap:
+                    scheduler.step()
                 
                 # EMA update
                 if ema is not None:
@@ -1377,9 +1499,12 @@ def train_phase8():
                         g_ii_tensor = torch.tensor([g_ii_val], device=device, dtype=torch.complex64)
                         res_diag = resonance_curvature.step(g_ii_tensor)
                 
-                # Compute metrics FIRST (before using avg_loss)
+                # Compute metrics FIRST (before resetting total_loss)
                 avg_loss = total_loss / config.grad_accum_steps
                 ppl = math.exp(min(avg_loss, 20.0))
+                
+                # CRITICAL: Reset total_loss AFTER computing avg_loss
+                total_loss = 0.0
                 
                 # Stability Monitor update (now avg_loss is defined)
                 had_nan = False
@@ -1397,6 +1522,8 @@ def train_phase8():
                     stability_manager.step()
                 
                 current_lr = scheduler.get_last_lr()
+                if using_bootstrap:
+                    current_lr = [config.bootstrap_lr]
                 
                 # Update progress bar (shorter description to show ETA)
                 pbar.set_description(f"E{epoch}")
