@@ -340,23 +340,99 @@ class BKIsometryInitializer:
 # BK-Core Specific Initialization
 # =============================================================================
 
-def init_bk_core_layer(layer: nn.Module, gain: float = 0.1):
+def symplectic_greens_init_(
+    tensor: torch.Tensor,
+    dt: float = 0.01,
+    min_decay: float = 1e-4,
+    max_decay: float = 1e-2,
+) -> None:
     """
-    BK-Core層の特別な初期化.
+    Symplectic Green's Initialization (SGI) - Research Topic 5 Solution.
+    
+    Creates: W = Q @ D
+        Q: Random orthogonal matrix (energy-conserving rotation)
+        D: diag(exp(-γ * dt)) decay factors
+    
+    This puts eigenvalues slightly inside the unit circle (|λ| < 1 but close to 1),
+    allowing long-range information flow while enabling forgetting/learning.
+    
+    Strict orthogonal (|λ| = 1 exactly) blocks learning because there's no
+    decay - the system becomes a perfect oscillator with no damping.
+    
+    Args:
+        tensor: Weight tensor (must be square for full SGI)
+        dt: Time step for decay (larger = more decay)
+        min_decay: Minimum decay rate γ
+        max_decay: Maximum decay rate γ
+    """
+    if tensor.ndim != 2:
+        nn.init.orthogonal_(tensor)
+        return
+    
+    rows, cols = tensor.shape
+    if rows != cols:
+        # Non-square: just use variance-preserving init
+        fan_in, fan_out = cols, rows
+        std = math.sqrt(2.0 / (fan_in + fan_out))
+        nn.init.normal_(tensor, mean=0, std=std)
+        return
+    
+    with torch.no_grad():
+        # 1. Random orthogonal Q
+        Q = torch.empty(rows, cols, device=tensor.device, dtype=tensor.dtype)
+        nn.init.orthogonal_(Q)
+        
+        # 2. Green's-style decay factors
+        # γ ~ Uniform(min_decay, max_decay)
+        gamma = torch.rand(rows, device=tensor.device, dtype=tensor.dtype)
+        gamma = gamma * (max_decay - min_decay) + min_decay
+        
+        # D = diag(exp(-γ * dt))
+        decay_factors = torch.exp(-gamma * dt)
+        D = torch.diag(decay_factors)
+        
+        # 3. W = Q @ D
+        W_init = Q @ D
+        tensor.copy_(W_init)
+
+
+def init_bk_core_layer(layer: nn.Module, gain: float = 0.1, use_sgi: bool = True):
+    """
+    BK-Core層の特別な初期化 (研究Topic 5に基づき更新).
     
     v_proj, output_proj, bk_scale, gamma などのパラメータを
     Green関数の安定性を考慮して初期化。
+    
+    Args:
+        layer: BK-Core層モジュール
+        gain: スケーリング係数
+        use_sgi: Symplectic Green's Initialization を使用 (推奨)
+                 False の場合は従来の strict orthogonal を使用
     """
     with torch.no_grad():
-        # v_proj: Very small orthogonal (controls potential V in H = H₀ + V)
+        # v_proj: Use SGI for square, variance-preserving for non-square
         if hasattr(layer, 'v_proj') and isinstance(layer.v_proj, nn.Linear):
-            BKIsometryInitializer._init_unitary(layer.v_proj.weight, gain=gain)
+            w = layer.v_proj.weight
+            if use_sgi and w.shape[0] == w.shape[1]:
+                symplectic_greens_init_(w)
+                w.data.mul_(gain)  # Scale down for BK-Core input control
+            else:
+                # Variance-preserving for rectangular
+                fan_in, fan_out = w.shape[1], w.shape[0]
+                std = gain * math.sqrt(2.0 / (fan_in + fan_out))
+                nn.init.normal_(w, mean=0, std=std)
             if layer.v_proj.bias is not None:
                 nn.init.zeros_(layer.v_proj.bias)
         
-        # output_proj: Orthogonal projection
+        # output_proj: Use SGI for square matrices
         if hasattr(layer, 'output_proj') and isinstance(layer.output_proj, nn.Linear):
-            BKIsometryInitializer._init_unitary(layer.output_proj.weight, gain=1.0)
+            w = layer.output_proj.weight
+            if use_sgi and w.shape[0] == w.shape[1]:
+                symplectic_greens_init_(w)
+            else:
+                fan_in, fan_out = w.shape[1], w.shape[0]
+                std = math.sqrt(2.0 / (fan_in + fan_out))
+                nn.init.normal_(w, mean=0, std=std)
             if layer.output_proj.bias is not None:
                 nn.init.zeros_(layer.output_proj.bias)
         

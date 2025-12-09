@@ -115,11 +115,16 @@ class BKHyperSGD(Optimizer):
         """
         Classify parameters by their geometric type based on their names.
         
-        Categories:
-        - 'unitary': BK-Core layers (v_proj, output_proj, bk_*)
-        - 'hyperbolic': Hyperbolic attention (hyperbolic_*, hybrid_attn.*)
+        Categories (UPDATED based on Research Topic 1):
+        - 'unitary': REMOVED - linear weights should NOT use Cayley retraction
+        - 'hyperbolic': Embedding layers that explicitly need hyperbolic updates
         - 'symplectic': Symplectic blocks (symplectic_*, force_field.*)
-        - 'euclidean': Everything else (ffn, layer_norm, embedding, etc.)
+        - 'euclidean': Everything including v_proj, output_proj, bk_core, ffn, etc.
+        
+        KEY INSIGHT from Research:
+        Linear layer weight matrix W is a transformation in TANGENT SPACE T_0D,
+        NOT a point on the manifold. Applying Riemannian gradient scaling
+        causes gradient explosion via (1-||W||^2)^{-2} factor.
         """
         for group in self.param_groups:
             for p in group['params']:
@@ -128,12 +133,17 @@ class BKHyperSGD(Optimizer):
                 # Try to get parameter name
                 name = getattr(p, '_param_name', '')
                 
+                # CRITICAL FIX: v_proj, output_proj, bk_core are LINEAR LAYER weights
+                # They must use Euclidean updates, NOT Cayley retraction
+                # Cayley was causing gradient explosion via metric tensor scaling
                 if any(key in name.lower() for key in ['v_proj', 'output_proj', 'bk_core', 'bk_scale']):
-                    self._param_types[param_id] = 'unitary'
-                elif any(key in name.lower() for key in ['hyperbolic', 'hybrid_attn', 'lorentz', 'poincare']):
-                    self._param_types[param_id] = 'hyperbolic'
+                    # Research Topic 1: linear weights → Euclidean parameter
+                    self._param_types[param_id] = 'euclidean'
                 elif any(key in name.lower() for key in ['symplectic', 'force_field', 'dt']):
                     self._param_types[param_id] = 'symplectic'
+                elif any(key in name.lower() for key in ['embedding']) and 'hyperbolic' in name.lower():
+                    # Only explicit hyperbolic embeddings use Lorentz updates
+                    self._param_types[param_id] = 'hyperbolic'
                 else:
                     self._param_types[param_id] = 'euclidean'
     
@@ -510,14 +520,15 @@ def get_bk_parameter_groups(
     Args:
         model: The model
         base_lr: Base learning rate for Euclidean parameters
-        unitary_lr_scale: LR multiplier for unitary parameters
-        hyperbolic_lr_scale: LR multiplier for hyperbolic parameters
+        unitary_lr_scale: DEPRECATED - no longer used (all linear weights are Euclidean)
+        hyperbolic_lr_scale: LR multiplier for explicit hyperbolic embeddings
         symplectic_lr_scale: LR multiplier for symplectic parameters
     
     Returns:
         List of parameter group dicts
     """
-    unitary_params = []
+    # NOTE: 'unitary' category removed per Research Topic 1
+    # v_proj, output_proj, bk_core are LINEAR LAYER weights → Euclidean updates
     hyperbolic_params = []
     symplectic_params = []
     euclidean_params = []
@@ -525,24 +536,18 @@ def get_bk_parameter_groups(
     for name, param in model.named_parameters():
         param._param_name = name
         
-        if any(key in name.lower() for key in ['v_proj', 'output_proj', 'bk_core', 'bk_scale']):
-            unitary_params.append(param)
-        elif any(key in name.lower() for key in ['hyperbolic', 'hybrid_attn', 'lorentz', 'poincare']):
-            hyperbolic_params.append(param)
-        elif any(key in name.lower() for key in ['symplectic', 'force_field']):
+        if any(key in name.lower() for key in ['symplectic', 'force_field']):
             symplectic_params.append(param)
+        elif 'embedding' in name.lower() and 'hyperbolic' in name.lower():
+            # Only explicit hyperbolic embeddings
+            hyperbolic_params.append(param)
         else:
+            # Everything else including v_proj, output_proj, bk_core
             euclidean_params.append(param)
     
     groups = []
     
-    if unitary_params:
-        groups.append({
-            'params': unitary_params,
-            'lr': base_lr * unitary_lr_scale,
-            'use_cayley': True,
-            'use_lorentz': False,
-        })
+    # NOTE: unitary_params group removed - was causing gradient explosion
     
     if hyperbolic_params:
         groups.append({

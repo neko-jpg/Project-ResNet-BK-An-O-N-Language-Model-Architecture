@@ -39,13 +39,15 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-learning_rate: 5.0e-3  # Increased LR to boost gradient magnitude
+# FIXME (2025-12-09): Reduced LR from 5e-3 to 1e-4 for grad norm stabilization
+# Target: grad_norm avg ≤ 5.0, max ≤ 10.0
+learning_rate: 1.0e-4  # Reduced from 5e-3 (50x reduction)
 min_lr: 1.0e-6
-warmup_steps: 2000  # 500 -> 2000: 安定化のため延長
+warmup_steps: 2000
 
-# === Gradient Control (Muon Optimized) ===
-grad_clip_warmup: 0.5  # Strict clipping during warmup (Muon用)
-grad_clip_train: 1.0   # 通常時: 最大1.0に制限 (目標: 0.5〜1.0)
+# === Gradient Control ===
+grad_clip_warmup: 0.1  # Stricter warmup clipping
+grad_clip_train: 1.0   # 通常時の制限
 grad_skip_threshold: 10.0  # Failsafe: 異常な勾配爆発をスキップ
 
 # === EMA (Exponential Moving Average) ===
