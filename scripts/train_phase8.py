@@ -557,6 +557,10 @@ def init_weights(model: nn.Module):
             continue
         
         if 'embedding' in name.lower() or 'embed' in name.lower():
+            # Skip adapter parameters (they have their own init)
+            if 'adapter' in name:
+                continue
+
             # Muon + Large Model (327M): 非常に保守的な初期化
             nn.init.normal_(param, mean=0.0, std=0.001)  # 0.02 → 0.001 (BERT/GPT推奨値)
             # 絶対値を±0.01に制限（勾配爆発防止）
