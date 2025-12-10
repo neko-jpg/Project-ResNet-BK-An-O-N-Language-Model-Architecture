@@ -30,7 +30,9 @@ def ternary_weight(w: torch.Tensor) -> torch.Tensor:
     w_out = w_quant * scale
 
     # 4. Straight-Through Estimator (STE)
-    return (w_out - w).detach() + w
+    # Ensure result has same dtype as input w (needed for mixed precision)
+    out = (w_out - w).detach() + w
+    return out.to(w.dtype)
 
 class BitNetLinear(nn.Linear):
     """
@@ -41,7 +43,10 @@ class BitNetLinear(nn.Linear):
         
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         # Quantize weights
+        # ternary_weight keeps original dtype, but input might be different (e.g. BF16 vs FP32 weight)
         w_quant = ternary_weight(self.weight)
+        if w_quant.dtype != input.dtype:
+            w_quant = w_quant.to(input.dtype)
         
         # Use Triton kernel if available and input is CUDA
         if TRITON_AVAILABLE and input.is_cuda and self.weight.is_cuda:
