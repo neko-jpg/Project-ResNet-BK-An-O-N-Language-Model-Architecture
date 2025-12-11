@@ -830,15 +830,16 @@ def train_phase8():
         print("Dry Run: Using dummy data")
         
         # Downsize the model for fast feedback during dry-run
-        if config.d_model > 512:
-            print(f"⚡ Dry-run d_model {config.d_model} → 512")
-            config.d_model = 512
-        if config.n_layers > 6:
-            print(f"⚡ Dry-run n_layers {config.n_layers} → 6")
-            config.n_layers = 6
-        if config.num_heads > 8:
-            print(f"⚡ Dry-run num_heads {config.num_heads} → 8")
-            config.num_heads = 8
+        # Step 2 scale-up test: d_model=2048, n_layers=24
+        if config.d_model > 2048:
+            print(f"⚡ Dry-run d_model {config.d_model} → 2048")
+            config.d_model = 2048
+        if config.n_layers > 24:
+            print(f"⚡ Dry-run n_layers {config.n_layers} → 24")
+            config.n_layers = 24
+        if config.num_heads > 32:
+            print(f"⚡ Dry-run num_heads {config.num_heads} → 32")
+            config.num_heads = 32
         if config.low_rank_rank > 16:
             print(f"⚡ Dry-run low_rank_rank {config.low_rank_rank} → 16")
             config.low_rank_rank = 16
@@ -1085,19 +1086,27 @@ def train_phase8():
         config.grad_accum_steps = 1
         print(f"⚡ Dry-run: grad_accum_steps {original_grad_accum} → {config.grad_accum_steps}")
         
-        # CRITICAL: Disable complex features that cause NaN during dry-run
-        print("⚡ Dry-run: Disabling complex features that cause NaN...")
+        # Disable features that cause NaN during dry-run (but keep safe revolutionary algos)
+        print("⚡ Dry-run: Adjusting features for stability...")
         config.use_time_reversed = False
         config.use_resonance_locked = False
         config.use_gradient_teleportation = False
-        config.use_revolutionary_training = False
         config.use_superposition_training = False
         print("   - Time-Reversed Training: OFF")
         print("   - Resonance-Locked Training: OFF")
-        print("   - Revolutionary Training: OFF")
         
-        # Run 50 steps for quick KPI verification
-        steps_to_run = min(50, config.max_steps) if config.max_steps else 50
+        # Revolutionary Training: Enable ONLY safe algorithms for compression testing
+        # closed_form: doesn't rely on gradients (avoids compression gradient issues)
+        # zeta: finds important dimensions (efficient with limited info)
+        # holographic: FFT-based (averages out quantization noise)
+        if config.use_revolutionary_training:
+            config.revolutionary_algorithms = "closed_form,zeta,holographic"
+            print(f"   - Revolutionary Training: ON (safe algos only: {config.revolutionary_algorithms})")
+        else:
+            print("   - Revolutionary Training: OFF")
+        
+        # Run 250 steps for extended scale-up testing
+        steps_to_run = min(250, config.max_steps) if config.max_steps else 250
         print(f"Dry Run: Running {steps_to_run} steps (grad_accum={config.grad_accum_steps})...")
         
         class MockDataset:

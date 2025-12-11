@@ -28,8 +28,8 @@ mixed_precision_dtype: bfloat16
 
 # === Training ===
 batch_size: 1
-gradient_accumulation_steps: 32
-effective_batch_size: 32
+gradient_accumulation_steps: 8
+effective_batch_size: 8
 
 # === Optimizer (BK-HyperSGD - ResNet-BK専用) ===
 optimizer_type: bk_hyper_sgd
@@ -39,11 +39,10 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-# FIXME (2025-12-09): Reduced LR from 5e-3 to 1e-4 for grad norm stabilization
-# Target: grad_norm avg ≤ 5.0, max ≤ 10.0
-learning_rate: 1.0e-4  # Reduced from 5e-3 (50x reduction)
+# 2025-12-10: Increased LR to 0.02 for faster convergence (matching dry run behavior)
+learning_rate: 0.02
 min_lr: 1.0e-6
-warmup_steps: 2000
+warmup_steps: 200  # Reduced from 2000 to start learning quickly
 
 # === Gradient Control ===
 grad_clip_warmup: 0.1  # Stricter warmup clipping
