@@ -320,6 +320,12 @@ class Phase8TrainingConfig:
     beta2: float = 0.95
     eps: float = 1e-8
     
+    # Bootstrap LR (Shock Therapy for saddle point escape)
+    # Use very high LR until loss decreases significantly
+    bootstrap_lr: float = 2.0  # High LR for bootstrap phase
+    bootstrap_steps: int = 500  # Maximum steps (safety limit)
+    bootstrap_exit_threshold: float = 0.5  # Exit when loss drops by this amount
+    
     # Gradient - stricter clipping during warmup to prevent NaN
     grad_clip_warmup: float = 0.01  # Very strict during warmup (was 0.1)
     grad_clip_train: float = 1.0
@@ -820,7 +826,7 @@ def train_phase8():
         config.learning_rate = 5e-2  # High LR to see loss change quickly
         
         # Use a smaller vocab during dry-run so the mock task is learnable
-        dry_run_vocab = min(config.vocab_size, 32)
+        dry_run_vocab = min(config.vocab_size,4096)
         if dry_run_vocab != config.vocab_size:
             print(f"⚡ Dry-run vocab_size {config.vocab_size} → {dry_run_vocab} (faster feedback)")
             config.vocab_size = dry_run_vocab
@@ -831,18 +837,18 @@ def train_phase8():
         
         # Downsize the model for fast feedback during dry-run
         # Step 2 scale-up test: d_model=2048, n_layers=24
-        if config.d_model > 2048:
-            print(f"⚡ Dry-run d_model {config.d_model} → 2048")
-            config.d_model = 2048
-        if config.n_layers > 24:
-            print(f"⚡ Dry-run n_layers {config.n_layers} → 24")
-            config.n_layers = 24
+        if config.d_model > 4096:
+            print(f"⚡ Dry-run d_model {config.d_model} → 4096")
+            config.d_model = 4096
+        if config.n_layers > 48:
+            print(f"⚡ Dry-run n_layers {config.n_layers} → 48")
+            config.n_layers = 48
         if config.num_heads > 32:
             print(f"⚡ Dry-run num_heads {config.num_heads} → 32")
             config.num_heads = 32
-        if config.low_rank_rank > 16:
-            print(f"⚡ Dry-run low_rank_rank {config.low_rank_rank} → 16")
-            config.low_rank_rank = 16
+        if config.low_rank_rank > 64:
+            print(f"⚡ Dry-run low_rank_rank {config.low_rank_rank} → 64")
+            config.low_rank_rank = 64
     else:
         print(f"Loading dataset from {config.dataset_path}...")
         try:
@@ -976,6 +982,10 @@ def train_phase8():
     optimizer_step = 0
     total_loss = 0.0
     skip_count = 0
+    
+    # Bootstrap LR state tracking
+    bootstrap_initial_loss = None  # Track initial loss for adaptive exit
+    bootstrap_completed = False  # Flag to prevent re-entering bootstrap
     
     # Resonance-Adaptive Curvature Optimizer (Phase 8 optimization)
     resonance_curvature = None
@@ -1391,16 +1401,41 @@ def train_phase8():
                 first_param = next(model.parameters())
                 weight_before = first_param.data.flatten()[0].item()
                 
-                # Bootstrap LR override for early optimizer steps (real training only)
+                # Bootstrap LR override (adaptive exit based on loss decrease)
+                # Continues until: (1) loss drops by threshold, OR (2) max steps reached
+                current_loss = total_loss / max(1, step % config.grad_accum_steps if step % config.grad_accum_steps != 0 else config.grad_accum_steps)
+                
+                # Track initial loss for bootstrap
+                if bootstrap_initial_loss is None and not config.dry_run:
+                    bootstrap_initial_loss = current_loss
+                    if config.bootstrap_lr > 0:
+                        print(f"  📊 Bootstrap initial loss: {bootstrap_initial_loss:.4f}")
+                
+                # Check if we should exit bootstrap (loss decreased enough)
+                loss_decrease = (bootstrap_initial_loss - current_loss) if bootstrap_initial_loss else 0.0
+                
                 using_bootstrap = (
                     not config.dry_run
+                    and not bootstrap_completed
                     and config.bootstrap_lr > 0
                     and config.bootstrap_steps > 0
                     and optimizer_step < config.bootstrap_steps
+                    and loss_decrease < config.bootstrap_exit_threshold
                 )
+                
                 if using_bootstrap:
                     for group in optimizer.param_groups:
                         group['lr'] = config.bootstrap_lr
+                elif not bootstrap_completed and not config.dry_run and config.bootstrap_lr > 0:
+                    # Bootstrap just ended - log reason
+                    if loss_decrease >= config.bootstrap_exit_threshold:
+                        print(f"  🎯 Bootstrap completed! Loss decreased by {loss_decrease:.4f} (threshold: {config.bootstrap_exit_threshold})")
+                    elif optimizer_step >= config.bootstrap_steps:
+                        print(f"  ⚠️ Bootstrap ended at max steps ({config.bootstrap_steps}) - loss decrease was {loss_decrease:.4f}")
+                    bootstrap_completed = True
+                    # Restore normal LR
+                    for group in optimizer.param_groups:
+                        group['lr'] = config.learning_rate
                 
                 if config.dry_run:
                     optimizer.step()
@@ -1538,12 +1573,15 @@ def train_phase8():
                 if using_bootstrap:
                     current_lr = [config.bootstrap_lr]
                 
+                # Extract first element if list (scheduler.get_last_lr() returns list)
+                lr_value = current_lr[0] if isinstance(current_lr, list) else current_lr
+                
                 # Update progress bar (shorter description to show ETA)
                 pbar.set_description(f"E{epoch}")
                 pbar.set_postfix({
                     'loss': f'{avg_loss:.3f}',
                     'ppl': f'{ppl:.0f}',
-                    'lr': f'{current_lr:.1e}',
+                    'lr': f'{lr_value:.1e}',
                     'gN': f'{grad_norm:.2f}',  # Clipped norm
                     'gR': f'{grad_norm_raw:.2f}',  # Raw norm
                 })

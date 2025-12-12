@@ -39,10 +39,17 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-# 2025-12-10: Increased LR to 0.02 for faster convergence (matching dry run behavior)
-learning_rate: 0.02
+# 2025-12-11: Matched to dry-run success settings
+learning_rate: 0.05  # Same as dry-run
 min_lr: 1.0e-6
-warmup_steps: 200  # Reduced from 2000 to start learning quickly
+warmup_steps: 0  # No warmup, start at full LR immediately
+
+# === Bootstrap LR (Shock Therapy) ===
+# Use very high LR until loss decreases significantly
+# Automatically exits when loss drops by bootstrap_exit_threshold
+bootstrap_lr: 2.0  # 40x higher than normal LR
+bootstrap_steps: 500  # Maximum steps (safety limit, usually exits earlier)
+bootstrap_exit_threshold: 0.5  # Exit bootstrap when loss drops by this amount
 
 # === Gradient Control ===
 grad_clip_warmup: 0.1  # Stricter warmup clipping
@@ -159,8 +166,8 @@ holographic_compression_ratio: 0.25
 use_superposition_training: false  # Heavy, enable manually
 superposition_particles: 5
 
-# === Revolutionary Training (7 Algorithms) ===
-# Scheduler managed: Warmup(0-10%): OFF | Early(10-30%): 1/5 | Mid(30-70%): 1/3 | Late(70-100%): 1/2
+# === Revolutionary Training (3 Safe Algorithms) ===
+# Using only the 3 algorithms that succeeded in dry-run
 use_revolutionary_training: true
 revolutionary_auto_schedule: true
-revolutionary_algorithms: "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"
+revolutionary_algorithms: "closed_form,zeta,holographic"
