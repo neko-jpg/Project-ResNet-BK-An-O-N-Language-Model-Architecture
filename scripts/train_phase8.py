@@ -139,6 +139,20 @@ except ImportError:
     StabilityManager = None
     create_stability_manager = None
 
+# Import Async Checkpoint Saver (Prevents training slowdown after saves)
+try:
+    from src.training.async_checkpoint import (
+        AsyncCheckpointSaver,
+        aggressive_memory_cleanup,
+        force_cuda_memory_defrag,
+    )
+    _ASYNC_CHECKPOINT_AVAILABLE = True
+except ImportError:
+    _ASYNC_CHECKPOINT_AVAILABLE = False
+    AsyncCheckpointSaver = None
+    aggressive_memory_cleanup = None
+    force_cuda_memory_defrag = None
+
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -346,6 +360,11 @@ class Phase8TrainingConfig:
     use_triton_kernel: bool = True
     triton_kernel_version: str = 'fast'
     
+    # Riemannian Resonant Tunneling (HTT Optimization)
+    use_resonant_htt: bool = False
+    resonant_num_cores: int = 4
+    use_zeta_init: bool = True
+    
     # Data
     data_limit: int = 100_000_000
     vocab_size: int = 50257
@@ -457,6 +476,8 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--extreme-compression", action="store_true")
     parser.add_argument("--ultra-compression", action="store_true")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--resonant-htt", action="store_true",
+        help="Enable Riemannian Resonant Tunneling for optimal tensor geometry")
     
     # Config file support
     parser.add_argument("--config", type=str, default=None)
@@ -538,6 +559,10 @@ def parse_args() -> Phase8TrainingConfig:
         use_mixed_precision=get_val('use_mixed_precision', True),
         use_gradient_checkpointing=get_val('use_gradient_checkpointing', True),
         use_triton_kernel=get_val('use_triton_kernel', True),
+        # Riemannian Resonant Tunneling
+        use_resonant_htt=get_val('use_resonant_htt', False),
+        resonant_num_cores=get_val('resonant_num_cores', 4),
+        use_zeta_init=get_val('use_zeta_init', True),
         vocab_size=get_val('vocab_size', 50257),
         save_interval=get_val('save_interval', 500),
         save_dir=get_val('save_dir', 'checkpoints/phase8'),
@@ -612,6 +637,11 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
         use_mixed_precision=config.use_mixed_precision,
         use_triton_kernel=config.use_triton_kernel,
         triton_kernel_version=config.triton_kernel_version,
+        
+        # Riemannian Resonant Tunneling
+        use_resonant_htt=config.use_resonant_htt,
+        resonant_num_cores=config.resonant_num_cores,
+        use_zeta_init=config.use_zeta_init,
     )
     
     model = Phase8IntegratedModel(model_config)
@@ -699,16 +729,26 @@ def save_checkpoint(
     step: int,
     epoch: int,
     loss: float,
-    config: Phase8TrainingConfig
+    config: Phase8TrainingConfig,
+    revolutionary_trainer: Optional['RevolutionaryTrainer'] = None,
 ):
     """Save complete checkpoint including all training state."""
+    import gc
+    
     os.makedirs(os.path.dirname(path), exist_ok=True)
     
+    # CRITICAL: Access underlying model for torch.compile'd models
+    # This avoids resetting the compiled graph which causes 3x slowdown!
+    model_to_save = model
+    if hasattr(model, '_orig_mod'):
+        model_to_save = model._orig_mod  # torch.compile'd model
+    
+    # Build checkpoint dict
     checkpoint = {
         'step': step,
         'epoch': epoch,
         'loss': loss,
-        'model_state_dict': model.state_dict(),
+        'model_state_dict': model_to_save.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
         'scaler_state_dict': scaler.state_dict(),
@@ -718,8 +758,21 @@ def save_checkpoint(
     if ema is not None:
         checkpoint['ema_state_dict'] = ema.state_dict()
     
+    # CRITICAL: Save revolutionary trainer state for proper resume
+    if revolutionary_trainer is not None:
+        checkpoint['revolutionary_trainer_state_dict'] = revolutionary_trainer.state_dict()
+    
+    # Save and immediately free memory
     torch.save(checkpoint, path)
     print(f"\n💾 Checkpoint saved: {path}")
+    
+    # Aggressively free checkpoint memory
+    for key in list(checkpoint.keys()):
+        del checkpoint[key]
+    del checkpoint
+    
+    # Force garbage collection
+    gc.collect()
 
 
 def load_checkpoint(
@@ -729,7 +782,8 @@ def load_checkpoint(
     scheduler: CosineWarmupScheduler,
     scaler: torch.cuda.amp.GradScaler,
     ema: Optional[EMA],
-    device: torch.device
+    device: torch.device,
+    revolutionary_trainer: Optional['RevolutionaryTrainer'] = None,
 ) -> Tuple[int, int, float]:
     """Load checkpoint and return (step, epoch, loss)."""
     print(f"Loading checkpoint from {path}...")
@@ -760,6 +814,11 @@ def load_checkpoint(
     # Load EMA
     if ema is not None and 'ema_state_dict' in checkpoint:
         ema.load_state_dict(checkpoint['ema_state_dict'])
+    
+    # CRITICAL: Load revolutionary trainer state for proper resume
+    # This ensures phase-based scheduling continues correctly
+    if revolutionary_trainer is not None and 'revolutionary_trainer_state_dict' in checkpoint:
+        revolutionary_trainer.load_state_dict(checkpoint['revolutionary_trainer_state_dict'])
     
     step = checkpoint.get('step', 0)
     epoch = checkpoint.get('epoch', 0)
@@ -826,7 +885,8 @@ def train_phase8():
         config.learning_rate = 5e-2  # High LR to see loss change quickly
         
         # Use a smaller vocab during dry-run so the mock task is learnable
-        dry_run_vocab = min(config.vocab_size,4096)
+        # NOTE: Increased to 32768 for ResonantHTT testing with full vocab
+        dry_run_vocab = min(config.vocab_size, 32768)
         if dry_run_vocab != config.vocab_size:
             print(f"⚡ Dry-run vocab_size {config.vocab_size} → {dry_run_vocab} (faster feedback)")
             config.vocab_size = dry_run_vocab
@@ -985,7 +1045,10 @@ def train_phase8():
     
     # Bootstrap LR state tracking
     bootstrap_initial_loss = None  # Track initial loss for adaptive exit
-    bootstrap_completed = False  # Flag to prevent re-entering bootstrap
+    # Skip bootstrap when resuming from checkpoint (weights already trained)
+    bootstrap_completed = (start_step > 0)  # True if resuming, False if fresh start
+    if bootstrap_completed and config.bootstrap_lr > 0:
+        print(f"   ⚡ Bootstrap skipped (resuming from step {start_step})")
     
     # Resonance-Adaptive Curvature Optimizer (Phase 8 optimization)
     resonance_curvature = None
@@ -1040,10 +1103,32 @@ def train_phase8():
                 use_diffractive='diffractive' in enabled_algos,
                 learning_rate=config.learning_rate,
                 log_interval=config.log_interval,
+                # CRITICAL: Pass total_steps for phase-based scheduling
+                # This ensures proper resume from checkpoints
+                total_steps=total_steps,
             )
             revolutionary_trainer = RevolutionaryTrainer(model, rev_config, device)
             # Start in warmup mode - weight modifications disabled until warmup completes
             revolutionary_trainer.set_warmup_mode(True)
+            
+            # CRITICAL: Restore revolutionary_trainer state if resuming from checkpoint
+            # This must happen AFTER revolutionary_trainer is created
+            if config.resume_from and os.path.exists(config.resume_from):
+                try:
+                    ckpt = torch.load(config.resume_from, map_location=device)
+                    if 'revolutionary_trainer_state_dict' in ckpt:
+                        revolutionary_trainer.load_state_dict(ckpt['revolutionary_trainer_state_dict'])
+                        # Update step_count to match global step for phase calculation
+                        revolutionary_trainer.step_count = start_step
+                    else:
+                        # Old checkpoint without this state - sync step_count manually
+                        revolutionary_trainer.step_count = start_step
+                        print(f"  ℹ️ Revolutionary trainer step synced to {start_step} (no saved state)")
+                    del ckpt  # Free memory
+                except Exception as e:
+                    print(f"  ⚠ Could not restore revolutionary trainer state: {e}")
+                    revolutionary_trainer.step_count = start_step
+            
             if getattr(config, 'revolutionary_auto_schedule', True):
                 print(f"✔ Revolutionary Training Enabled (Phase-based Auto-Schedule)")
                 print(f"  └─ Warmup(0-10%): OFF | Early(10-30%): 1/5 | Mid(30-70%): 1/3 | Late(70-100%): 1/2")
@@ -1079,6 +1164,17 @@ def train_phase8():
     #         print(f"  └─ Backward Hooks | Layerwise Scaling | Loss Smoothing | Adaptive Precision")
     #     except Exception as e:
     #         print(f"⚠ Stability Suite not available: {e}")
+    
+    # Async Checkpoint Saver - DISABLED
+    # Was causing progressive slowdown (5.94s → 20.64s/it) due to GIL contention
+    # and memory issues. Using sync-only approach instead.
+    async_saver = None
+    # if _ASYNC_CHECKPOINT_AVAILABLE:
+    #     try:
+    #         async_saver = AsyncCheckpointSaver(max_queue_size=2)
+    #         print(f"✔ Async Checkpoint Saver Enabled (background saving)")
+    #     except Exception as e:
+    #         print(f"⚠ Async Checkpoint Saver not available: {e}")
     
     # JSON Log
     training_log = {
@@ -1136,18 +1232,44 @@ def train_phase8():
         total_steps = steps_to_run
         scheduler.total_steps = total_steps  # Align scheduler with shorter dry-run
     
-    # Progress bar
+    # Progress bar - use ABSOLUTE step counts for consistency with schedulers
+    # This ensures pbar, LR scheduler, and revolutionary trainer all use the same step reference
     pbar = tqdm(
-        total=total_steps - start_step,
-        initial=0,
+        total=total_steps,  # FIXED: Use absolute total (195312), not remaining
+        initial=start_step,  # FIXED: Start from resume point (2480), not 0
         disable=not TQDM_AVAILABLE,
         desc="Training"
     )
+    
+    # === STEP TIMING LOG SYSTEM ===
+    # Logs ALL steps to file for analysis
+    import time as _step_time
+    _step_timing_log_path = os.path.join(config.save_dir, "step_timing_log.txt")
+    _step_timing_buffer = []
+    _last_checkpoint_step = start_step  # Track when last checkpoint was saved
+    
+    def _log_step_timing(step, phase, timing_dict, to_file=True):
+        """Log step timing to file (and console for POST-CKPT steps)"""
+        line = f"[Step {step:6d}] {phase:12s} | " + " | ".join(
+            f"{k}={v:.1f}ms" if isinstance(v, float) else f"{k}={v}"
+            for k, v in timing_dict.items()
+        )
+        # Only print to console for post-checkpoint steps (to avoid spam)
+        if phase == 'POST-CKPT':
+            print(f"  ⏱️ {line}")
+        if to_file:
+            # Write directly to file (no buffering)
+            with open(_step_timing_log_path, 'a') as f:
+                f.write(f"{datetime.now().isoformat()} {line}\n")
     
     # Training loop
     for epoch in range(start_epoch, config.epochs):
         for x, y in dataset.iter_epoch(epoch):
             step += 1
+            
+            # === STEP TIMING START ===
+            _step_start_time = _step_time.perf_counter()
+            _step_timings = {}
             
             if step <= start_step:
                 continue
@@ -1405,8 +1527,8 @@ def train_phase8():
                 # Continues until: (1) loss drops by threshold, OR (2) max steps reached
                 current_loss = total_loss / max(1, step % config.grad_accum_steps if step % config.grad_accum_steps != 0 else config.grad_accum_steps)
                 
-                # Track initial loss for bootstrap
-                if bootstrap_initial_loss is None and not config.dry_run:
+                # Track initial loss for bootstrap (only on fresh start, not resume)
+                if bootstrap_initial_loss is None and not config.dry_run and not bootstrap_completed:
                     bootstrap_initial_loss = current_loss
                     if config.bootstrap_lr > 0:
                         print(f"  📊 Bootstrap initial loss: {bootstrap_initial_loss:.4f}")
@@ -1493,6 +1615,10 @@ def train_phase8():
                 # Revolutionary Training - State-based control
                 if revolutionary_trainer is not None:
                     try:
+                        # CRITICAL: Sync step_count with global step for correct phase calculation
+                        # This ensures phase = step / total_steps uses absolute progress
+                        revolutionary_trainer.step_count = step
+                        
                         if getattr(config, 'revolutionary_auto_schedule', True):
                             if stable_steps < STABLE_FOR_REVOLUTIONARY:
                                 # Not stable enough: keep warmup mode
@@ -1624,20 +1750,82 @@ def train_phase8():
                 # Save checkpoint at save_interval
                 if optimizer_step > 0 and optimizer_step % (config.save_interval // config.grad_accum_steps) == 0:
                     ckpt_path = os.path.join(config.save_dir, f"step_{step}.pt")
+                    
+                    # === DETAILED TIMING FOR CHECKPOINT SAVE ===
+                    import time as _time
+                    _timing_log = []
+                    
+                    def _log_timing(name, start):
+                        torch.cuda.synchronize()
+                        elapsed = (_time.perf_counter() - start) * 1000
+                        _timing_log.append(f"{name}: {elapsed:.1f}ms")
+                        return elapsed
+                    
+                    print(f"\n  📊 CHECKPOINT TIMING (Step {step}):")
+                    
+                    # Step 1: CUDA sync before save
+                    _t0 = _time.perf_counter()
+                    torch.cuda.synchronize()
+                    _log_timing("cuda_sync_pre", _t0)
+                    
+                    # Step 2: Save checkpoint
+                    _t0 = _time.perf_counter()
                     save_checkpoint(
                         ckpt_path, model, optimizer, scheduler, scaler, ema,
-                        step, epoch, avg_loss, config
+                        step, epoch, avg_loss, config, revolutionary_trainer
                     )
+                    _log_timing("save_checkpoint", _t0)
                     
-                    # Keep only latest 2 checkpoints
+                    # Step 3: Keep only latest 2 checkpoints
+                    _t0 = _time.perf_counter()
                     cleanup_old_checkpoints(config.save_dir, max_keep=2)
+                    _log_timing("cleanup_old_ckpt", _t0)
                     
-                    # Also save training log
+                    # Step 4: Save training log
+                    _t0 = _time.perf_counter()
                     log_path = os.path.join(config.save_dir, "training_log.json")
                     training_log['last_update'] = datetime.now().isoformat()
+                    if len(training_log['steps']) > 1000:
+                        training_log['steps'] = training_log['steps'][-1000:]
                     save_training_log(training_log, log_path)
+                    _log_timing("save_training_log", _t0)
+                    
+                    # Step 5: Memory cleanup
+                    _t0 = _time.perf_counter()
+                    import gc
+                    for _ in range(3):
+                        gc.collect()
+                    _gc_time = (_time.perf_counter() - _t0) * 1000
+                    _timing_log.append(f"gc_collect_x3: {_gc_time:.1f}ms")
+                    
+                    _t0 = _time.perf_counter()
+                    torch.cuda.empty_cache()
+                    _log_timing("empty_cache", _t0)
+                    
+                    _t0 = _time.perf_counter()
+                    torch.cuda.synchronize()
+                    _log_timing("cuda_sync_post", _t0)
+                    
+                    if hasattr(torch.cuda, 'reset_peak_memory_stats'):
+                        torch.cuda.reset_peak_memory_stats()
+                    
+                    # Print all timings
+                    for log in _timing_log:
+                        print(f"     {log}")
+                    print(f"  🧹 Memory cleanup complete\n")
+                    
+                    # Update checkpoint tracking for step timing logs
+                    _last_checkpoint_step = step
                 
                 total_loss = 0.0
+            
+            # === STEP TIMING END ===
+            # Log ALL steps to file for analysis
+            torch.cuda.synchronize()  # Ensure all CUDA ops complete
+            _step_total_ms = (_step_time.perf_counter() - _step_start_time) * 1000
+            _step_timings['total'] = _step_total_ms
+            _step_timings['mode'] = 'POST-CKPT' if (step > _last_checkpoint_step and step <= _last_checkpoint_step + 34) else 'NORMAL'
+            _log_step_timing(step, _step_timings['mode'], _step_timings)
             
             pbar.update(1)
             
@@ -1648,6 +1836,13 @@ def train_phase8():
             break
     
     pbar.close()
+    
+    # Shutdown async checkpoint saver (wait for pending saves)
+    if async_saver is not None:
+        print("⏳ Waiting for pending checkpoint saves...")
+        async_saver.shutdown(timeout=60.0)
+        print("✔ All checkpoints saved")
+    
     print("\n✅ Training Complete!")
     print(f"Total steps: {step}, Optimizer steps: {optimizer_step}, Skipped: {skip_count}")
     

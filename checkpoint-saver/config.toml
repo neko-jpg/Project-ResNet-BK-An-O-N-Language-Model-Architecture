@@ -1,0 +1,24 @@
+# Checkpoint Saver Configuration
+# 
+# This daemon watches for new checkpoint files and:
+# 1. Deletes old checkpoints (keeps only latest N)
+# 2. Optionally compresses checkpoints with zstd
+#
+# Run: cargo run --release -- --config config.toml
+
+[watcher]
+# Directory to watch for checkpoint files
+path = "checkpoints/phase8_10b_japanese"
+# Glob pattern for checkpoint files
+pattern = "step_*.pt"
+
+[cleanup]
+# Number of latest checkpoints to keep
+keep_latest = 2
+
+[compression]
+# Enable zstd compression (saves 50-70% disk space)
+enabled = true
+# Compression level (1-22, higher = smaller but slower)
+# Recommended: 3 for balance, 1 for speed, 9+ for maximum compression
+level = 3

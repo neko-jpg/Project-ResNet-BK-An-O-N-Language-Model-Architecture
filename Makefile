@@ -107,7 +107,13 @@ prepare-japanese-data:
 
 train-japanese:
 	@echo "🇯🇵 Training Japanese 10B Model..."
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml
+	@bash -c '\
+		cleanup() { pkill -f "checkpoint-saver" 2>/dev/null; echo "🦀 Checkpoint saver stopped"; }; \
+		trap cleanup EXIT; \
+		echo "🦀 Starting Checkpoint Saver Daemon..."; \
+		(source ~/.cargo/env 2>/dev/null && cd checkpoint-saver && cargo run --release -q -- --config config.toml &) || echo "⚠ Checkpoint saver not available"; \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml; \
+	'
 
 start-japanese:
 	@echo "=========================================="
@@ -121,8 +127,14 @@ start-japanese:
 	$(PYTHON) scripts/benchmark_simple.py 2>&1 | head -30 || true
 	@echo "Step 4: Downloading data..."
 	$(MAKE) prepare-japanese-data
-	@echo "Step 5: Starting training with revolutionary algorithms..."
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --compile
+	@bash -c '\
+		cleanup() { pkill -f "checkpoint-saver" 2>/dev/null; echo "🦀 Checkpoint saver stopped"; }; \
+		trap cleanup EXIT; \
+		echo "Step 5: Starting Checkpoint Saver Daemon..."; \
+		(source ~/.cargo/env 2>/dev/null && cd checkpoint-saver && cargo run --release -q -- --config config.toml &) || echo "⚠ Checkpoint saver not available"; \
+		echo "Step 6: Starting training with revolutionary algorithms..."; \
+		$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml ; \
+	'
 
 dry-run-japanese:
 	@echo "==========================================="
@@ -154,17 +166,23 @@ dry-run-japanese:
 
 resume-japanese:
 	@echo "🔄 Resuming Japanese Training..."
-	@LATEST=$$(ls -t checkpoints/phase8_10b_japanese/step_*.pt 2>/dev/null | head -1); \
-	if [ -n "$$LATEST" ]; then \
-		echo "Found: $$LATEST"; \
-		$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from "$$LATEST" --compile; \
-	else \
-		echo "❌ No checkpoint. Run 'make start-japanese' first."; \
-	fi
+	@bash -c '\
+		cleanup() { pkill -f "checkpoint-saver" 2>/dev/null; echo "🦀 Checkpoint saver stopped"; }; \
+		trap cleanup EXIT; \
+		echo "🦀 Starting Checkpoint Saver Daemon..."; \
+		(source ~/.cargo/env 2>/dev/null && cd checkpoint-saver && cargo run --release -q -- --config config.toml &) || echo "⚠ Checkpoint saver not available"; \
+		LATEST=$$(ls -t checkpoints/phase8_10b_japanese/step_*.pt 2>/dev/null | head -1); \
+		if [ -n "$$LATEST" ]; then \
+			echo "Found: $$LATEST"; \
+			$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from "$$LATEST" ; \
+		else \
+			echo "❌ No checkpoint. Run make start-japanese first."; \
+		fi; \
+	'
 
 resume:
 ifdef CHECKPOINT
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from $(CHECKPOINT) --compile
+	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from $(CHECKPOINT) 
 else
 	@echo "Usage: make resume CHECKPOINT=checkpoints/phase8_10b_japanese/step_500.pt"
 endif
@@ -207,5 +225,32 @@ benchmark:
 	@echo "⚡ Running Phase 8 Kernel Benchmark..."
 	$(PYTHON) scripts/benchmark_simple.py
 
+profile-checkpoint:
+	@echo "🔬 Profiling Checkpoint Slowdown..."
+	@echo "This will identify exact source of speed degradation after checkpoint saves."
+	$(PYTHON) scripts/profile_checkpoint_slowdown.py
+
 recipe:
 	$(PYTHON) scripts/configure_recipe.py
+
+# ==========================================
+# 🦀 Rust Checkpoint Saver Daemon
+# ==========================================
+
+build-saver:
+	@echo "🦀 Building Checkpoint Saver Daemon..."
+	cd checkpoint-saver && cargo build --release
+	@echo "✅ Built: checkpoint-saver/target/release/checkpoint-saver"
+
+run-saver:
+	@echo "🦀 Starting Checkpoint Saver Daemon..."
+	@echo "   Press Ctrl+C to stop"
+	cd checkpoint-saver && cargo run --release -- --config config.toml
+
+run-saver-bg:
+	@echo "🦀 Starting Checkpoint Saver Daemon (background)..."
+	cd checkpoint-saver && cargo run --release -- --config config.toml &
+	@echo "✅ Daemon started in background"
+
+stop-saver:
+	@pkill -f "checkpoint-saver" || echo "No daemon running"

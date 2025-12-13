@@ -55,9 +55,20 @@ class RevolutionaryConfig:
     retrocausal_beta: float = 0.1
     diffractive_steps: int = 10
     
-    # Scheduling
+    # Scheduling - FIXED: Use absolute steps instead of percentages
+    # This ensures proper resume from checkpoints
+    total_steps: int = 195312  # Total training steps (for phase calculation)
     warmup_steps: int = 100
     algorithm_cycle: int = 10  # Cycle through algorithms every N steps
+    
+    # Phase-based auto-scheduling thresholds (as fraction of total_steps)
+    # - Warmup (0-10%): OFF (focus on stability)
+    # - Early (10-30%): holographic, closed_form only
+    # - Mid (30-70%): + topological, zeta
+    # - Late (70-100%): ALL algorithms enabled
+    phase_warmup_end: float = 0.10
+    phase_early_end: float = 0.30
+    phase_mid_end: float = 0.70
     
     # Logging
     log_interval: int = 10
@@ -167,29 +178,91 @@ class RevolutionaryTrainer:
         else:
             self.diffractive = None
     
+    def _get_training_phase(self) -> str:
+        """
+        Determine current training phase based on global step.
+        
+        Uses absolute step counts (not percentages) to ensure proper
+        behavior when resuming from checkpoints.
+        
+        Returns:
+            'warmup', 'early', 'mid', or 'late'
+        """
+        cfg = self.config
+        total = cfg.total_steps
+        step = self.step_count
+        
+        # Calculate thresholds as absolute steps
+        warmup_end = int(total * cfg.phase_warmup_end)
+        early_end = int(total * cfg.phase_early_end)
+        mid_end = int(total * cfg.phase_mid_end)
+        
+        if step < warmup_end:
+            return 'warmup'
+        elif step < early_end:
+            return 'early'
+        elif step < mid_end:
+            return 'mid'
+        else:
+            return 'late'
+    
+    def _get_enabled_algorithms_for_phase(self, phase: str) -> list:
+        """
+        Get list of enabled algorithms for the current phase.
+        
+        Phase schedule:
+        - Warmup (0-10%): OFF (focus on stability)
+        - Early (10-30%): holographic, closed_form only
+        - Mid (30-70%): + topological, zeta
+        - Late (70-100%): ALL algorithms enabled
+        """
+        if phase == 'warmup':
+            return []  # No algorithms during warmup
+        
+        enabled = []
+        
+        # Early phase: basic algorithms
+        if phase in ('early', 'mid', 'late'):
+            if self.holographic:
+                enabled.append(('holographic', self.holographic))
+            if self.closed_form:
+                enabled.append(('closed_form', self.closed_form))
+        
+        # Mid phase: add topological and zeta
+        if phase in ('mid', 'late'):
+            if self.topological:
+                enabled.append(('topological', self.topological))
+            if self.zeta:
+                enabled.append(('zeta', self.zeta))
+        
+        # Late phase: all algorithms
+        if phase == 'late':
+            if self.retrocausal:
+                enabled.append(('retrocausal', self.retrocausal))
+            if self.sheaf:
+                enabled.append(('sheaf', self.sheaf))
+            if self.diffractive:
+                enabled.append(('diffractive', self.diffractive))
+        
+        return enabled
+    
     def _select_algorithm(self) -> str:
-        """Select which algorithm to use based on step count."""
+        """
+        Select which algorithm to use based on training phase and step count.
+        
+        FIXED: Uses absolute global_step instead of percentages to ensure
+        proper resume from checkpoints.
+        """
+        phase = self._get_training_phase()
+        enabled = self._get_enabled_algorithms_for_phase(phase)
+        
+        if not enabled:
+            return 'base'  # Fallback during warmup
+        
+        # Cycle through enabled algorithms
         cycle = self.config.algorithm_cycle
-        phase = (self.step_count // cycle) % 7
-        
-        algorithms = [
-            ('holographic', self.holographic),
-            ('closed_form', self.closed_form),
-            ('topological', self.topological),
-            ('retrocausal', self.retrocausal),
-            ('zeta', self.zeta),
-            ('sheaf', self.sheaf),
-            ('diffractive', self.diffractive),
-        ]
-        
-        # Find enabled algorithm
-        for i in range(7):
-            idx = (phase + i) % 7
-            name, algo = algorithms[idx]
-            if algo is not None:
-                return name
-        
-        return 'base'  # Fallback to standard optimizer
+        idx = (self.step_count // cycle) % len(enabled)
+        return enabled[idx][0]
     
     def set_warmup_mode(self, enabled: bool):
         """Enable/disable warmup mode. In warmup mode, all weight modifications are skipped."""
@@ -214,6 +287,11 @@ class RevolutionaryTrainer:
         """
         if loss_fn is None:
             loss_fn = nn.CrossEntropyLoss()
+        
+        # Ensure data dtype matches model dtype (fixes float vs bfloat16 mismatch)
+        model_dtype = next(self.model.parameters()).dtype
+        if data.dtype != model_dtype and data.dtype in (torch.float32, torch.float16, torch.bfloat16):
+            data = data.to(model_dtype)
         
         # Skip weight modifications during warmup for stability
         if self._warmup_mode:
@@ -343,6 +421,36 @@ class RevolutionaryTrainer:
             }
         
         return summary
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """
+        Return trainer state for checkpointing.
+        
+        CRITICAL: This must be saved/loaded to ensure proper resume behavior.
+        Without this, step_count resets to 0 and phase-based scheduling breaks.
+        """
+        return {
+            'step_count': self.step_count,
+            'warmup_mode': self._warmup_mode,
+            # Save config for validation on load
+            'total_steps': self.config.total_steps,
+        }
+    
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        """
+        Load trainer state from checkpoint.
+        
+        Restores step_count so phase-based scheduling works correctly
+        when resuming training.
+        """
+        self.step_count = state_dict.get('step_count', 0)
+        self._warmup_mode = state_dict.get('warmup_mode', False)
+        
+        # Log phase info on restore
+        phase = self._get_training_phase()
+        enabled = self._get_enabled_algorithms_for_phase(phase)
+        algo_names = [name for name, _ in enabled] if enabled else ['base']
+        print(f"✔ RevolutionaryTrainer restored: step={self.step_count}, phase={phase}, algorithms={algo_names}")
 
 
 def create_revolutionary_trainer(

@@ -96,6 +96,12 @@ class Phase8Config(Phase7Config):
     use_triton_kernel: bool = True  # Use optimized Triton kernels
     triton_kernel_version: str = 'fast'  # Use fast kernel by default
     
+    # Riemannian Resonant Tunneling (HTT Optimization)
+    # Expands vocab to 2^N and uses symmetric hypercube factorization
+    use_resonant_htt: bool = False  # Enable Resonant HTT for optimal tensor geometry
+    resonant_num_cores: int = 4     # Number of hypercube dimensions (4 = 16^4)
+    use_zeta_init: bool = True      # Use Iso-Spectral Zeta initialization
+    
     # Low-Rank Compression Settings
     low_rank_embedding: bool = True  # Use low-rank compression for embeddings
     low_rank_ffn: bool = True  # Use low-rank compression for FFN layers

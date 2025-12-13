@@ -203,3 +203,19 @@ docs/phase4/
 
 # WSL Virtual Environment
 .venv_wsl/
+
+# Rust Build Artifacts (checkpoint-saver daemon)
+checkpoint-saver/target/
+*.rlib
+*.rmeta
+
+# Profiler outputs
+profiler_result.txt
+profiler_production_result.txt
+checkpoints/**/step_timing_log.txt
+
+# Training logs (large JSON files)
+checkpoints/**/training_log.json
+
+# Compressed checkpoints (from Rust daemon)
+checkpoints/**/*.pt.zst

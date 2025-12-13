@@ -14,6 +14,14 @@ hyperbolic_window_size: 64
 vocab_size: 32000
 tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
 
+# === Riemannian Resonant Tunneling ===
+use_resonant_htt: true
+resonant_num_cores: 4
+use_zeta_init: true
+
+# === Performance Optimization ===
+compile: true  # torch.compile() for 10-20% speedup
+
 # === Ultra Compression ===
 low_rank_ffn: true
 low_rank_attention: true

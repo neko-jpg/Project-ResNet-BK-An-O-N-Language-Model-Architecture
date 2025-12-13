@@ -57,6 +57,20 @@ except ImportError:
     _HYPERBOLIC_NORM_AVAILABLE = False
     HyperbolicRMSNorm = None
 
+# Import Resonant HTT Embedding (Riemannian Resonant Tunneling)
+try:
+    from src.models.phase1.resonant_htt_embedding import (
+        ResonantHTTEmbedding,
+        ResonantHTTDecoder,
+        diagnose_vocab_size,
+    )
+    _RESONANT_HTT_AVAILABLE = True
+except ImportError:
+    _RESONANT_HTT_AVAILABLE = False
+    ResonantHTTEmbedding = None
+    ResonantHTTDecoder = None
+    diagnose_vocab_size = None
+
 
 class Phase8IntegratedModel(nn.Module):
     """
@@ -137,6 +151,8 @@ class Phase8IntegratedModel(nn.Module):
             'use_batched_hyperbolic_distance', 'use_resonance_adaptive_curvature',
             'resonance_threshold', 'curvature_adjustment_rate',
             'use_ternary_mobius_matmul', 'use_quantized_htt_fusion',
+            # Resonant HTT (NEW)
+            'use_resonant_htt', 'resonant_num_cores', 'use_zeta_init',
         ]
 
         # Phase 7Configに存在しないキーを削除
@@ -181,6 +197,34 @@ class Phase8IntegratedModel(nn.Module):
             self.phase7_model.model.token_embedding = self.quantized_embedding
             # Re-initialize decoder with new embedding
             self.phase7_model.model.lm_head = QuantizedHTTDecoder(self.quantized_embedding)
+        
+        # ========== Resonant HTT Replacement (Riemannian Resonant Tunneling) ==========
+        # use_resonant_httがTrueの場合、通常のHTTをResonantHTTに置き換える
+        self.resonant_embedding = None
+        if getattr(config, 'use_resonant_htt', False):
+            if _RESONANT_HTT_AVAILABLE:
+                # 語彙サイズの診断を出力
+                if diagnose_vocab_size is not None:
+                    diag = diagnose_vocab_size(config.vocab_size)
+                    print(f"Phase 8: 🔮 Vocab Diagnosis: {diag['recommendation']}")
+                
+                print(f"Phase 8: Activating ResonantHTTEmbedding (Riemannian Resonant Tunneling)...")
+                self.resonant_embedding = ResonantHTTEmbedding(
+                    vocab_size=config.vocab_size,
+                    d_model=config.d_model,
+                    rank=config.htt_rank,
+                    num_cores=getattr(config, 'resonant_num_cores', 4),
+                    phase_encoding=True,
+                    use_zeta_init=getattr(config, 'use_zeta_init', True),
+                )
+                # Replace in Phase 7 Model
+                self.phase7_model.htt_embedding = self.resonant_embedding
+                self.phase7_model.model.token_embedding = self.resonant_embedding
+                # Re-initialize decoder with new embedding
+                self.phase7_model.model.lm_head = ResonantHTTDecoder(self.resonant_embedding)
+                print(f"Phase 8: ✔ ResonantHTT active - Condition number κ≈1 guaranteed")
+            else:
+                print("Phase 8: ⚠ ResonantHTT requested but not available, using standard HTT")
         
         # ========== Phase 8 Core Extensions ==========
         # BK-Core Hyperbolic Integration（必須）
