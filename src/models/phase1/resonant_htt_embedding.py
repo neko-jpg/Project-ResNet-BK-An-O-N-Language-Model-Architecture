@@ -391,8 +391,9 @@ class ResonantHTTEmbedding(nn.Module):
         def clamp_grad(grad):
             if grad is not None:
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
-                return torch.clamp(grad, -10.0, 10.0)
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
+                # RELAXED: ±10.0 → ±100.0 to allow stronger gradients
+                return torch.clamp(grad, -100.0, 100.0)
             return grad
         
         for core in self.cores:

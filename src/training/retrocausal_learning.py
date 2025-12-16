@@ -47,6 +47,8 @@ class RetrocausalLearning:
         self.model = model
         self.num_iterations = num_iterations
         self.beta = beta
+        # Detect model dtype for consistent tensor operations
+        self._model_dtype = next(model.parameters()).dtype
         
         # Fast weight memory (for delta rule)
         self.fast_weights = None
@@ -59,6 +61,30 @@ class RetrocausalLearning:
             'symplectic_error': [],
         }
     
+    def _infer_compute_dtype(self) -> torch.dtype:
+        """
+        Detect the active compute dtype for the attached model.
+        
+        Some Phase 8 components may hold bf16 parameters even when the
+        primary parameter is fp32. Scanning all params/buffers prevents
+        float/bf16 matmul mismatches when this module runs outside the
+        main training autocast context.
+        """
+        dtypes = set(
+            p.dtype for p in self.model.parameters()
+            if p.is_floating_point()
+        )
+        dtypes.update(
+            b.dtype for b in self.model.buffers()
+            if b.is_floating_point()
+        )
+        
+        if torch.bfloat16 in dtypes:
+            return torch.bfloat16
+        if torch.float16 in dtypes:
+            return torch.float16
+        return self._model_dtype
+    
     def phi(self, x: torch.Tensor) -> torch.Tensor:
         """
         Kernel feature map: ELU(x) + 1
@@ -66,7 +92,8 @@ class RetrocausalLearning:
         This ensures positive values for attention-like interpretation.
         Raw dot products can be negative, causing issues.
         """
-        return F.elu(x) + 1.0
+        # Ensure dtype is preserved (ELU + scalar can cause float32 upcast)
+        return F.elu(x) + torch.ones(1, device=x.device, dtype=x.dtype)
     
     def delta_rule_update(
         self,
@@ -85,15 +112,20 @@ class RetrocausalLearning:
         """
         batch_size, seq_len, d_model = keys.shape
         device = keys.device
+        dtype = keys.dtype
         
-        # Initialize fast weights: d_model x d_model
-        if self.fast_weights is None or self.fast_weights.shape[0] != d_model:
-            self.fast_weights = torch.zeros(d_model, d_model, device=device)
-            self.denominator = torch.zeros(d_model, device=device)
+        # Initialize fast weights: d_model x d_model (match model dtype)
+        # Reset or create if shape mismatch or dtype mismatch
+        if self.fast_weights is None or self.fast_weights.shape[0] != d_model or self.fast_weights.dtype != dtype:
+            self.fast_weights = torch.zeros(d_model, d_model, device=device, dtype=dtype)
+            self.denominator = torch.zeros(d_model, device=device, dtype=dtype)
+        
+        # Keep all intermediate tensors in the model dtype to avoid matmul dtype mismatches
+        beta = torch.as_tensor(self.beta, device=device, dtype=dtype)
         
         # Apply kernel
-        keys_phi = self.phi(keys)  # (B, L, D)
-        queries_phi = self.phi(queries)  # (B, L, D)
+        keys_phi = self.phi(keys).to(dtype)  # (B, L, D)
+        queries_phi = self.phi(queries).to(dtype)  # (B, L, D)
         
         outputs = []
         
@@ -104,32 +136,35 @@ class RetrocausalLearning:
             q_t = queries_phi[:, t]  # (B, D)
             
             # Average over batch for weight update
-            k_mean = k_t.mean(dim=0)  # (D,)
-            v_mean = v_t.mean(dim=0)  # (D,)
+            k_mean = k_t.mean(dim=0).to(dtype)  # (D,)
+            v_mean = v_t.mean(dim=0).to(dtype)  # (D,)
             
             # Prediction with current weights
             prediction = self.fast_weights @ k_mean  # (D,)
             
             # Prediction error (residual)
-            residual = v_mean - prediction  # (D,)
+            residual = (v_mean - prediction).to(dtype)  # (D,)
             
             # Delta rule update: W += β * residual ⊗ key
-            self.fast_weights = self.fast_weights + self.beta * torch.outer(residual, k_mean)
+            update = torch.outer(residual, k_mean).to(dtype)
+            self.fast_weights = self.fast_weights + beta * update
             
-            # Update denominator for normalization
-            self.denominator = self.denominator + k_mean
+            # Update denominator with decay for stability (prevents signal death)
+            self.denominator = 0.99 * self.denominator + k_mean
             
             # Retrieve output for queries: y_t = W_t * φ(q_t) / z_t
             output = torch.einsum('bd,de->be', q_t, self.fast_weights)  # (B, D)
             
             # Normalize by denominator
-            denom = torch.einsum('d,bd->b', self.denominator, q_t) + 1e-8  # (B,)
-            output = output / denom.unsqueeze(-1)
+            denom = torch.einsum('d,bd->b', self.denominator, q_t).to(dtype)  # (B,)
+            eps = torch.tensor(torch.finfo(dtype).eps, device=device, dtype=dtype)
+            denom = denom + eps
+            output = (output / denom.unsqueeze(-1)).to(dtype)
             
             outputs.append(output)
         
         # Stack outputs
-        output_tensor = torch.stack(outputs, dim=1)  # (B, L, D)
+        output_tensor = torch.stack(outputs, dim=1).to(dtype)  # (B, L, D)
         
         return output_tensor
     
@@ -166,6 +201,11 @@ class RetrocausalLearning:
         """
         start_time = time.perf_counter()
         device = next(self.model.parameters()).device
+        compute_dtype = self._infer_compute_dtype()
+        
+        # Align input dtype to model compute dtype to avoid matmul mismatches
+        if data.is_floating_point() and data.dtype != compute_dtype:
+            data = data.to(compute_dtype)
         
         # Reset fast weights
         self.fast_weights = None
@@ -176,6 +216,8 @@ class RetrocausalLearning:
         outputs = self.model(data)
         if isinstance(outputs, tuple):
             outputs = outputs[0]
+        if outputs.is_floating_point() and outputs.dtype != compute_dtype:
+            outputs = outputs.to(compute_dtype)
         
         # Get vocab size
         vocab_size = outputs.shape[-1]
@@ -189,13 +231,14 @@ class RetrocausalLearning:
             initial_loss = loss_fn(outputs, targets)
         
         # Create target embeddings (one-hot for classification)
+        model_dtype = outputs.dtype
         if targets.dim() == 1 or targets.max() < vocab_size:
             target_flat = targets.view(-1).clamp(0, vocab_size - 1)
-            target_emb = torch.zeros(len(target_flat), vocab_size, device=device)
+            target_emb = torch.zeros(len(target_flat), vocab_size, device=device, dtype=model_dtype)
             target_emb.scatter_(1, target_flat.unsqueeze(1), 1.0)
             target_emb = target_emb.view(outputs.shape)
         else:
-            target_emb = targets.float()
+            target_emb = targets.to(model_dtype)
         
         # Apply Delta Rule Fast Weight update
         # Keys: current outputs, Values: target outputs, Queries: current outputs
@@ -209,19 +252,23 @@ class RetrocausalLearning:
             queries=outputs.detach(),
         )
         
-        # Use the delta-rule output to update model
-        # This is the "retrograde" signal
-        with torch.no_grad():
-            error = updated.mean(dim=0).mean(dim=0)  # Average error signal
-            
-            # Apply to model weights (simplified)
-            for p in self.model.parameters():
-                if len(error) == p.shape[-1]:
-                    grad_signal = error.view(-1)[:p.numel()].view(p.shape)
-                    p.data -= 0.01 * grad_signal
-                elif p.numel() <= len(error):
-                    grad_signal = error[:p.numel()].view(p.shape)
-                    p.data -= 0.01 * grad_signal
+        # Use the delta-rule output to update model via gradient (not p.data!)
+        error = updated.mean(dim=0).mean(dim=0)  # Average error signal
+        
+        # Apply to model weights as gradient for optimizer sync
+        for p in self.model.parameters():
+            if len(error) == p.shape[-1]:
+                grad_signal = error.view(-1)[:p.numel()].view(p.shape).to(p.dtype)
+                if p.grad is None:
+                    p.grad = (0.01 * grad_signal).detach().clone()
+                else:
+                    p.grad = p.grad + (0.01 * grad_signal).detach()
+            elif p.numel() <= len(error):
+                grad_signal = error[:p.numel()].view(p.shape).to(p.dtype)
+                if p.grad is None:
+                    p.grad = (0.01 * grad_signal).detach().clone()
+                else:
+                    p.grad = p.grad + (0.01 * grad_signal).detach()
         
         elapsed = (time.perf_counter() - start_time) * 1000
         
@@ -230,6 +277,8 @@ class RetrocausalLearning:
             outputs_new = self.model(data)
             if isinstance(outputs_new, tuple):
                 outputs_new = outputs_new[0]
+            if outputs_new.is_floating_point() and outputs_new.dtype != model_dtype:
+                outputs_new = outputs_new.to(model_dtype)
             
             if outputs_new.dim() == 3:
                 outputs_flat = outputs_new.view(-1, outputs_new.size(-1))

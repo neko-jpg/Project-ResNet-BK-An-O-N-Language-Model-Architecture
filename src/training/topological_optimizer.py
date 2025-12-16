@@ -42,7 +42,7 @@ class TopologicalTrainingCollapse:
     def __init__(
         self,
         model: nn.Module,
-        num_samples: int = 10,
+        num_samples: int = 3,  # Reduced for large models (was 10)
         collapse_rate: float = 0.1,
         persistence_threshold: float = 0.01,
     ):
@@ -50,6 +50,9 @@ class TopologicalTrainingCollapse:
         self.num_samples = num_samples
         self.collapse_rate = collapse_rate
         self.persistence_threshold = persistence_threshold
+        # Detect model dtype for consistent tensor operations
+        self._model_dtype = next(model.parameters()).dtype
+        self._model_device = next(model.parameters()).device
         
         # Topological state
         self.critical_points = []
@@ -102,7 +105,7 @@ class TopologicalTrainingCollapse:
         for p in self.model.parameters():
             if p.grad is not None:
                 grads.append(p.grad.flatten())
-        grad = torch.cat(grads) if grads else torch.zeros(1)
+        grad = torch.cat(grads) if grads else torch.zeros(1, device=self._model_device, dtype=self._model_dtype)
         
         # Estimate negative eigenvalue count using Hutchinson
         negative_count = 0
@@ -124,7 +127,7 @@ class TopologicalTrainingCollapse:
                 hvp_flat = torch.cat([
                     h.flatten() if h is not None else torch.zeros_like(p.flatten())
                     for h, p in zip(hvp, self.model.parameters())
-                ])
+                ]).to(self._model_dtype)
                 
                 # Check if direction has negative curvature
                 curvature = (v * hvp_flat).sum()
@@ -187,15 +190,18 @@ class TopologicalTrainingCollapse:
         best_loss = float('inf')
         best_point = None
         
+        # Save original weights before sampling
+        original_weights = {name: p.data.clone() for name, p in self.model.named_parameters()}
+        
         for _ in range(self.num_samples):
             # Random perturbation
             with torch.no_grad():
                 point = torch.cat([
-                    (p.data + torch.randn_like(p.data) * 0.1).flatten()
-                    for p in self.model.parameters()
+                    (original_weights[name] + torch.randn_like(p.data) * 0.1).flatten()
+                    for name, p in self.model.named_parameters()
                 ])
                 
-                # Evaluate loss at this point
+                # Temporarily set weights to evaluate loss
                 offset = 0
                 for p in self.model.parameters():
                     numel = p.numel()
@@ -216,6 +222,11 @@ class TopologicalTrainingCollapse:
                 if loss.item() < best_loss:
                     best_loss = loss.item()
                     best_point = point.clone()
+        
+        # Restore original weights after sampling
+        with torch.no_grad():
+            for name, p in self.model.named_parameters():
+                p.data.copy_(original_weights[name])
         
         self.global_minimum = best_point
         return best_point
@@ -259,7 +270,7 @@ class TopologicalTrainingCollapse:
         # Find global minimum
         target = self.find_global_minimum(data, targets, loss_fn)
         
-        # Get current position
+        # Get current position (ensure correct dtype)
         current = torch.cat([p.data.flatten() for p in self.model.parameters()])
         
         skipped_local = 0
@@ -299,15 +310,20 @@ class TopologicalTrainingCollapse:
                     skipped_local += 1
                     update = update * 2  # Increase step to skip local minimum
             
-            # Apply update
+            # Apply update as gradient (not p.data!) for optimizer sync
             current = current + update
             
-            with torch.no_grad():
-                offset = 0
-                for p in self.model.parameters():
-                    numel = p.numel()
-                    p.data.copy_(current[offset:offset + numel].view(p.shape))
-                    offset += numel
+            # Convert update to gradient
+            offset = 0
+            for p in self.model.parameters():
+                numel = p.numel()
+                param_update = update[offset:offset + numel].view(p.shape).to(p.dtype)
+                # Negative because optimizer subtracts gradient
+                if p.grad is None:
+                    p.grad = (-param_update).detach().clone()
+                else:
+                    p.grad = p.grad - param_update.detach()
+                offset += numel
         
         elapsed = (time.perf_counter() - start_time) * 1000
         

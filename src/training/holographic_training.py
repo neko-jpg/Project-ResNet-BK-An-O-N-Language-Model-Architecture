@@ -103,9 +103,10 @@ class HolographicWeightSynthesis:
         if not CUDA_EXT_AVAILABLE:
             return self.holographic_synthesis_pytorch(x, y)
         
-        # Ensure 1D float32 CUDA tensors
-        x = x.flatten()[:self.fft_size].float().contiguous()
-        y = y.flatten()[:self.fft_size].float().contiguous()
+        # Ensure 1D CUDA tensors (preserve input dtype for bfloat16 compatibility)
+        target_dtype = torch.float32 if not x.dtype in (torch.bfloat16, torch.float16) else x.dtype
+        x = x.flatten()[:self.fft_size].to(target_dtype).contiguous()
+        y = y.flatten()[:self.fft_size].to(target_dtype).contiguous()
         
         # Call CUDA kernel
         output, time_ms = holographic_cuda.holographic_bind(x, y, self.lr)
@@ -121,8 +122,10 @@ class HolographicWeightSynthesis:
         PyTorch fallback holographic synthesis.
         """
         n = min(len(x.flatten()), len(y.flatten()), self.fft_size)
-        x = x.flatten()[:n].float()
-        y = y.flatten()[:n].float()
+        # Preserve input dtype for bfloat16 compatibility
+        target_dtype = torch.float32 if not x.dtype in (torch.bfloat16, torch.float16) else x.dtype
+        x = x.flatten()[:n].to(target_dtype)
+        y = y.flatten()[:n].to(target_dtype)
         
         # Timing
         if self.device.type == 'cuda' and self.start_event is not None:
@@ -282,7 +285,8 @@ class HolographicWeightSynthesis:
             'correlation': correlation,
         }
         
-        return torch.tensor(final_loss), metrics
+        device = next(self.model.parameters()).device
+        return torch.tensor(final_loss, device=device), metrics
     
     def get_kpi_results(self) -> Dict[str, Dict]:
         """Get KPI results."""

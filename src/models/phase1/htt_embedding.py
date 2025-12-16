@@ -173,13 +173,13 @@ class HolographicTTEmbedding(nn.Module):
         )
         
         # Register gradient clipping hooks to prevent NaN in backward pass
-        # RELAXED: ±10.0 to allow proper learning (±1.0 killed gradient signal)
+        # RELAXED: ±100.0 to allow proper gradient flow (±10.0 killed gradient signal)
         def clamp_grad(grad):
             if grad is not None:
                 # Check for NaN/Inf first
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
-                return torch.clamp(grad, -10.0, 10.0)  # Relaxed clipping
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
+                return torch.clamp(grad, -100.0, 100.0)  # Relaxed from ±10.0
             return grad
         self.core1.register_hook(clamp_grad)
         self.core2.register_hook(clamp_grad)

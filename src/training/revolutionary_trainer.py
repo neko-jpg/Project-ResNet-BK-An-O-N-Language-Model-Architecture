@@ -25,6 +25,7 @@ import torch.nn as nn
 from typing import Dict, Optional, Tuple, Any
 from dataclasses import dataclass
 import time
+from contextlib import nullcontext
 
 # Import revolutionary algorithms
 from src.training.holographic_training import HolographicWeightSynthesis
@@ -114,6 +115,30 @@ class RevolutionaryTrainer:
         # Metrics
         self.step_count = 0
         self.metrics_history = []
+    
+    def _infer_compute_dtype(self) -> torch.dtype:
+        """
+        Detect the active compute dtype.
+        
+        Some submodules are initialized or quantized in bf16 even when the
+        first parameter is fp32. Scanning all params/buffers prevents mixed
+        matmul dtype errors (float vs bfloat16).
+        """
+        dtypes = set(
+            p.dtype for p in self.model.parameters()
+            if p.is_floating_point()
+        )
+        dtypes.update(
+            b.dtype for b in self.model.buffers()
+            if b.is_floating_point()
+        )
+        
+        if torch.bfloat16 in dtypes:
+            return torch.bfloat16
+        if torch.float16 in dtypes:
+            return torch.float16
+        # Fallback: trust primary param dtype
+        return next(self.model.parameters()).dtype
     
     def _init_algorithms(self):
         """Initialize all revolutionary algorithm modules."""
@@ -288,10 +313,10 @@ class RevolutionaryTrainer:
         if loss_fn is None:
             loss_fn = nn.CrossEntropyLoss()
         
-        # Ensure data dtype matches model dtype (fixes float vs bfloat16 mismatch)
-        model_dtype = next(self.model.parameters()).dtype
-        if data.dtype != model_dtype and data.dtype in (torch.float32, torch.float16, torch.bfloat16):
-            data = data.to(model_dtype)
+        # Ensure data dtype matches active compute dtype (handles mixed fp32/bf16 params)
+        compute_dtype = self._infer_compute_dtype()
+        if data.is_floating_point() and data.dtype != compute_dtype:
+            data = data.to(compute_dtype)
         
         # Skip weight modifications during warmup for stability
         if self._warmup_mode:
@@ -315,39 +340,65 @@ class RevolutionaryTrainer:
             'algorithm': algo_name,
         }
         
-        # Execute selected algorithm
-        if algo_name == 'holographic' and self.holographic:
-            loss, algo_metrics = self.holographic.synthesize(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        elif algo_name == 'closed_form' and self.closed_form:
-            loss, algo_metrics = self.closed_form.train_one_shot(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        elif algo_name == 'topological' and self.topological:
-            loss, algo_metrics = self.topological.collapse_to_global(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        elif algo_name == 'retrocausal' and self.retrocausal:
-            loss, algo_metrics = self.retrocausal.train_retrocausal(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        elif algo_name == 'zeta' and self.zeta:
-            loss, algo_metrics = self.zeta.optimize_via_zeta(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        elif algo_name == 'sheaf' and self.sheaf:
-            loss, algo_metrics = self.sheaf.compile_to_zero_cohomology(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        elif algo_name == 'diffractive' and self.diffractive:
-            loss, algo_metrics = self.diffractive.synthesize_weights(data, targets, loss_fn)
-            metrics.update(algo_metrics)
-            
-        else:
-            # Fallback to standard training
-            loss = self._standard_step(data, targets, loss_fn)
+        # Execute selected algorithm with dtype-safe wrapper
+        # Use autocast to ensure consistent bfloat16 precision across all algorithms
+        loss = None
+        algo_error = None
+        autocast_enabled = self.device.type == 'cuda' and compute_dtype != torch.float32
+        # Build a factory so we can re-enter the same autocast settings for fallback paths
+        def _autocast():
+            return torch.cuda.amp.autocast(dtype=compute_dtype) if autocast_enabled else nullcontext()
+        
+        try:
+            # Wrap algorithm execution in autocast for bfloat16 consistency
+            with _autocast():
+                if algo_name == 'holographic' and self.holographic:
+                    loss, algo_metrics = self.holographic.synthesize(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                elif algo_name == 'closed_form' and self.closed_form:
+                    loss, algo_metrics = self.closed_form.train_one_shot(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                elif algo_name == 'topological' and self.topological:
+                    loss, algo_metrics = self.topological.collapse_to_global(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                elif algo_name == 'retrocausal' and self.retrocausal:
+                    loss, algo_metrics = self.retrocausal.train_retrocausal(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                elif algo_name == 'zeta' and self.zeta:
+                    loss, algo_metrics = self.zeta.optimize_via_zeta(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                elif algo_name == 'sheaf' and self.sheaf:
+                    loss, algo_metrics = self.sheaf.compile_to_zero_cohomology(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                elif algo_name == 'diffractive' and self.diffractive:
+                    loss, algo_metrics = self.diffractive.synthesize_weights(data, targets, loss_fn)
+                    metrics.update(algo_metrics)
+                    
+                else:
+                    # Fallback to standard training
+                    loss = self._standard_step(data, targets, loss_fn)
+                    metrics['fallback'] = True
+                    
+        except RuntimeError as e:
+            # Catch dtype mismatch and other runtime errors
+            algo_error = str(e)
+            loss = None
+        
+        # If algorithm failed, fallback to standard training
+        if loss is None:
+            # Use the same autocast settings as the main attempt to avoid mixed-dtype matmul issues
+            with _autocast():
+                loss = self._standard_step(data, targets, loss_fn)
             metrics['fallback'] = True
+            metrics['algorithm'] = 'fallback'
+            if algo_error:
+                metrics['error'] = algo_error[:100]  # Truncate for logging
         
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         metrics['step_time_ms'] = elapsed_ms

@@ -212,10 +212,11 @@ checkpoint-saver/target/
 # Profiler outputs
 profiler_result.txt
 profiler_production_result.txt
-checkpoints/**/step_timing_log.txt
+
 
 # Training logs (large JSON files)
-checkpoints/**/training_log.json
+
 
 # Compressed checkpoints (from Rust daemon)
 checkpoints/**/*.pt.zst
+

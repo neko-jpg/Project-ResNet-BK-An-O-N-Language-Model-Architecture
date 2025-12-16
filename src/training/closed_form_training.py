@@ -56,6 +56,9 @@ class BKCoreClosedFormOptimizer:
         self.model = model
         self.damping = damping
         self.trust_region = trust_region
+        # Detect model dtype for consistent tensor operations
+        self._model_dtype = next(model.parameters()).dtype
+        self._model_device = next(model.parameters()).device
         
         # Try to import BK-Core
         try:
@@ -73,6 +76,27 @@ class BKCoreClosedFormOptimizer:
             'loss_ratio': [],
             'time_ms': [],
         }
+    
+    def _infer_compute_dtype(self) -> torch.dtype:
+        """
+        Detect the active compute dtype.
+        
+        Some submodules may be in bf16 even when primary param is fp32.
+        """
+        dtypes = set(
+            p.dtype for p in self.model.parameters()
+            if p.is_floating_point()
+        )
+        dtypes.update(
+            b.dtype for b in self.model.buffers()
+            if b.is_floating_point()
+        )
+        
+        if torch.bfloat16 in dtypes:
+            return torch.bfloat16
+        if torch.float16 in dtypes:
+            return torch.float16
+        return self._model_dtype
     
     def _compute_diagonal_hessian(
         self,
@@ -228,6 +252,11 @@ class BKCoreClosedFormOptimizer:
         This should achieve the same result as many SGD steps.
         """
         start_time = time.perf_counter()
+        compute_dtype = self._infer_compute_dtype()
+        
+        # Align input dtype to model compute dtype
+        if data.is_floating_point() and data.dtype != compute_dtype:
+            data = data.to(compute_dtype)
         
         # Forward pass
         self.model.zero_grad()
@@ -278,15 +307,18 @@ class BKCoreClosedFormOptimizer:
         if update_norm > trust_region:
             update = update * (trust_region / (update_norm + 1e-8))
         
-        # Apply update to parameters with per-element clipping
-        with torch.no_grad():
-            offset = 0
-            for p in self.model.parameters():
-                numel = p.numel()
-                param_update = update[offset:offset + numel].view(p.shape)
-                param_update = torch.clamp(param_update, -0.01, 0.01)
-                p.data.sub_(param_update)
-                offset += numel
+        # Apply update as gradient (not p.data!) so optimizer stays synced
+        offset = 0
+        for p in self.model.parameters():
+            numel = p.numel()
+            param_update = update[offset:offset + numel].view(p.shape).to(p.dtype)
+            param_update = torch.clamp(param_update, -0.01, 0.01)
+            # Inject as gradient - optimizer will apply this correctly
+            if p.grad is None:
+                p.grad = param_update.detach().clone()
+            else:
+                p.grad = p.grad + param_update.detach()
+            offset += numel
         
         elapsed = (time.perf_counter() - start_time) * 1000  # ms
         

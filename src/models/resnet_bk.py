@@ -98,8 +98,8 @@ class MoEResNetBKLayer(nn.Module):
         def clamp_v_proj_grad(grad):
             if grad is None:
                 return grad
-            # Muon用: 非常に厳しいクランプ
-            return torch.clamp(grad, -0.1, 0.1)
+            # RELAXED: ±0.1 → ±50.0 to allow gradient flow
+            return torch.clamp(grad, -50.0, 50.0)
         self.v_proj.weight.register_hook(clamp_v_proj_grad)
 
         self.use_birman_schwinger = config.use_birman_schwinger
@@ -368,16 +368,18 @@ class LanguageModel(nn.Module):
             if grad is not None:
                 # CRITICAL: Sanitize NaN/Inf BEFORE clamping
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
-                return torch.clamp(grad, -10.0, 10.0)
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
+                # RELAXED: ±10.0 → ±100.0 to allow gradient flow
+                return torch.clamp(grad, -100.0, 100.0)
             return grad
         self.position_embedding.weight.register_hook(clamp_position_grad)
         
         def clamp_token_grad(grad):
             if grad is not None:
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=10.0, neginf=-10.0)
-                return torch.clamp(grad, -10.0, 10.0)
+                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
+                # RELAXED: ±10.0 → ±100.0 to allow gradient flow
+                return torch.clamp(grad, -100.0, 100.0)
             return grad
         self.token_embedding.weight.register_hook(clamp_token_grad)
 

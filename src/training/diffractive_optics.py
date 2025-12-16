@@ -194,7 +194,8 @@ class DiffractiveWeightOptics:
         self.metrics['phase_accuracy'].append(phase_accuracy)
         self.metrics['steps'].append(1)
         
-        return torch.tensor(final_loss), metrics
+        device = next(self.model.parameters()).device
+        return torch.tensor(final_loss, device=device), metrics
     
     def get_kpi_results(self) -> Dict[str, Dict]:
         """Get KPI results."""

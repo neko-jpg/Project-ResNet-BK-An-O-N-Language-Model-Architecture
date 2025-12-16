@@ -47,10 +47,12 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-# 2025-12-11: Matched to dry-run success settings
-learning_rate: 0.05  # Same as dry-run
-min_lr: 1.0e-6
-warmup_steps: 0  # No warmup, start at full LR immediately
+# 2025-12-16: Post-phase-transition cooling strategy (Cosine Annealing)
+# - LR reduced from 1.8 to 0.3 for stable convergence
+# - Warmup added for smooth resume after checkpoint
+learning_rate: 0.001  # Reduced from 0.1 for finer convergence
+min_lr: 1.0e-5      # Slightly higher floor for continued learning
+warmup_steps: 500   # Gradual warmup on resume
 
 # === Bootstrap LR (Shock Therapy) ===
 # Use very high LR until loss decreases significantly
@@ -60,8 +62,9 @@ bootstrap_steps: 500  # Maximum steps (safety limit, usually exits earlier)
 bootstrap_exit_threshold: 0.5  # Exit bootstrap when loss drops by this amount
 
 # === Gradient Control ===
+# 2025-12-16: Stronger clipping to prevent spikes after phase transition
 grad_clip_warmup: 0.1  # Stricter warmup clipping
-grad_clip_train: 1.0   # 通常時の制限
+grad_clip_train: 1.0   # Expert recommendation: allow more gradient flow
 grad_skip_threshold: 10.0  # Failsafe: 異常な勾配爆発をスキップ
 
 # === EMA (Exponential Moving Average) ===

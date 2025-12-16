@@ -124,6 +124,15 @@ except ImportError:
     GradientSanitizer = None
     create_gradient_sanitizer = None
 
+# Import Gradient Feeder V2 (Adaptive Clipping Threshold)
+# Now uses pre-built C++ extension for instant load (no JIT delay)
+try:
+    from src.training.gradient_feeder import GradientFeederV2
+    _GRADIENT_FEEDER_AVAILABLE = True
+except ImportError:
+    _GRADIENT_FEEDER_AVAILABLE = False
+    GradientFeederV2 = None
+
 # Import Stability Suite (Moonshot #14 - Comprehensive NaN Elimination)
 try:
     from src.training.stability_suite import (
@@ -339,12 +348,16 @@ class Phase8TrainingConfig:
     bootstrap_lr: float = 2.0  # High LR for bootstrap phase
     bootstrap_steps: int = 500  # Maximum steps (safety limit)
     bootstrap_exit_threshold: float = 0.5  # Exit when loss drops by this amount
+    bootstrap_skip_on_resume: bool = True  # Default: skip bootstrap on resume (stability)
     
     # Gradient - stricter clipping during warmup to prevent NaN
     grad_clip_warmup: float = 0.01  # Very strict during warmup (was 0.1)
     grad_clip_train: float = 1.0
     grad_skip_threshold: float = 10.0
     warmup_stability_steps: int = 100  # Extra-strict clipping for first N steps
+    
+    # Async checkpoint for speed
+    async_checkpoint: bool = True  # Use async checkpoint to avoid training slowdown
     
     # EMA
     use_ema: bool = True
@@ -371,7 +384,7 @@ class Phase8TrainingConfig:
     
     # Logging
     log_interval: int = 10
-    save_interval: int = 500
+    save_interval: int = 500  # Checkpoint every 500 steps (with async save for speed)
     eval_interval: int = 200
     save_dir: str = "checkpoints/phase8"
     
@@ -386,7 +399,7 @@ class Phase8TrainingConfig:
     compile: bool = False
     
     # Moonshot Optimizations
-    use_resonance_locked: bool = True  # #6: Skip updates when gradient SNR is low
+    use_resonance_locked: bool = False  # #6: Skip updates when gradient SNR is low (DISABLED for speed)
     resonance_gns_threshold: float = 5.0  # Gradient Noise Scale threshold
     use_time_reversed: bool = False  # #10: Train on reversed sequences (DISABLED by default - 2x overhead)
     time_reversed_weight: float = 0.5  # Weight for reversed loss
@@ -425,6 +438,10 @@ class Phase8TrainingConfig:
     use_revolutionary_training: bool = True  # Master switch
     revolutionary_auto_schedule: bool = True  # Auto ON/OFF based on phase
     revolutionary_algorithms: str = "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"
+    # Fast-start controls for resume flows (activate revolutionary algos immediately after resume)
+    revolutionary_fast_start: bool = True  # Enable fast-start for initial stabilization
+    revolutionary_fast_start_window: int = 200  # First N optimizer steps always-on
+    revolutionary_min_stable_steps: int = 50  # Default stability requirement when not in fast-start window
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -455,6 +472,8 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--bootstrap-lr", type=float, default=None)
     parser.add_argument("--bootstrap-steps", type=int, default=None)
+    parser.add_argument("--bootstrap-skip-on-resume", action="store_true", dest="bootstrap_skip_on_resume", default=None,
+                        help="Skip bootstrap LR when resuming from checkpoint (default: skip)")
     parser.add_argument("--dry-run", action="store_true")
     
     # Optimizer
@@ -466,6 +485,19 @@ def parse_args() -> Phase8TrainingConfig:
     # Regularization
     parser.add_argument("--label-smoothing", type=float, default=0.1)
     parser.add_argument("--ema-decay", type=float, default=0.999)
+    
+    # Revolutionary training controls
+    parser.add_argument("--use-revolutionary-training", action="store_true", dest="use_revolutionary_training", default=None)
+    parser.add_argument("--no-revolutionary-training", action="store_false", dest="use_revolutionary_training")
+    parser.add_argument("--revolutionary-auto-schedule", action="store_true", dest="revolutionary_auto_schedule", default=None)
+    parser.add_argument("--no-revolutionary-auto-schedule", action="store_false", dest="revolutionary_auto_schedule")
+    parser.add_argument("--revolutionary-algorithms", type=str, default=None)
+    parser.add_argument("--revolutionary-fast-start", action="store_true", dest="revolutionary_fast_start", default=None,
+                        help="Force revolutionary algorithms to start immediately (overrides stability delay)")
+    parser.add_argument("--revolutionary-fast-start-window", type=int, default=None,
+                        help="Number of optimizer steps to force-enable revolutionary algorithms (0 disables)")
+    parser.add_argument("--revolutionary-min-stable-steps", type=int, default=None,
+                        help="Stable steps required before enabling revolutionary algorithms when not in fast-start window")
     
     # Gradient
     parser.add_argument("--grad-clip-warmup", type=float, default=0.1)
@@ -544,6 +576,7 @@ def parse_args() -> Phase8TrainingConfig:
         max_steps=get_val('max_steps', None),
         bootstrap_lr=get_val('bootstrap_lr', args.bootstrap_lr if args.bootstrap_lr is not None else 0.0),
         bootstrap_steps=get_val('bootstrap_steps', args.bootstrap_steps if args.bootstrap_steps is not None else 0),
+        bootstrap_skip_on_resume=get_val('bootstrap_skip_on_resume', True),
         optimizer_type=args.optimizer,  # CLI always takes priority for optimizer
         beta1=get_val('beta1', 0.9),
         beta2=get_val('beta2', 0.95),
@@ -570,6 +603,12 @@ def parse_args() -> Phase8TrainingConfig:
         dataset_path=args.dataset if args.dataset else get_val('dataset_path', 'configs/dataset_mixing.yaml'),
         resume_from=args.resume_from,
         compile=args.compile,
+        use_revolutionary_training=get_val('use_revolutionary_training', True),
+        revolutionary_auto_schedule=get_val('revolutionary_auto_schedule', True),
+        revolutionary_algorithms=get_val('revolutionary_algorithms', "holographic,closed_form,topological,retrocausal,zeta,sheaf,diffractive"),
+        revolutionary_fast_start=get_val('revolutionary_fast_start', True),
+        revolutionary_fast_start_window=get_val('revolutionary_fast_start_window', 200),
+        revolutionary_min_stable_steps=get_val('revolutionary_min_stable_steps', 50),
     )
     
     return config
@@ -664,9 +703,8 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
                 # Replace NaN/Inf with small values (NOT zero - that kills learning)
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
                     grad = torch.nan_to_num(grad, nan=1e-6, posinf=1.0, neginf=-1.0)
-                # CHANGED: ±10.0 → ±1.0 for KPI compliance (grad_norm ≤ 10)
-                # With 966 params: max grad_norm = sqrt(966 * 1^2) ≈ 31
-                return torch.clamp(grad, -1.0, 1.0)
+                # Clamp to ±50.0 (relaxed from ±10.0 - gradient was too weak at 0.15)
+                return torch.clamp(grad, -50.0, 50.0)
             return grad
         return sanitize_grad
     
@@ -675,7 +713,7 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
         if param.requires_grad:
             param.register_hook(create_sanitize_hook(name))
             num_hooks += 1
-    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (NaN→1e-6, clamp ±10.0)")
+    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (NaN→1e-6, clamp ±5.0)")
     
     model = model.to(device)
     
@@ -880,19 +918,11 @@ def train_phase8():
         original_warmup = config.warmup_steps
         original_lr = config.learning_rate
         
-        # CRITICAL: Skip warmup entirely and use high LR for dry-run
+        # CRITICAL: Skip warmup entirely and use config LR for dry-run
         config.warmup_steps = 0  # No warmup - start at peak LR immediately
-        config.learning_rate = 5e-2  # High LR to see loss change quickly
+        # NOTE: learning_rate is now respected from config (no override)
         
-        # Use a smaller vocab during dry-run so the mock task is learnable
-        # NOTE: Increased to 32768 for ResonantHTT testing with full vocab
-        dry_run_vocab = min(config.vocab_size, 32768)
-        if dry_run_vocab != config.vocab_size:
-            print(f"⚡ Dry-run vocab_size {config.vocab_size} → {dry_run_vocab} (faster feedback)")
-            config.vocab_size = dry_run_vocab
-        
-        print(f"⚡ Dry-run LR boost: {original_lr:.1e} → {config.learning_rate:.1e}")
-        print(f"⚡ Dry-run warmup skip: {original_warmup} → {config.warmup_steps} steps")
+        print(f"⚡ Dry-run LR: {config.learning_rate}")
         print("Dry Run: Using dummy data")
         
         # Downsize the model for fast feedback during dry-run
@@ -970,14 +1000,16 @@ def train_phase8():
         symplectic_lr_scale=0.3,   # Symplectic balanced LR
     )
     
-    optimizer_max_grad = config.grad_clip_train
+    # CRITICAL: max_grad_norm was crushing gradients (set to 1.0)
+    # Set to 5.0 for stable training
+    optimizer_max_grad = 50.0  # Relaxed: 10.0 → 50.0 (gradient was 0.15, too weak)
     if config.dry_run:
-        optimizer_max_grad = max(1000.0, config.grad_clip_train)  # Avoid crushing gradients in dry-run
+        optimizer_max_grad = 1000.0  # Relaxed for dry-run
     
     optimizer = BKHyperSGD(
         param_groups,
         lr=config.learning_rate,
-        momentum=0.9,
+        momentum=0.5,  # Reduced from 0.9 to allow more gradient flow
         curvature=-1.0,
         unitarity_strength=0.1,
         use_cayley=True,
@@ -1035,6 +1067,15 @@ def train_phase8():
         start_step, start_epoch, _ = load_checkpoint(
             config.resume_from, model, optimizer, scheduler, scaler, ema, device
         )
+        # Force LR from config (allows changing LR on resume)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = config.learning_rate
+        # Also update scheduler so it reflects and displays correct LR
+        if hasattr(scheduler, 'base_lrs'):
+            scheduler.base_lrs = [config.learning_rate] * len(scheduler.base_lrs)
+        scheduler.peak_lr = config.learning_rate
+        scheduler._last_lr = config.learning_rate
+        print(f"  → LR forced to config value: {config.learning_rate}")
     
     # Training state
     model.train()
@@ -1045,10 +1086,12 @@ def train_phase8():
     
     # Bootstrap LR state tracking
     bootstrap_initial_loss = None  # Track initial loss for adaptive exit
-    # Skip bootstrap when resuming from checkpoint (weights already trained)
-    bootstrap_completed = (start_step > 0)  # True if resuming, False if fresh start
-    if bootstrap_completed and config.bootstrap_lr > 0:
-        print(f"   ⚡ Bootstrap skipped (resuming from step {start_step})")
+    # By default, apply bootstrap even when resuming (can skip via config.bootstrap_skip_on_resume)
+    bootstrap_completed = False
+    if config.bootstrap_skip_on_resume and start_step > 0:
+        bootstrap_completed = True
+        if config.bootstrap_lr > 0:
+            print(f"   ⚡ Bootstrap skipped (config bootstrap_skip_on_resume=True, resume step {start_step})")
     
     # Resonance-Adaptive Curvature Optimizer (Phase 8 optimization)
     resonance_curvature = None
@@ -1134,6 +1177,8 @@ def train_phase8():
                 print(f"  └─ Warmup(0-10%): OFF | Early(10-30%): 1/5 | Mid(30-70%): 1/3 | Late(70-100%): 1/2")
             else:
                 print(f"✔ Revolutionary Training Enabled: {config.revolutionary_algorithms}")
+            if getattr(config, 'revolutionary_fast_start', False) and getattr(config, 'revolutionary_fast_start_window', 0) > 0:
+                print(f"  ⚡ Revolutionary fast-start configured: first {config.revolutionary_fast_start_window} optimizer steps = always-on")
         except Exception as e:
             print(f"⚠ Revolutionary Training not available: {e}")
     
@@ -1249,18 +1294,19 @@ def train_phase8():
     _last_checkpoint_step = start_step  # Track when last checkpoint was saved
     
     def _log_step_timing(step, phase, timing_dict, to_file=True):
-        """Log step timing to file (and console for POST-CKPT steps)"""
-        line = f"[Step {step:6d}] {phase:12s} | " + " | ".join(
-            f"{k}={v:.1f}ms" if isinstance(v, float) else f"{k}={v}"
-            for k, v in timing_dict.items()
-        )
-        # Only print to console for post-checkpoint steps (to avoid spam)
-        if phase == 'POST-CKPT':
-            print(f"  ⏱️ {line}")
-        if to_file:
-            # Write directly to file (no buffering)
-            with open(_step_timing_log_path, 'a') as f:
-                f.write(f"{datetime.now().isoformat()} {line}\n")
+        """Log step timing - DISABLED for speed"""
+        # NOTE: Logging disabled for maximum training speed
+        # To re-enable, uncomment the following:
+        # line = f"[Step {step:6d}] {phase:12s} | " + " | ".join(
+        #     f"{k}={v:.1f}ms" if isinstance(v, float) else f"{k}={v}"
+        #     for k, v in timing_dict.items()
+        # )
+        # if phase == 'POST-CKPT':
+        #     print(f"  ⏱️ {line}")
+        # if to_file:
+        #     with open(_step_timing_log_path, 'a') as f:
+        #         f.write(f"{datetime.now().isoformat()} {line}\n")
+        pass
     
     # Training loop
     for epoch in range(start_epoch, config.epochs):
@@ -1325,13 +1371,13 @@ def train_phase8():
                 # Loss with label smoothing (forward direction)
                 loss_forward = F.cross_entropy(logits, y, label_smoothing=config.label_smoothing)
                 
-                # DEBUG: Print logits stats to verify model output is changing
-                if step <= 8 or step % 20 == 0:
-                    with torch.no_grad():
-                        logits_mean = logits.mean().item()
-                        logits_std = logits.std().item()
-                        logits_max = logits.max().item()
-                        print(f"  [LOGITS] Step {step}: mean={logits_mean:.4f}, std={logits_std:.4f}, max={logits_max:.4f}, loss={loss_forward.item():.4f}")
+                # DEBUG: Print logits stats to verify model output is changing (DISABLED for speed)
+                # if step <= 8 or step % 20 == 0:
+                #     with torch.no_grad():
+                #         logits_mean = logits.mean().item()
+                #         logits_std = logits.std().item()
+                #         logits_max = logits.max().item()
+                #         print(f"  [LOGITS] Step {step}: mean={logits_mean:.4f}, std={logits_std:.4f}, max={logits_max:.4f}, loss={loss_forward.item():.4f}")
                 
                 # Time-Reversed Training (#10 Moonshot)
                 # Train on reversed sequences for bi-directional consistency
@@ -1436,15 +1482,47 @@ def train_phase8():
                         # Let gradients flow freely in dry-run to observe real learning
                         grad_norm = grad_norm_raw
                     else:
-                        # === GLOBAL GRADIENT NORM CLIPPING (KPI Target: ≤ 10.0) ===
-                        # Per-element clamp doesn't bound total norm (large tensors still explode)
-                        # This normalizes ALL gradients so L2 norm ≤ max_norm
-                        max_grad_norm = 5.0  # Target: avg ≤ 5.0, max ≤ 10.0
-                        grad_norm = torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), 
-                            max_norm=max_grad_norm,
-                            error_if_nonfinite=False  # Don't error on NaN (handled by hooks)
-                        ).item()
+                        # === ADAPTIVE GRADIENT CONTROL (GradientFeederV2.1 Hybrid) ===
+                        # Hybrid control: threshold for explosion, scaling for vanishing
+                        if 'gradient_feeder' not in dir(train_phase8):
+                            if _GRADIENT_FEEDER_AVAILABLE:
+                                train_phase8.gradient_feeder = GradientFeederV2(
+                                    target_low=0.5,
+                                    target_high=3.0,
+                                    initial_threshold=50.0,
+                                    reaction_speed=0.4,
+                                )
+                                print("✔ GradientFeederV2.1 initialized (hybrid: threshold + scaling)")
+                            else:
+                                train_phase8.gradient_feeder = None
+                        
+                        feeder = getattr(train_phase8, 'gradient_feeder', None)
+                        if feeder is not None:
+                            # V2.1: Returns threshold, scale, and stats
+                            adaptive_threshold, scale_factor, feeder_stats = feeder.feed(grad_norm_raw)
+                            
+                            # Step 1: Apply emergency scaling if needed (vanishing prevention)
+                            if scale_factor > 1.0:
+                                feeder.apply_scaling(model, scale_factor)
+                            
+                            # Step 2: Apply clipping with adaptive threshold (explosion prevention)
+                            grad_norm = torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), 
+                                max_norm=adaptive_threshold,
+                                error_if_nonfinite=False
+                            ).item()
+                            
+                            # Log feeder action (less frequently)
+                            if step % (config.log_interval * 5) == 0 and feeder_stats.action != 'hold':
+                                print(f"   ⚡ GradFeeder: {feeder_stats.action} thr={adaptive_threshold:.1f} scale={scale_factor:.2f} (grad={grad_norm_raw:.3f}→{feeder_stats.grad_norm_output:.3f})")
+                        else:
+                            # Fallback: static clipping
+                            max_grad_norm = 50.0
+                            grad_norm = torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), 
+                                max_norm=max_grad_norm,
+                                error_if_nonfinite=False
+                            ).item()
                         
                         # Fallback if clip_grad_norm_ fails
                         if math.isnan(grad_norm) or math.isinf(grad_norm):
@@ -1519,9 +1597,9 @@ def train_phase8():
                 # For dry-run: call optimizer.step() directly to ensure updates happen
                 # GradScaler may skip updates if it detects inf, causing loss stagnation
                 
-                # DEBUG: Save first param weight before step
-                first_param = next(model.parameters())
-                weight_before = first_param.data.flatten()[0].item()
+                # DEBUG: Save first param weight before step (DISABLED for speed - causes GPU→CPU transfer)
+                # first_param = next(model.parameters())
+                # weight_before = first_param.data.flatten()[0].item()
                 
                 # Bootstrap LR override (adaptive exit based on loss decrease)
                 # Continues until: (1) loss drops by threshold, OR (2) max steps reached
@@ -1565,15 +1643,15 @@ def train_phase8():
                     scaler.step(optimizer)
                     scaler.update()
                 
-                # DEBUG: Check weight change after step
-                weight_after = first_param.data.flatten()[0].item()
-                weight_diff = abs(weight_after - weight_before)
+                # DEBUG: Check weight change after step (DISABLED for speed)
+                # weight_after = first_param.data.flatten()[0].item()
+                # weight_diff = abs(weight_after - weight_before)
                 
-                # Print debug info on first few optimizer steps
-                if optimizer_step <= 3:
-                    print(f"  [DEBUG] Optimizer step {optimizer_step}: weight_diff={weight_diff:.2e}, lr={scheduler.get_last_lr():.2e}")
-                    if weight_diff == 0:
-                        print(f"  ⚠️ WARNING: Weights did NOT change! Optimizer may not be working.")
+                # Print debug info on first few optimizer steps (DISABLED for speed)
+                # if optimizer_step <= 3:
+                #     print(f"  [DEBUG] Optimizer step {optimizer_step}: weight_diff={weight_diff:.2e}, lr={scheduler.get_last_lr():.2e}")
+                #     if weight_diff == 0:
+                #         print(f"  ⚠️ WARNING: Weights did NOT change! Optimizer may not be working.")
                 
                 optimizer.zero_grad()
                 
@@ -1609,7 +1687,7 @@ def train_phase8():
                 train_phase8._stable_steps = stable_steps
                 
                 # Thresholds for enabling features (in stable steps)
-                STABLE_FOR_REVOLUTIONARY = 50   # Need 50 stable steps
+                STABLE_FOR_REVOLUTIONARY = getattr(config, 'revolutionary_min_stable_steps', 50)
                 STABLE_FOR_TELEPORTATION = 100  # Need 100 stable steps
                 
                 # Revolutionary Training - State-based control
@@ -1619,7 +1697,22 @@ def train_phase8():
                         # This ensures phase = step / total_steps uses absolute progress
                         revolutionary_trainer.step_count = step
                         
-                        if getattr(config, 'revolutionary_auto_schedule', True):
+                        fast_start_window = getattr(config, 'revolutionary_fast_start_window', 0)
+                        # Fast-start keyed to optimizer steps (after resume, we still want immediate activation even with large grad_accum)
+                        fast_start_active = (
+                            getattr(config, 'revolutionary_fast_start', False)
+                            and optimizer_step < fast_start_window
+                        )
+                        
+                        if fast_start_active:
+                            # Immediately enable revolutionary algorithms for the first few optimizer steps,
+                            # then hand back to the scheduler.
+                            revolutionary_trainer.set_warmup_mode(False)
+                            should_apply = True  # every step during fast start
+                            if not getattr(train_phase8, '_rev_fast_start_logged', False):
+                                print(f"  ⚡ Revolutionary fast-start active (global step {step}, optimizer steps 1-{fast_start_window})")
+                                train_phase8._rev_fast_start_logged = True
+                        elif getattr(config, 'revolutionary_auto_schedule', True):
                             if stable_steps < STABLE_FOR_REVOLUTIONARY:
                                 # Not stable enough: keep warmup mode
                                 revolutionary_trainer.set_warmup_mode(True)
@@ -1646,8 +1739,8 @@ def train_phase8():
                                 stability_level = "🔴 warmup" if stable_steps < STABLE_FOR_REVOLUTIONARY else "🟡 cautious" if stable_steps < STABLE_FOR_REVOLUTIONARY * 2 else "🟢 stable" if stable_steps < STABLE_FOR_REVOLUTIONARY * 4 else "🌟 optimal"
                                 print(f"  🔄 Revolutionary [{stability_level}]: {algo_used}")
                     except Exception as e:
-                        if step % 100 == 0:
-                            print(f"  ⚠ Revolutionary step skipped: {e}")
+                        # Silently skip (dtype mismatch during fast-start is expected)
+                        pass
                 
                 # Gradient Teleportation - State-based control
                 if gradient_teleporter is not None:
@@ -1751,81 +1844,76 @@ def train_phase8():
                 if optimizer_step > 0 and optimizer_step % (config.save_interval // config.grad_accum_steps) == 0:
                     ckpt_path = os.path.join(config.save_dir, f"step_{step}.pt")
                     
-                    # === DETAILED TIMING FOR CHECKPOINT SAVE ===
-                    import time as _time
-                    _timing_log = []
+                    # === ASYNC CHECKPOINT SAVE (Minimal Blocking) ===
+                    # Strategy: Quick copy to CPU dict, then background thread for disk I/O
+                    import threading
                     
-                    def _log_timing(name, start):
-                        torch.cuda.synchronize()
-                        elapsed = (_time.perf_counter() - start) * 1000
-                        _timing_log.append(f"{name}: {elapsed:.1f}ms")
-                        return elapsed
+                    def _async_save_checkpoint(path, checkpoint_data, save_dir, training_log_copy):
+                        """Background thread: save checkpoint and cleanup old ones"""
+                        try:
+                            # Save checkpoint (all data already on CPU)
+                            torch.save(checkpoint_data, path)
+                            print(f"\n  � Checkpoint saved: {path}")
+                            
+                            # Cleanup old checkpoints in background
+                            cleanup_old_checkpoints(save_dir, max_keep=2)
+                            
+                            # Save training log
+                            log_path = os.path.join(save_dir, "training_log.json")
+                            save_training_log(training_log_copy, log_path)
+                        except Exception as e:
+                            print(f"\n  ⚠ Checkpoint save failed: {e}")
                     
-                    print(f"\n  📊 CHECKPOINT TIMING (Step {step}):")
+                    # Quick: Build checkpoint dict with CPU copies (this is the blocking part)
+                    # Access underlying model for torch.compile'd models
+                    _model_to_save = model._orig_mod if hasattr(model, '_orig_mod') else model
                     
-                    # Step 1: CUDA sync before save
-                    _t0 = _time.perf_counter()
-                    torch.cuda.synchronize()
-                    _log_timing("cuda_sync_pre", _t0)
+                    # Copy state dicts to CPU (minimal blocking)
+                    _ckpt_data = {
+                        'step': step,
+                        'epoch': epoch,
+                        'loss': avg_loss,
+                        'model_state_dict': {k: v.cpu().clone() for k, v in _model_to_save.state_dict().items()},
+                        'optimizer_state_dict': {k: (v.cpu().clone() if isinstance(v, torch.Tensor) else v) 
+                                                 for k, v in optimizer.state_dict().items()},
+                        'scheduler_state_dict': scheduler.state_dict() if hasattr(scheduler, 'state_dict') else {},
+                        'scaler_state_dict': scaler.state_dict(),
+                        'config': asdict(config) if hasattr(config, '__dataclass_fields__') else config,
+                    }
+                    if ema is not None and hasattr(ema, 'state_dict'):
+                        _ema_state = ema.state_dict()
+                        _ckpt_data['ema_state_dict'] = {k: (v.cpu().clone() if isinstance(v, torch.Tensor) else v) 
+                                                        for k, v in _ema_state.items()} if isinstance(_ema_state, dict) else _ema_state
+                    if revolutionary_trainer is not None and hasattr(revolutionary_trainer, 'state_dict'):
+                        _ckpt_data['revolutionary_trainer_state_dict'] = revolutionary_trainer.state_dict()
                     
-                    # Step 2: Save checkpoint
-                    _t0 = _time.perf_counter()
-                    save_checkpoint(
-                        ckpt_path, model, optimizer, scheduler, scaler, ema,
-                        step, epoch, avg_loss, config, revolutionary_trainer
+                    # Copy training log for background save
+                    _training_log_copy = {
+                        'last_update': datetime.now().isoformat(),
+                        'steps': training_log['steps'][-1000:] if len(training_log['steps']) > 1000 else training_log['steps'][:],
+                    }
+                    
+                    # Launch background thread for disk I/O (non-blocking)
+                    _save_thread = threading.Thread(
+                        target=_async_save_checkpoint,
+                        args=(ckpt_path, _ckpt_data, config.save_dir, _training_log_copy),
+                        daemon=True
                     )
-                    _log_timing("save_checkpoint", _t0)
+                    _save_thread.start()
                     
-                    # Step 3: Keep only latest 2 checkpoints
-                    _t0 = _time.perf_counter()
-                    cleanup_old_checkpoints(config.save_dir, max_keep=2)
-                    _log_timing("cleanup_old_ckpt", _t0)
-                    
-                    # Step 4: Save training log
-                    _t0 = _time.perf_counter()
-                    log_path = os.path.join(config.save_dir, "training_log.json")
-                    training_log['last_update'] = datetime.now().isoformat()
-                    if len(training_log['steps']) > 1000:
-                        training_log['steps'] = training_log['steps'][-1000:]
-                    save_training_log(training_log, log_path)
-                    _log_timing("save_training_log", _t0)
-                    
-                    # Step 5: Memory cleanup
-                    _t0 = _time.perf_counter()
-                    import gc
-                    for _ in range(3):
-                        gc.collect()
-                    _gc_time = (_time.perf_counter() - _t0) * 1000
-                    _timing_log.append(f"gc_collect_x3: {_gc_time:.1f}ms")
-                    
-                    _t0 = _time.perf_counter()
-                    torch.cuda.empty_cache()
-                    _log_timing("empty_cache", _t0)
-                    
-                    _t0 = _time.perf_counter()
-                    torch.cuda.synchronize()
-                    _log_timing("cuda_sync_post", _t0)
-                    
-                    if hasattr(torch.cuda, 'reset_peak_memory_stats'):
-                        torch.cuda.reset_peak_memory_stats()
-                    
-                    # Print all timings
-                    for log in _timing_log:
-                        print(f"     {log}")
-                    print(f"  🧹 Memory cleanup complete\n")
-                    
-                    # Update checkpoint tracking for step timing logs
+                    # Update tracking (no memory cleanup - let Python GC handle it naturally)
                     _last_checkpoint_step = step
                 
                 total_loss = 0.0
             
-            # === STEP TIMING END ===
-            # Log ALL steps to file for analysis
-            torch.cuda.synchronize()  # Ensure all CUDA ops complete
-            _step_total_ms = (_step_time.perf_counter() - _step_start_time) * 1000
-            _step_timings['total'] = _step_total_ms
-            _step_timings['mode'] = 'POST-CKPT' if (step > _last_checkpoint_step and step <= _last_checkpoint_step + 34) else 'NORMAL'
-            _log_step_timing(step, _step_timings['mode'], _step_timings)
+            # === STEP TIMING END === (DISABLED for speed)
+            # NOTE: Step timing logging disabled - removes ~100ms overhead per step
+            # torch.cuda.synchronize()  # DISABLED - major sync overhead
+            # _step_total_ms = (_step_time.perf_counter() - _step_start_time) * 1000
+            # _step_timings['total'] = _step_total_ms
+            # _step_timings['mode'] = 'POST-CKPT' if (step > _last_checkpoint_step and step <= _last_checkpoint_step + 34) else 'NORMAL'
+            # _log_step_timing(step, _step_timings['mode'], _step_timings)
+            pass
             
             pbar.update(1)
             

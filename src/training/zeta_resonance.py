@@ -50,6 +50,9 @@ class RiemannZetaResonance:
         self.num_zeros = num_zeros
         self.t_range = t_range
         self.critical_line = 0.5  # Re(s) = 1/2
+        # Detect model dtype for consistent tensor operations
+        self._model_dtype = next(model.parameters()).dtype
+        self._model_device = next(model.parameters()).device
         
         # Zeta state
         self.zeros_found = []
@@ -188,22 +191,17 @@ class RiemannZetaResonance:
         The imaginary parts of zeros encode optimal weight values.
         """
         total_params = sum(p.numel() for p in self.model.parameters())
-        weights = torch.zeros(total_params)
+        weights = torch.zeros(total_params, dtype=self._model_dtype, device=self._model_device)
         
         if not zeros:
             return weights
         
-        # Use zeros to modulate weights
+        # VECTORIZED: Use zeros to modulate weights (fixes O(10B) Python loop!)
+        j = torch.arange(total_params, device=self._model_device, dtype=self._model_dtype)
         for i, zero in enumerate(zeros):
             t = zero.imag  # Imaginary part
-            
-            # Map to weight indices
-            start_idx = int((t / self.t_range[1]) * total_params) % total_params
-            
-            # Apply oscillatory pattern based on zero
-            for j in range(total_params):
-                phase = 2 * torch.pi * t * (j / total_params)
-                weights[j] += torch.cos(torch.tensor(phase)).item() / (i + 1)
+            phase = 2 * torch.pi * t * (j / total_params)
+            weights = weights + torch.cos(phase) / (i + 1)
         
         # Normalize
         weights = weights / (weights.abs().max() + 1e-8) * 0.1
@@ -284,17 +282,21 @@ class RiemannZetaResonance:
             weight_updates = self.zeros_to_weights(zeros)
             
             # Apply updates with clipping for stability
-            with torch.no_grad():
-                offset = 0
-                for p in self.model.parameters():
-                    numel = p.numel()
-                    update = weight_updates[offset:offset + numel].view(p.shape)
-                    update = update.to(p.device)
-                    # Clip update magnitude to prevent large weight changes
-                    update = torch.clamp(update, -0.01, 0.01)
-                    update = torch.nan_to_num(update, nan=0.0, posinf=0.0, neginf=0.0)
-                    p.data.sub_(update)
-                    offset += numel
+            # Apply updates as gradient (not p.data!) for optimizer sync
+            offset = 0
+            for p in self.model.parameters():
+                numel = p.numel()
+                update = weight_updates[offset:offset + numel].view(p.shape)
+                update = update.to(p.device).to(p.dtype)
+                # Clip update magnitude to prevent large weight changes
+                update = torch.clamp(update, -0.01, 0.01)
+                update = torch.nan_to_num(update, nan=0.0, posinf=0.0, neginf=0.0)
+                # Inject as gradient
+                if p.grad is None:
+                    p.grad = update.detach().clone()
+                else:
+                    p.grad = p.grad + update.detach()
+                offset += numel
         
         elapsed = (time.perf_counter() - start_time) * 1000
         

@@ -50,6 +50,8 @@ class SheafCohomologyCompilation:
         self.model = model
         self.num_opens = num_open_sets
         self.threshold = intersection_threshold
+        # Detect model dtype for consistent tensor operations
+        self._model_dtype = next(model.parameters()).dtype
         
         # Sheaf state
         self.sections = {}  # Open set → (data, label)
@@ -153,7 +155,8 @@ class SheafCohomologyCompilation:
                 # Compute difference
                 min_len = min(len(restr_i), len(restr_j))
                 if min_len > 0:
-                    diff = restr_j[:min_len].float() - restr_i[:min_len].float()
+                    # Use float32 for SVD computation (SVD requires float32)
+                    diff = restr_j[:min_len].to(torch.float32) - restr_i[:min_len].to(torch.float32)
                     coboundary.append(diff.flatten())
         
         if coboundary:
@@ -257,13 +260,18 @@ class SheafCohomologyCompilation:
             obs = obs / (obs.abs().max() + 1e-8) * 0.001  # Reduced from 0.01 to 0.001
             obs = torch.nan_to_num(obs, nan=0.0, posinf=0.0, neginf=0.0)
             
-            # Apply with per-parameter clipping
+            # Apply with per-parameter gradient injection (not p.data!)
             offset = 0
             for p in self.model.parameters():
                 numel = p.numel()
                 update = obs[offset:offset + numel].view(p.shape)
-                update = torch.clamp(update.to(p.device), -0.001, 0.001)
-                p.data.sub_(update)
+                # Ensure update matches parameter dtype
+                update = torch.clamp(update.to(p.device).to(p.dtype), -0.001, 0.001)
+                # Inject as gradient for optimizer sync
+                if p.grad is None:
+                    p.grad = update.detach().clone()
+                else:
+                    p.grad = p.grad + update.detach()
                 offset += numel
     
     def compile_to_zero_cohomology(
