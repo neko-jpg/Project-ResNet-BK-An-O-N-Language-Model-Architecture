@@ -36,34 +36,34 @@ mixed_precision_dtype: bfloat16
 
 # === Training ===
 batch_size: 1
-gradient_accumulation_steps: 8
+gradient_accumulation_steps: 64
 effective_batch_size: 8
 
 # === Optimizer (BK-HyperSGD - ResNet-BK専用) ===
-optimizer_type: bk_hyper_sgd
+optimizer_type: adamw
 beta1: 0.9
 beta2: 0.95
 eps: 1.0e-8
-weight_decay: 0.01
+weight_decay: 0.1
 
 # === Learning Rate Scheduler ===
 # 2025-12-16: Reduced LR from 1.0 to 0.05 for stable training
-learning_rate: 0.05  # 1.0 → 0.05
-min_lr: 1.0e-5      # Slightly higher floor for continued learning
-warmup_steps: 500   # Gradual warmup on resume
+learning_rate: 0.0001  # 0.001 -> 0.0001 (1e-4)
+min_lr: 1.0e-6      # 1e-6
+warmup_steps: 200   # 1-5%
 
 # === Bootstrap LR (Shock Therapy) ===
 # Use very high LR until loss decreases significantly
 # Automatically exits when loss drops by bootstrap_exit_threshold
-bootstrap_lr: 2.0  # 40x higher than normal LR
-bootstrap_steps: 500  # Maximum steps (safety limit, usually exits earlier)
-bootstrap_exit_threshold: 0.5  # Exit bootstrap when loss drops by this amount
+bootstrap_lr: 0.0  # Disabled
+bootstrap_steps: 0  # Disabled
+bootstrap_exit_threshold: 0.5
 
 # === Gradient Control ===
 # 2025-12-16: Stronger clipping to prevent spikes after phase transition
 grad_clip_warmup: 0.1  # Stricter warmup clipping
 grad_clip_train: 1.0   # Expert recommendation: allow more gradient flow
-grad_skip_threshold: 10.0  # Failsafe: 異常な勾配爆発をスキップ
+grad_skip_threshold: 10000.0  # Failsafe: 異常な勾配爆発をスキップ (10.0->10000.0 for 10B model)
 
 # === EMA (Exponential Moving Average) ===
 use_ema: true
@@ -190,3 +190,11 @@ tsp_window_size: 10  # 評価ウィンドウ（10 optimizer steps = 160バッチ
 tsp_eval_interval: 10  # 評価間隔（10 optimizer steps = 160バッチごと評価）
 tsp_epsilon: 0.10  # ε-greedy探索率（10%でランダム遷移）
 tsp_min_dwell_steps: 15  # 最低滞在ステップ（optimizer step基準、≈240バッチ）
+
+# === Gradient Aligner (勾配方向整合器) ===
+# 逆向き勾配成分を除去し、全勾配をLoss減少方向に揃える
+# VRAM +0: optimizer state (exp_avg) を参照方向として再利用
+use_gradient_aligner: true
+gradient_aligner_strength: 0.3  # 補正強度 (0.0-1.0, 0.1から開始推奨)
+gradient_aligner_min_alignment: 0.0  # cos類似度下限 (0=逆向きのみ除去)
+gradient_aligner_warmup: 100  # 観測のみ期間（optimizer steps）

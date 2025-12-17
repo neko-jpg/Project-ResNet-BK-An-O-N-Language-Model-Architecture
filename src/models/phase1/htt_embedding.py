@@ -172,17 +172,16 @@ class HolographicTTEmbedding(nn.Module):
             torch.randn(self.v2, rank, 1, self.d2) * scale_factor
         )
         
-        # Register gradient clipping hooks to prevent NaN in backward pass
-        # RELAXED: ±100.0 to allow proper gradient flow (±10.0 killed gradient signal)
-        def clamp_grad(grad):
-            if grad is not None:
-                # Check for NaN/Inf first
-                if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
-                return torch.clamp(grad, -100.0, 100.0)  # Relaxed from ±10.0
-            return grad
-        self.core1.register_hook(clamp_grad)
-        self.core2.register_hook(clamp_grad)
+        # Backward hooks: sanitize only (no clamp).
+        # Value-clamping here can suppress learning under FP16+GradScaler (pre-unscale).
+        def _sanitize_grad(grad):
+            if grad is None:
+                return None
+            # Unconditional nan_to_num avoids GPU↔CPU sync from `.any()` checks.
+            return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+
+        self.core1.register_hook(_sanitize_grad)
+        self.core2.register_hook(_sanitize_grad)
         
         # Holographic Phase Parameters
         # 各ランク次元に位相を与える
@@ -191,7 +190,7 @@ class HolographicTTEmbedding(nn.Module):
         if phase_encoding:
             # Phase init: 0.01 for better gradient flow
             self.phase_shift = nn.Parameter(torch.randn(rank) * 0.01)
-            self.phase_shift.register_hook(clamp_grad)
+            self.phase_shift.register_hook(_sanitize_grad)
         else:
             self.register_buffer('phase_shift', torch.zeros(rank))
         

@@ -388,19 +388,18 @@ class ResonantHTTEmbedding(nn.Module):
     
     def _register_gradient_hooks(self):
         """勾配サニタイズフックを登録"""
-        def clamp_grad(grad):
-            if grad is not None:
-                if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
-                # RELAXED: ±10.0 → ±100.0 to allow stronger gradients
-                return torch.clamp(grad, -100.0, 100.0)
-            return grad
+        def _sanitize_grad(grad):
+            if grad is None:
+                return None
+            # Avoid value-clamping here: backward hooks run pre-unscale under GradScaler.
+            # Unconditional nan_to_num avoids GPU↔CPU sync from `.any()` checks.
+            return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
         
         for core in self.cores:
-            core.register_hook(clamp_grad)
+            core.register_hook(_sanitize_grad)
         
         if self.phase_encoding:
-            self.phase_shift.register_hook(clamp_grad)
+            self.phase_shift.register_hook(_sanitize_grad)
     
     def get_compression_ratio(self) -> float:
         """圧縮率を返す"""

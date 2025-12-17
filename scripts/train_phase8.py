@@ -176,6 +176,19 @@ except ImportError:
     aggressive_memory_cleanup = None
     force_cuda_memory_defrag = None
 
+# Import Gradient Aligner (勾配方向整合器)
+try:
+    from src.training.gradient_aligner import (
+        GradientAligner,
+        GradientAlignerConfig,
+        create_gradient_aligner,
+    )
+    _GRADIENT_ALIGNER_AVAILABLE = True
+except ImportError:
+    _GRADIENT_ALIGNER_AVAILABLE = False
+    GradientAligner = None
+    create_gradient_aligner = None
+
 # Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -263,15 +276,27 @@ class CosineWarmupScheduler:
         self.peak_lr = peak_lr
         self.min_lr = min_lr
         self.current_step = 0
-        
-        # FIX: Initialize with correct LR (not 0.0)
-        # When warmup_steps=0, start at peak_lr immediately
-        initial_lr = self.get_lr(0)
-        self._last_lr = initial_lr
-        
-        # Apply initial LR to optimizer param_groups
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = initial_lr
+
+        # Preserve per-param-group LR ratios (e.g. geometry-aware groups).
+        # The scheduler outputs a *scalar* LR curve; we apply it as a multiplier
+        # relative to each group's base_lr at peak_lr.
+        self.base_lrs = [float(g.get("lr", peak_lr)) for g in self.optimizer.param_groups]
+        self._last_lrs: List[float] = []
+        self._last_lr: float = 0.0  # Back-compat: first group LR
+
+        # Initialize optimizer param_groups with the step-0 LR.
+        self._apply_lr(self.get_lr(0))
+
+    def _apply_lr(self, lr_scalar: float) -> None:
+        """Apply scalar LR schedule while keeping per-group ratios."""
+        scale = 0.0 if self.peak_lr <= 0 else (lr_scalar / self.peak_lr)
+        lrs: List[float] = []
+        for base_lr, group in zip(self.base_lrs, self.optimizer.param_groups):
+            group_lr = float(base_lr) * float(scale)
+            group["lr"] = group_lr
+            lrs.append(group_lr)
+        self._last_lrs = lrs
+        self._last_lr = lrs[0] if lrs else float(lr_scalar)
     
     def get_lr(self, step: int) -> float:
         """Calculate learning rate for given step."""
@@ -288,13 +313,11 @@ class CosineWarmupScheduler:
         """Update learning rate for current step."""
         self.current_step += 1
         lr = self.get_lr(self.current_step)
-        self._last_lr = lr
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
+        self._apply_lr(lr)
     
-    def get_last_lr(self) -> float:
-        """Return last computed learning rate."""
-        return self._last_lr
+    def get_last_lr(self) -> List[float]:
+        """Return last applied learning rates (per param group)."""
+        return self._last_lrs
     
     def state_dict(self) -> Dict:
         """Return scheduler state for checkpointing."""
@@ -303,7 +326,8 @@ class CosineWarmupScheduler:
             'warmup_steps': self.warmup_steps,
             'total_steps': self.total_steps,
             'peak_lr': self.peak_lr,
-            'min_lr': self.min_lr
+            'min_lr': self.min_lr,
+            'base_lrs': list(self.base_lrs),
         }
     
     def load_state_dict(self, state_dict: Dict):
@@ -313,6 +337,16 @@ class CosineWarmupScheduler:
         self.total_steps = state_dict['total_steps']
         self.peak_lr = state_dict['peak_lr']
         self.min_lr = state_dict['min_lr']
+        if 'base_lrs' in state_dict and state_dict['base_lrs'] is not None:
+            # Only restore if shape matches; otherwise keep current (from optimizer groups).
+            try:
+                base_lrs = list(state_dict['base_lrs'])
+                if len(base_lrs) == len(self.optimizer.param_groups):
+                    self.base_lrs = [float(x) for x in base_lrs]
+            except Exception:
+                pass
+        # Ensure optimizer param_groups reflect the loaded step.
+        self._apply_lr(self.get_lr(self.current_step))
 
 
 # =============================================================================
@@ -356,6 +390,8 @@ class Phase8TrainingConfig:
     beta1: float = 0.9
     beta2: float = 0.95
     eps: float = 1e-8
+    # BK-HyperSGD internal per-parameter clipping (disabled by default; global clip is applied post-unscale)
+    optimizer_max_grad_norm: Optional[float] = None
     
     # Bootstrap LR (Shock Therapy for saddle point escape)
     # Use very high LR until loss decreases significantly
@@ -464,6 +500,13 @@ class Phase8TrainingConfig:
     tsp_eval_interval: int = 100  # 評価間隔
     tsp_epsilon: float = 0.10  # ε-greedy探索率
     tsp_min_dwell_steps: int = 200  # 最低滞在ステップ（パタパタ遷移防止）
+    
+    # Gradient Aligner (勾配方向整合器)
+    # 逆向き勾配成分を除去し、全勾配をLoss減少方向に揃える
+    use_gradient_aligner: bool = True  # Master switch
+    gradient_aligner_strength: float = 0.3  # 補正強度 (0.0-1.0)
+    gradient_aligner_min_alignment: float = 0.0  # cos類似度下限 (0=逆向きのみ除去)
+    gradient_aligner_warmup: int = 100  # 観測のみ期間
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -488,7 +531,8 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--grad-accum-steps", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--lr", type=float, default=0.02)
+    # NOTE: map `--lr` to `learning_rate` so CLI overrides work with YAML keys.
+    parser.add_argument("--lr", type=float, default=0.02, dest="learning_rate")
     parser.add_argument("--min-lr", type=float, default=1e-6)
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--max-steps", type=int, default=None)
@@ -499,10 +543,18 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--dry-run", action="store_true")
     
     # Optimizer
-    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "muon", "riemannian_muon", "bk_hyper_sgd"])
+    # Map CLI `--optimizer` to `optimizer_type` so YAML/CLI precedence works consistently.
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="bk_hyper_sgd",
+        choices=["adamw", "muon", "riemannian_muon", "bk_hyper_sgd"],
+        dest="optimizer_type",
+    )
     parser.add_argument("--beta1", type=float, default=0.9)
     parser.add_argument("--beta2", type=float, default=0.95)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--optimizer-max-grad-norm", type=float, default=None)
     
     # Regularization
     parser.add_argument("--label-smoothing", type=float, default=0.1)
@@ -530,7 +582,10 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--extreme-compression", action="store_true")
     parser.add_argument("--ultra-compression", action="store_true")
     parser.add_argument("--compile", action="store_true")
-    parser.add_argument("--resonant-htt", action="store_true",
+    parser.add_argument(
+        "--resonant-htt",
+        action="store_true",
+        dest="use_resonant_htt",
         help="Enable Riemannian Resonant Tunneling for optimal tensor geometry")
     
     # Config file support
@@ -576,6 +631,23 @@ def parse_args() -> Phase8TrainingConfig:
     if args.ultra_compression:
         print("🌌 Ultra Compression Enabled (Target: <3GB VRAM)")
         args.low_rank_rank = 8
+
+    # grad_accum_steps:
+    # YAML側の `gradient_accumulation_steps` を尊重しつつ、CLIで明示指定された場合はCLIを優先。
+    # argparseのdefault値(16)は「明示指定」と区別できないため、sys.argvで判定する。
+    cli_grad_accum_provided = any(arg.startswith("--grad-accum-steps") for arg in sys.argv)
+    if cli_grad_accum_provided:
+        grad_accum_steps = int(args.grad_accum_steps)
+    else:
+        yaml_grad_accum_steps = None
+        if isinstance(yaml_config, dict):
+            yaml_grad_accum_steps = (
+                yaml_config.get("grad_accum_steps")
+                or yaml_config.get("gradient_accumulation_steps")
+                or yaml_config.get("grad-accum-steps")
+                or yaml_config.get("gradient-accumulation-steps")
+            )
+        grad_accum_steps = int(yaml_grad_accum_steps) if yaml_grad_accum_steps is not None else int(args.grad_accum_steps)
     
     # Build config
     config = Phase8TrainingConfig(
@@ -590,7 +662,7 @@ def parse_args() -> Phase8TrainingConfig:
         use_bk_hyperbolic=get_val('use_bk_hyperbolic', True),
         use_ar_ssm_fusion=get_val('use_ar_ssm_fusion', True),
         batch_size=get_val('batch_size', 1),
-        grad_accum_steps=get_val('grad_accum_steps', get_val('gradient_accumulation_steps', 16)),
+        grad_accum_steps=grad_accum_steps,
         epochs=get_val('epochs', 1),
         learning_rate=get_val('learning_rate', 0.02),
         min_lr=get_val('min_lr', 1e-6),
@@ -599,11 +671,12 @@ def parse_args() -> Phase8TrainingConfig:
         bootstrap_lr=get_val('bootstrap_lr', args.bootstrap_lr if args.bootstrap_lr is not None else 0.0),
         bootstrap_steps=get_val('bootstrap_steps', args.bootstrap_steps if args.bootstrap_steps is not None else 0),
         bootstrap_skip_on_resume=get_val('bootstrap_skip_on_resume', True),
-        optimizer_type=args.optimizer,  # CLI always takes priority for optimizer
+        optimizer_type=get_val('optimizer_type', args.optimizer_type),
         beta1=get_val('beta1', 0.9),
         beta2=get_val('beta2', 0.95),
         eps=get_val('eps', 1e-8),
         weight_decay=get_val('weight_decay', 0.01),
+        optimizer_max_grad_norm=get_val('optimizer_max_grad_norm', None),
         grad_clip_warmup=get_val('grad_clip_warmup', get_val('max_grad_norm', 0.1)),
         grad_clip_train=get_val('grad_clip_train', 1.0),
         grad_skip_threshold=get_val('grad_skip_threshold', 10.0),
@@ -723,17 +796,21 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
         init_weights(model)
     
     # ========== Global Gradient Sanitization ==========
-    # Register gradient hooks on ALL parameters to sanitize NaN/Inf
-    # CRITICAL: Use small non-zero values (1e-6) instead of 0 to allow gradient flow
-    def create_sanitize_hook(param_name):
+    # Register gradient hooks on ALL parameters to sanitize NaN/Inf.
+    #
+    # IMPORTANT:
+    # - Do NOT clamp gradients here.
+    #   These hooks run during backward (i.e. before GradScaler unscale). If you clamp
+    #   pre-unscale, the effective (unscaled) gradients can become unintentionally tiny,
+    #   leading to loss stagnation.
+    def create_sanitize_hook(_param_name):
         def sanitize_grad(grad):
-            if grad is not None:
-                # Replace NaN/Inf with small values (NOT zero - that kills learning)
-                if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=1e-6, posinf=1.0, neginf=-1.0)
-                # Clamp to ±10.0 (unified with model-internal hooks for consistency)
-                return torch.clamp(grad, -10.0, 10.0)
-            return grad
+            if grad is None:
+                return None
+            # Keep this branch-free to avoid GPU↔CPU sync from `.any()` checks.
+            grad = torch.nan_to_num(grad, nan=1e-6, posinf=1.0, neginf=-1.0)
+            # Restore clamp to prevent gradient explosion (critical for stability)
+            return torch.clamp(grad, -10.0, 10.0)
         return sanitize_grad
     
     num_hooks = 0
@@ -741,7 +818,7 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
         if param.requires_grad:
             param.register_hook(create_sanitize_hook(name))
             num_hooks += 1
-    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (NaN→1e-6, clamp ±5.0)")
+    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (NaN→1e-6, no clamp)")
     
     model = model.to(device)
     
@@ -1012,51 +1089,67 @@ def train_phase8():
     print(f"Total Parameters: {total_params:,}")
     print(f"Trainable Parameters: {trainable_params:,}")
     
-    # Optimizer - BK-HyperSGD ONLY (ResNet-BK専用)
-    # AdamW, Muon, RiemannianMuon は削除されました
-    if not _BK_HYPER_SGD_AVAILABLE:
-        raise RuntimeError("BK-HyperSGD is required but not available! Check src/optimizers/bk_hyper_sgd.py")
+    # Optimizer Selection
+    optimizer_type = config.optimizer_type.lower()
     
-    print("🧬 Using BK-HyperSGD Optimizer (ResNet-BK Specialized - 唯一のオプティマイザ)")
-    print("   - Cayley retraction for unitary layers (v_proj, output_proj)")
-    print("   - Lorentz exp map for hyperbolic layers")
-    print("   - Symplectic integration for Hamiltonian structure")
-    if not config.dry_run and config.bootstrap_lr > 0 and config.bootstrap_steps > 0:
-        print(f"   ⚡ Bootstrap LR enabled: {config.bootstrap_lr} for first {config.bootstrap_steps} optimizer steps")
+    if optimizer_type == 'adamw':
+        print("🔧 Using AdamW Optimizer")
+        optimizer = optim.AdamW(
+            model.parameters(),
+            lr=config.learning_rate,
+            betas=(config.beta1, config.beta2),
+            eps=config.eps,
+            weight_decay=config.weight_decay,
+        )
+    elif optimizer_type == 'bk_hyper_sgd':
+        # BK-HyperSGD (ResNet-BK Specialized)
+        if not _BK_HYPER_SGD_AVAILABLE:
+            raise RuntimeError("BK-HyperSGD is required but not available! Check src/optimizers/bk_hyper_sgd.py")
+        
+        print("🧬 Using BK-HyperSGD Optimizer (ResNet-BK Specialized)")
+        print("   - Cayley retraction for unitary layers (v_proj, output_proj)")
+        print("   - Lorentz exp map for hyperbolic layers")
+        print("   - Symplectic integration for Hamiltonian structure")
+        
+        # Get parameter groups with geometry-aware learning rates
+        param_groups = get_bk_parameter_groups(
+            model,
+            base_lr=config.learning_rate,
+            unitary_lr_scale=0.1,      # BK-Core needs smaller LR
+            hyperbolic_lr_scale=0.5,   # Hyperbolic moderate LR
+            symplectic_lr_scale=0.3,   # Symplectic balanced LR
+        )
+        
+        optimizer_max_grad = getattr(config, "optimizer_max_grad_norm", None)
+        
+        optimizer = BKHyperSGD(
+            param_groups,
+            lr=config.learning_rate,
+            momentum=0.5,
+            curvature=-1.0,
+            unitarity_strength=0.1,
+            use_cayley=True,
+            use_lorentz=True,
+            max_grad_norm=optimizer_max_grad,
+            weight_decay=config.weight_decay,
+        )
+        # Set parameter names and re-classify
+        optimizer.set_param_names(model)
+        
+    else:
+        raise ValueError(f"Unsupported optimizer type: {config.optimizer_type}")
+
     
-    # Get parameter groups with geometry-aware learning rates
-    param_groups = get_bk_parameter_groups(
-        model,
-        base_lr=config.learning_rate,
-        unitary_lr_scale=0.1,      # BK-Core needs smaller LR
-        hyperbolic_lr_scale=0.5,   # Hyperbolic moderate LR
-        symplectic_lr_scale=0.3,   # Symplectic balanced LR
-    )
     
-    # CRITICAL: max_grad_norm controls gradient explosion prevention
-    # 2025-12-17: Reduced from 50.0 to 5.0 to prevent loss oscillation
-    optimizer_max_grad = 5.0
-    if config.dry_run:
-        optimizer_max_grad = 1000.0  # Relaxed for dry-run
-    
-    optimizer = BKHyperSGD(
-        param_groups,
-        lr=config.learning_rate,
-        momentum=0.5,  # Reduced from 0.9 to allow more gradient flow
-        curvature=-1.0,
-        unitarity_strength=0.1,
-        use_cayley=True,
-        use_lorentz=True,
-        max_grad_norm=optimizer_max_grad,
-        weight_decay=config.weight_decay,
-    )
-    
-    # Set parameter names and re-classify
-    optimizer.set_param_names(model)
-    
-    # Print parameter group stats
-    stats = optimizer.get_statistics()
-    print(f"   Parameter groups: {stats['param_type_counts']}")
+    # BK-HyperSGD specific logging
+    if optimizer_type == 'bk_hyper_sgd':
+        # Set parameter names and re-classify
+        optimizer.set_param_names(model)
+        
+        # Print parameter group stats
+        stats = optimizer.get_statistics()
+        print(f"   Parameter groups: {stats['param_type_counts']}")
+
     
     # DEBUG: Compare optimizer params vs model params
     optimizer_param_count = sum(len(group['params']) for group in param_groups)
@@ -1069,11 +1162,16 @@ def train_phase8():
         print(f"   ⚠️ WARNING: Optimizer has FEWER params than model! Some weights won't train.")
     
     # Scaler for mixed precision
-    # Reverted: GradScaler back to normal operation
-    use_scaler = config.use_mixed_precision and not config.dry_run
+    #
+    # NOTE:
+    # - This training script uses BF16 autocast for stability.
+    # - GradScaler is primarily needed for FP16; with BF16 it is usually unnecessary and
+    #   can interact badly with gradient hooks/clamping (pre-unscale), effectively shrinking updates.
+    amp_dtype = torch.bfloat16
+    use_scaler = bool(config.use_mixed_precision and (amp_dtype == torch.float16) and not config.dry_run)
     scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
-    if not use_scaler and config.dry_run:
-        print("   ⚠ GradScaler disabled during dry run for BK-HyperSGD compatibility")
+    if config.use_mixed_precision and not use_scaler:
+        print("   ℹ GradScaler disabled (BF16 autocast)")
     
     # EMA
     ema = EMA(model, decay=config.ema_decay) if config.use_ema else None
@@ -1100,15 +1198,21 @@ def train_phase8():
         start_step, start_epoch, _ = load_checkpoint(
             config.resume_from, model, optimizer, scheduler, scaler, ema, device
         )
-        # Force LR from config (allows changing LR on resume)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = config.learning_rate
-        # Also update scheduler so it reflects and displays correct LR
-        if hasattr(scheduler, 'base_lrs'):
-            scheduler.base_lrs = [config.learning_rate] * len(scheduler.base_lrs)
-        scheduler.peak_lr = config.learning_rate
-        scheduler._last_lr = config.learning_rate
-        print(f"  → LR forced to config value: {config.learning_rate}")
+        # Force LR from config (allows changing LR on resume) while preserving
+        # per-param-group LR ratios (geometry-aware groups).
+        old_peak_lr = float(getattr(scheduler, "peak_lr", config.learning_rate))
+        new_peak_lr = float(config.learning_rate)
+        if old_peak_lr > 0 and abs(new_peak_lr - old_peak_lr) > 0:
+            ratio = new_peak_lr / old_peak_lr
+            if hasattr(scheduler, "base_lrs") and isinstance(scheduler.base_lrs, list):
+                scheduler.base_lrs = [float(x) * ratio for x in scheduler.base_lrs]
+            scheduler.peak_lr = new_peak_lr
+            # Re-apply LR at the current scheduler step under the new peak.
+            if hasattr(scheduler, "_apply_lr"):
+                scheduler._apply_lr(scheduler.get_lr(scheduler.current_step))
+            print(f"  → LR rescaled on resume: peak {old_peak_lr} → {new_peak_lr}")
+        else:
+            print(f"  → LR kept on resume: {new_peak_lr}")
     
     # Training state
     model.train()
@@ -1269,6 +1373,7 @@ def train_phase8():
                 eval_interval=config.tsp_eval_interval,
                 epsilon=config.tsp_epsilon,
                 city_preset=city_preset,
+                apply_lr_on_transition=False,  # preserve scheduler & per-group LR ratios
                 use_adaptive_epsilon=True,  # v2: 適応的ε減衰
                 epsilon_start=0.30,         # 初期: 30%探索
                 epsilon_end=0.05,           # 最終: 5%探索
@@ -1303,6 +1408,23 @@ def train_phase8():
             print(f"⚠ TSP Path Optimizer not available: {e}")
             traceback.print_exc()
 
+    # Gradient Aligner (勾配方向整合器)
+    gradient_aligner = None
+    if _GRADIENT_ALIGNER_AVAILABLE and config.use_gradient_aligner:
+        try:
+            gradient_aligner = create_gradient_aligner(
+                model=model,
+                optimizer=optimizer,
+                enabled=True,
+                strength=config.gradient_aligner_strength,
+                min_alignment=config.gradient_aligner_min_alignment,
+                warmup_steps=config.gradient_aligner_warmup,
+            )
+            print(f"✔ Gradient Aligner Enabled")
+            print(f"  └─ strength={config.gradient_aligner_strength}, min_alignment={config.gradient_aligner_min_alignment}")
+            print(f"  └─ warmup={config.gradient_aligner_warmup} steps (observe only)")
+        except Exception as e:
+            print(f"⚠ Gradient Aligner not available: {e}")
     
     # JSON Log
     training_log = {
@@ -1429,7 +1551,7 @@ def train_phase8():
                 train_phase8._res_lock_on = True
             
             # Forward pass with mixed precision
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=config.use_mixed_precision):
+            with torch.cuda.amp.autocast(dtype=amp_dtype, enabled=config.use_mixed_precision):
                 # Only collect diagnostics when logging (reduces overhead ~10%)
                 collect_diag = (step % config.log_interval == 0)
                 logits, diagnostics = model(x, return_diagnostics=collect_diag)
@@ -1544,7 +1666,21 @@ def train_phase8():
                         # Subsequent NaN warnings (shorter message)
                         pass  # Silent after first warning
                 
-                # ===== Gradient Norm Computation \u0026 Clipping (Muon Optimized) =====
+                # === Gradient Aligner (勾配方向整合器) ===
+                # sanitizer直後、clip前に勾配を整合させる
+                ga_stats = {}
+                if gradient_aligner is not None:
+                    ga_stats = gradient_aligner.maybe_align(optimizer_step)
+                    
+                    # ログ間隔でのみ詳細表示
+                    if step % config.log_interval == 0 and ga_stats.get('ga_aligned_tensors', 0) > 0:
+                        warmup_status = "📊 warmup" if ga_stats.get('ga_warmup', 0) else "✅ active"
+                        print(f"  🧭 Gradient Aligner [{warmup_status}]: "
+                              f"neg_frac={ga_stats.get('ga_neg_frac', 0):.2%}, "
+                              f"mean_cos={ga_stats.get('ga_mean_cos', 0):.3f}, "
+                              f"aligned={ga_stats.get('ga_aligned_tensors', 0)}")
+                
+                # ===== Gradient Norm Computation & Clipping (Muon Optimized) =====
                 
                 # === PRE-CLIPPING FOR MUON (DISABLED - causing loss stagnation) ===
                 # NOTE: Muon's internal stabilization handles gradient control.
@@ -1701,11 +1837,10 @@ def train_phase8():
                     # The scheduler computes a base LR, but TSP scales it by city lr_scale
                     if tsp_optimizer is not None and tsp_optimizer.current_city is not None:
                         tsp_city = tsp_optimizer.current_city
-                        # Use scheduler's current LR as base, apply TSP's lr_scale
-                        base_lr = scheduler.get_last_lr()[0] if isinstance(scheduler.get_last_lr(), list) else scheduler.get_last_lr()
-                        tsp_effective_lr = base_lr * tsp_city.lr_scale
+                        # Apply as a multiplicative scale on the scheduler-applied per-group LRs,
+                        # preserving geometry-aware param-group ratios.
                         for group in optimizer.param_groups:
-                            group['lr'] = tsp_effective_lr
+                            group['lr'] = float(group.get('lr', 0.0)) * float(tsp_city.lr_scale)
                 
                 # EMA update
                 if ema is not None:
@@ -1842,8 +1977,11 @@ def train_phase8():
                     tsp_optimizer.record(avg_loss, grad_norm)
                     
                     # Evaluate and potentially transition cities (returns TransitionEvent or None)
-                    # NOTE: Use global `step` not `optimizer_step` - the latter resets on resume
-                    evt = tsp_optimizer.evaluate_and_transition(step, optimizer)
+                    # Use TSP's internal optimizer-step counter so eval_interval/window_size are
+                    # interpreted in optimizer steps (independent of grad_accum and resume).
+                    prev_lr_scale = tsp_optimizer.current_city.lr_scale if tsp_optimizer.current_city else 1.0
+                    tsp_step = tsp_optimizer.total_steps
+                    evt = tsp_optimizer.evaluate_and_transition(tsp_step, optimizer)
                     if evt is not None:
                         tsp_current_city = tsp_optimizer.current_city
                         
@@ -1854,6 +1992,14 @@ def train_phase8():
                         # 2. Feeder & Ghost flags (for external modules / future use)
                         tsp_feeder_enabled = tsp_current_city.feeder_enabled
                         tsp_ghost_enabled = tsp_current_city.ghost_enabled
+
+                        # Make the next optimizer step use the new city's lr_scale without
+                        # destroying per-param-group LR ratios (scheduler already set them).
+                        if not using_bootstrap:
+                            new_lr_scale = tsp_current_city.lr_scale if tsp_current_city else 1.0
+                            ratio = float(new_lr_scale) / float(prev_lr_scale) if prev_lr_scale else float(new_lr_scale)
+                            for group in optimizer.param_groups:
+                                group["lr"] = float(group.get("lr", 0.0)) * ratio
                         
                         # Log transition with TransitionEvent details
                         print(f"  🏙️ TSP: {evt.from_city} → {evt.to_city}")
@@ -1869,12 +2015,13 @@ def train_phase8():
                         status = "🔒 dwell" if dwelled < min_dwell else "✅ ready"
                         print(f"  📊 TSP[{cfg.get('city', 'N/A')}] {status} ({dwelled}/{min_dwell}) | stability={cfg.get('stability', 0):.2f}, lr={cfg.get('effective_lr', 0):.4f}")
                 
-                current_lr = scheduler.get_last_lr()
+                scheduler_lrs = scheduler.get_last_lr()
+                optimizer_lrs = [group.get('lr', 0.0) for group in optimizer.param_groups]
+                lr_value = optimizer_lrs[0] if optimizer_lrs else (scheduler_lrs[0] if scheduler_lrs else 0.0)
                 if using_bootstrap:
-                    current_lr = [config.bootstrap_lr]
-                
-                # Extract first element if list (scheduler.get_last_lr() returns list)
-                lr_value = current_lr[0] if isinstance(current_lr, list) else current_lr
+                    # During bootstrap we override all param groups to a single LR.
+                    lr_value = config.bootstrap_lr
+                    optimizer_lrs = [config.bootstrap_lr for _ in optimizer.param_groups]
                 
                 # Update progress bar (shorter description to show ETA)
                 pbar.set_description(f"E{epoch}")
@@ -1893,7 +2040,10 @@ def train_phase8():
                     'epoch': epoch,
                     'loss': avg_loss,
                     'ppl': ppl,
-                    'lr': current_lr,
+                    # Actual LR applied to the optimizer (after scheduler + any overrides).
+                    'lr': lr_value,
+                    'optimizer_lrs': optimizer_lrs,
+                    'scheduler_lrs': scheduler_lrs,
                     'grad_norm': grad_norm,  # Clipped
                     'grad_norm_raw': grad_norm_raw,  # Before clipping
                     'grad_clip': tsp_optimizer.current_city.clip_value if (tsp_optimizer and tsp_optimizer.current_city) else getattr(config, 'grad_clip_train', 1.0),
@@ -1915,6 +2065,10 @@ def train_phase8():
                 if tsp_optimizer is not None:
                     tsp_metrics = tsp_optimizer.get_metrics_summary()
                     step_log.update(tsp_metrics)
+                
+                # Add Gradient Aligner metrics to log
+                if ga_stats:
+                    step_log.update(ga_stats)
                 
                 # Add diagnostics (only if collected)
                 if diagnostics is not None:

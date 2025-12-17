@@ -78,7 +78,7 @@ class BKHyperSGD(Optimizer):
         green_function_reg: float = 0.01,
         use_cayley: bool = True,
         use_lorentz: bool = True,
-        max_grad_norm: float = 1.0,
+        max_grad_norm: Optional[float] = None,
         eps: float = 1e-8,
         weight_decay: float = 0.0,
     ):
@@ -181,14 +181,15 @@ class BKHyperSGD(Optimizer):
         # Debug counters
         params_with_grad = 0
         params_updated = 0
-        total_grad_norm = 0.0
+        debug_this_step = (self.step_count % 10 == 1)
+        total_grad_norm_sq = 0.0 if debug_this_step else None
         
         for group in self.param_groups:
             lr = group['lr']
             momentum = group['momentum']
             curvature = group['curvature']
             eps = group['eps']
-            max_grad_norm = group['max_grad_norm']
+            max_grad_norm = group.get('max_grad_norm', None)
             weight_decay = group['weight_decay']
             
             for p in group['params']:
@@ -197,7 +198,8 @@ class BKHyperSGD(Optimizer):
                 
                 params_with_grad += 1
                 grad = p.grad
-                total_grad_norm += grad.norm().item() ** 2
+                if debug_this_step:
+                    total_grad_norm_sq += float(grad.norm().item()) ** 2
                 
                 # Skip sparse gradients
                 if grad.is_sparse:
@@ -211,10 +213,13 @@ class BKHyperSGD(Optimizer):
                 
                 state['step'] += 1
                 
-                # Gradient clipping
-                grad_norm = grad.norm().item()
-                if grad_norm > max_grad_norm:
-                    grad = grad * (max_grad_norm / (grad_norm + eps))
+                # Optional per-parameter gradient clipping.
+                # NOTE: This can suppress learning on large tensors (norm scales with sqrt(numel)),
+                # so keep it disabled by default and rely on global post-unscale clipping instead.
+                if max_grad_norm is not None and float(max_grad_norm) > 0.0:
+                    grad_norm = float(grad.norm().item())
+                    if grad_norm > float(max_grad_norm):
+                        grad = grad * (float(max_grad_norm) / (grad_norm + eps))
                 
                 # Weight decay (applied before geometric update)
                 if weight_decay != 0:
@@ -235,8 +240,8 @@ class BKHyperSGD(Optimizer):
                 params_updated += 1
         
         # Debug output every 10 steps
-        if self.step_count % 10 == 1:
-            total_grad_norm = total_grad_norm ** 0.5
+        if debug_this_step and total_grad_norm_sq is not None:
+            total_grad_norm = float(total_grad_norm_sq) ** 0.5
             print(f"   [BK-HyperSGD] Step {self.step_count}: {params_with_grad} params with grad, {params_updated} updated, total_grad_norm={total_grad_norm:.4f}")
         
         return loss

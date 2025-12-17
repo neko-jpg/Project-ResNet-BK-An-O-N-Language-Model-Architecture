@@ -84,16 +84,16 @@ DEFAULT_CITIES: List[City] = [
     City("D_final",     stability=1.00, lr_scale=0.1, clip_value=0.6, feeder_enabled=False, ghost_enabled=True),
 ]
 
-# 日本語LLM最適化都市設定
-# - 32kトークナイザ（形態素ベース）向けに調整
-# - より細かい5段階で安定した収束を実現
-# - lr_scaleは日本語の長い依存関係を考慮して保守的に
+# 日本語LLM最適化都市設定（v3 - より積極的なLR）
+# lr_scaleを全体的に引き上げ: 実効LRが小さすぎて学習が進まない問題を修正
+# 以前: J_converge lr_scale=0.2 → 実効LR=0.01 (schedulerのLR×0.2)
+# 修正後: J_converge lr_scale=1.0 → 実効LR=scheduler LRをそのまま使用
 JAPANESE_LLM_CITIES: List[City] = [
-    City("J_explore",     stability=0.00, lr_scale=1.2, clip_value=1.5, feeder_enabled=True,  ghost_enabled=False),
-    City("J_active",      stability=0.25, lr_scale=0.8, clip_value=1.2, feeder_enabled=True,  ghost_enabled=False),
-    City("J_stabilize",   stability=0.50, lr_scale=0.5, clip_value=1.0, feeder_enabled=True,  ghost_enabled=True),
-    City("J_finetune",    stability=0.75, lr_scale=0.25,clip_value=0.8, feeder_enabled=True,  ghost_enabled=True),
-    City("J_converge",    stability=1.00, lr_scale=0.2, clip_value=1.0, feeder_enabled=False, ghost_enabled=True),
+    City("J_explore",     stability=0.00, lr_scale=1.5, clip_value=2.0, feeder_enabled=True,  ghost_enabled=False),
+    City("J_active",      stability=0.25, lr_scale=1.2, clip_value=1.5, feeder_enabled=True,  ghost_enabled=False),
+    City("J_stabilize",   stability=0.50, lr_scale=1.0, clip_value=1.2, feeder_enabled=True,  ghost_enabled=True),
+    City("J_finetune",    stability=0.75, lr_scale=0.8, clip_value=1.0, feeder_enabled=True,  ghost_enabled=True),
+    City("J_converge",    stability=1.00, lr_scale=1.0, clip_value=1.0, feeder_enabled=False, ghost_enabled=True),
 ]
 
 # City presets map for easy selection
@@ -206,6 +206,10 @@ class TSPPathOptimizer:
     """
     cities: List[City] = field(default_factory=lambda: list(DEFAULT_CITIES))
     base_lr: float = 0.05
+    # If True, apply LR changes directly to the optimizer on city transitions.
+    # Training loops with schedulers / per-group LRs may prefer to keep this False
+    # and apply `lr_scale` externally (preserving per-group ratios).
+    apply_lr_on_transition: bool = True
 
     # 評価
     window_size: int = 100
@@ -455,7 +459,9 @@ class TSPPathOptimizer:
         self.steps_in_city = 0
         self.transition_count += 1
 
-        effective_lr = next_city.apply_lr(optimizer, self.base_lr)
+        effective_lr = self.base_lr * next_city.lr_scale
+        if self.apply_lr_on_transition:
+            effective_lr = next_city.apply_lr(optimizer, self.base_lr)
         if apply_extras is not None:
             apply_extras(next_city)
 
@@ -701,6 +707,7 @@ def create_tsp_optimizer(
     epsilon_start: float = 0.30,
     epsilon_end: float = 0.05,
     epsilon_decay_steps: int = 10000,
+    apply_lr_on_transition: bool = True,
 ) -> TSPPathOptimizer:
     """
     TSP Path Optimizer を作成（ユーティリティ）
@@ -728,6 +735,7 @@ def create_tsp_optimizer(
     return TSPPathOptimizer(
         cities=city_list,
         base_lr=base_lr,
+        apply_lr_on_transition=apply_lr_on_transition,
         window_size=window_size,
         eval_interval=eval_interval,
         epsilon=epsilon,

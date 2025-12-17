@@ -95,12 +95,13 @@ class MoEResNetBKLayer(nn.Module):
                 nn.init.zeros_(self.v_proj.bias)
         
         # Add gradient clamp hook to v_proj (防止勾配爆発)
-        def clamp_v_proj_grad(grad):
+        def _sanitize_grad(grad):
             if grad is None:
-                return grad
-            # RELAXED: ±0.1 → ±50.0 to allow gradient flow
-            return torch.clamp(grad, -50.0, 50.0)
-        self.v_proj.weight.register_hook(clamp_v_proj_grad)
+                return None
+            # Avoid value-clamping here: backward hooks run pre-unscale under GradScaler.
+            return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+
+        self.v_proj.weight.register_hook(_sanitize_grad)
 
         self.use_birman_schwinger = config.use_birman_schwinger
         if config.use_birman_schwinger:
@@ -362,26 +363,15 @@ class LanguageModel(nn.Module):
         self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
         self.position_embedding = nn.Embedding(config.n_seq, config.d_model)
         
-        # Register gradient clamp hooks for embeddings
-        # RELAXED: ±10.0 instead of ±1.0 to allow proper learning
-        def clamp_position_grad(grad):
-            if grad is not None:
-                # CRITICAL: Sanitize NaN/Inf BEFORE clamping
-                if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
-                # RELAXED: ±10.0 → ±100.0 to allow gradient flow
-                return torch.clamp(grad, -100.0, 100.0)
-            return grad
-        self.position_embedding.weight.register_hook(clamp_position_grad)
-        
-        def clamp_token_grad(grad):
-            if grad is not None:
-                if torch.isnan(grad).any() or torch.isinf(grad).any():
-                    grad = torch.nan_to_num(grad, nan=0.0, posinf=100.0, neginf=-100.0)
-                # RELAXED: ±10.0 → ±100.0 to allow gradient flow
-                return torch.clamp(grad, -100.0, 100.0)
-            return grad
-        self.token_embedding.weight.register_hook(clamp_token_grad)
+        # Backward hooks: sanitize only (no clamp).
+        # Unconditional `nan_to_num` avoids GPU↔CPU sync from `.any()` checks.
+        def _sanitize_grad(grad):
+            if grad is None:
+                return None
+            return torch.nan_to_num(grad, nan=0.0, posinf=0.0, neginf=0.0)
+
+        self.position_embedding.weight.register_hook(_sanitize_grad)
+        self.token_embedding.weight.register_hook(_sanitize_grad)
 
         if config.use_birman_schwinger and config.prime_bump_init:
             self.prime_bump_potential = PrimeBumpPotential(
