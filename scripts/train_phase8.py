@@ -731,8 +731,8 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
                 # Replace NaN/Inf with small values (NOT zero - that kills learning)
                 if torch.isnan(grad).any() or torch.isinf(grad).any():
                     grad = torch.nan_to_num(grad, nan=1e-6, posinf=1.0, neginf=-1.0)
-                # Clamp to ±50.0 (relaxed from ±10.0 - gradient was too weak at 0.15)
-                return torch.clamp(grad, -50.0, 50.0)
+                # Clamp to ±10.0 (unified with model-internal hooks for consistency)
+                return torch.clamp(grad, -10.0, 10.0)
             return grad
         return sanitize_grad
     
@@ -1034,8 +1034,8 @@ def train_phase8():
     )
     
     # CRITICAL: max_grad_norm controls gradient explosion prevention
-    # Reverted to 50.0 after 4億 gradient explosion
-    optimizer_max_grad = 50.0
+    # 2025-12-17: Reduced from 50.0 to 5.0 to prevent loss oscillation
+    optimizer_max_grad = 5.0
     if config.dry_run:
         optimizer_max_grad = 1000.0  # Relaxed for dry-run
     
@@ -1556,14 +1556,19 @@ def train_phase8():
                     total_norm_sq = sum(p.grad.pow(2).sum() for p in model.parameters() if p.grad is not None)
                     grad_norm_raw = torch.sqrt(total_norm_sq).item()
                 
-                # Handle NaN/Inf in raw norm
                 if math.isnan(grad_norm_raw) or math.isinf(grad_norm_raw):
                     grad_norm_raw = 0.0
                     grad_norm = 0.0
                 else:
-                    # 2025-12-16: Match dry-run behavior - let gradients flow freely
-                    # GradientFeeder DISABLED - was causing gradient suppression
-                    grad_norm = grad_norm_raw
+                    # 2025-12-17: Re-enable gradient clipping (was disabled, causing uncontrolled gradients)
+                    # TSP optimizer controls clip_value per city - use it directly each step
+                    if tsp_optimizer is not None and tsp_optimizer.current_city is not None:
+                        effective_clip = tsp_optimizer.current_city.clip_value
+                    else:
+                        effective_clip = getattr(config, 'grad_clip_train', 1.0)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), effective_clip)
+                    if hasattr(grad_norm, 'item'):
+                        grad_norm = grad_norm.item()
                 
                 # Failsafe: Skip if raw norm is extremely large (gradient explosion)
                 # Reverted: Enable skip to prevent 4億 gradient explosions
@@ -1691,6 +1696,16 @@ def train_phase8():
                 # LR scheduler step
                 if not config.dry_run and not using_bootstrap:
                     scheduler.step()
+                    
+                    # CRITICAL: TSP LR override - TSP takes PRIORITY over scheduler
+                    # The scheduler computes a base LR, but TSP scales it by city lr_scale
+                    if tsp_optimizer is not None and tsp_optimizer.current_city is not None:
+                        tsp_city = tsp_optimizer.current_city
+                        # Use scheduler's current LR as base, apply TSP's lr_scale
+                        base_lr = scheduler.get_last_lr()[0] if isinstance(scheduler.get_last_lr(), list) else scheduler.get_last_lr()
+                        tsp_effective_lr = base_lr * tsp_city.lr_scale
+                        for group in optimizer.param_groups:
+                            group['lr'] = tsp_effective_lr
                 
                 # EMA update
                 if ema is not None:
@@ -1881,7 +1896,7 @@ def train_phase8():
                     'lr': current_lr,
                     'grad_norm': grad_norm,  # Clipped
                     'grad_norm_raw': grad_norm_raw,  # Before clipping
-                    'grad_clip': config.grad_clip_train if hasattr(config, 'grad_clip_train') else None,
+                    'grad_clip': tsp_optimizer.current_city.clip_value if (tsp_optimizer and tsp_optimizer.current_city) else getattr(config, 'grad_clip_train', 1.0),
                 }
                 
                 # Add Muon-specific metrics (if using Muon optimizer)

@@ -102,7 +102,7 @@ use_fused_scattering_gate: true
 use_batched_hyperbolic_distance: true
 
 # Resonance adaptive curvature
-use_resonance_adaptive_curvature: true
+use_resonance_adaptive_curvature: false  # DISABLED - causes geometry instability
 resonance_threshold: 0.5
 curvature_adjustment_rate: 0.01
 
@@ -146,7 +146,7 @@ use_green_function_lut: true
 green_function_lut_size: 1024
 
 # #6 Resonance-Locked Training (skip low SNR updates)
-use_resonance_locked: true
+use_resonance_locked: false  # DISABLED - blocks updates when GNS high
 resonance_gns_threshold: 5.0
 
 # #7 Scattering-Aware Attention Pruning
@@ -160,11 +160,11 @@ hmoe_top_k: 2
 
 # #9 Gradient Teleportation (non-local gradient propagation)
 # Scheduler managed: OFF during warmup (0-10%), ON after
-use_gradient_teleportation: true
+use_gradient_teleportation: false  # DISABLED - distorts gradient direction
 teleport_strength: 0.1
 
 # #10 Time-Reversed Training (bi-directional consistency)
-use_time_reversed: true
+use_time_reversed: false  # DISABLED - fights forward progress
 time_reversed_weight: 0.5
 
 # #11 Holographic Compression (KV Cache)

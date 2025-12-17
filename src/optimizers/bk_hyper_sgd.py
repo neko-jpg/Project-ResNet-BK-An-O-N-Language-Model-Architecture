@@ -344,6 +344,8 @@ class BKHyperSGD(Optimizer):
             # Handle negative (timelike) and positive (spacelike) norms differently
             is_spacelike = v_norm_sq > eps
             v_norm = torch.sqrt(torch.abs(v_norm_sq).clamp(min=eps))
+            # CRITICAL: Cap v_norm to prevent cosh explosion (cosh(10) ≈ 11000!)
+            v_norm = v_norm.clamp(max=2.0)  # cosh(2.0) ≈ 3.76, safe
             
             # Exponential map
             # For spacelike: cosh(||v||) and sinh(||v||)

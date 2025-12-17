@@ -93,7 +93,7 @@ JAPANESE_LLM_CITIES: List[City] = [
     City("J_active",      stability=0.25, lr_scale=0.8, clip_value=1.2, feeder_enabled=True,  ghost_enabled=False),
     City("J_stabilize",   stability=0.50, lr_scale=0.5, clip_value=1.0, feeder_enabled=True,  ghost_enabled=True),
     City("J_finetune",    stability=0.75, lr_scale=0.25,clip_value=0.8, feeder_enabled=True,  ghost_enabled=True),
-    City("J_converge",    stability=1.00, lr_scale=0.1, clip_value=0.6, feeder_enabled=False, ghost_enabled=True),
+    City("J_converge",    stability=1.00, lr_scale=0.2, clip_value=1.0, feeder_enabled=False, ghost_enabled=True),
 ]
 
 # City presets map for easy selection

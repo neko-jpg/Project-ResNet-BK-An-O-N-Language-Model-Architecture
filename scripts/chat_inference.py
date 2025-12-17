@@ -55,7 +55,14 @@ def load_model_phase8(checkpoint_path: str, device: str = "cuda"):
     # 設定を復元
     if 'config' in ckpt:
         config_dict = ckpt['config']
-        config = ResNetBKConfig(**config_dict) if isinstance(config_dict, dict) else config_dict
+        if isinstance(config_dict, dict):
+            # Filter out unknown keys that aren't in ResNetBKConfig
+            import dataclasses
+            valid_fields = {f.name for f in dataclasses.fields(ResNetBKConfig)}
+            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
+            config = ResNetBKConfig(**filtered_dict)
+        else:
+            config = config_dict
     else:
         # デフォルト設定
         config = ResNetBKConfig(
