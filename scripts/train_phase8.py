@@ -148,6 +148,20 @@ except ImportError:
     StabilityManager = None
     create_stability_manager = None
 
+# Import TSP Path Optimizer (巡回セールスマン的学習経路最適化)
+try:
+    from src.training.tsp_path_optimizer import (
+        TSPPathOptimizer,
+        create_tsp_optimizer,
+        City,
+        TransitionEvent,
+    )
+    _TSP_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    _TSP_OPTIMIZER_AVAILABLE = False
+    TSPPathOptimizer = None
+    create_tsp_optimizer = None
+
 # Import Async Checkpoint Saver (Prevents training slowdown after saves)
 try:
     from src.training.async_checkpoint import (
@@ -442,6 +456,14 @@ class Phase8TrainingConfig:
     revolutionary_fast_start: bool = True  # Enable fast-start for initial stabilization
     revolutionary_fast_start_window: int = 200  # First N optimizer steps always-on
     revolutionary_min_stable_steps: int = 50  # Default stability requirement when not in fast-start window
+    
+    # TSP Path Optimizer (Meta-optimizer for hyperparameter scheduling)
+    # 巡回セールスマン的にハイパーパラメータ設定（都市）を遷移し、効率的な収束を実現
+    use_tsp_optimizer: bool = False  # Master switch
+    tsp_window_size: int = 100  # 評価ウィンドウサイズ
+    tsp_eval_interval: int = 100  # 評価間隔
+    tsp_epsilon: float = 0.10  # ε-greedy探索率
+    tsp_min_dwell_steps: int = 200  # 最低滞在ステップ（パタパタ遷移防止）
 
 
 def parse_args() -> Phase8TrainingConfig:
@@ -609,6 +631,12 @@ def parse_args() -> Phase8TrainingConfig:
         revolutionary_fast_start=get_val('revolutionary_fast_start', True),
         revolutionary_fast_start_window=get_val('revolutionary_fast_start_window', 200),
         revolutionary_min_stable_steps=get_val('revolutionary_min_stable_steps', 50),
+        # TSP Path Optimizer
+        use_tsp_optimizer=get_val('use_tsp_optimizer', False),
+        tsp_window_size=get_val('tsp_window_size', 100),
+        tsp_eval_interval=get_val('tsp_eval_interval', 100),
+        tsp_epsilon=get_val('tsp_epsilon', 0.10),
+        tsp_min_dwell_steps=get_val('tsp_min_dwell_steps', 200),
     )
     
     return config
@@ -769,6 +797,7 @@ def save_checkpoint(
     loss: float,
     config: Phase8TrainingConfig,
     revolutionary_trainer: Optional['RevolutionaryTrainer'] = None,
+    tsp_optimizer: Optional['TSPPathOptimizer'] = None,
 ):
     """Save complete checkpoint including all training state."""
     import gc
@@ -799,6 +828,10 @@ def save_checkpoint(
     # CRITICAL: Save revolutionary trainer state for proper resume
     if revolutionary_trainer is not None:
         checkpoint['revolutionary_trainer_state_dict'] = revolutionary_trainer.state_dict()
+    
+    # Save TSP Path Optimizer state for proper resume
+    if tsp_optimizer is not None:
+        checkpoint['tsp_optimizer_state_dict'] = tsp_optimizer.state_dict()
     
     # Save and immediately free memory
     torch.save(checkpoint, path)
@@ -1000,9 +1033,9 @@ def train_phase8():
         symplectic_lr_scale=0.3,   # Symplectic balanced LR
     )
     
-    # CRITICAL: max_grad_norm was crushing gradients (set to 1.0)
-    # Set to 5.0 for stable training
-    optimizer_max_grad = 50.0  # Relaxed: 10.0 → 50.0 (gradient was 0.15, too weak)
+    # CRITICAL: max_grad_norm controls gradient explosion prevention
+    # Reverted to 50.0 after 4億 gradient explosion
+    optimizer_max_grad = 50.0
     if config.dry_run:
         optimizer_max_grad = 1000.0  # Relaxed for dry-run
     
@@ -1036,7 +1069,7 @@ def train_phase8():
         print(f"   ⚠️ WARNING: Optimizer has FEWER params than model! Some weights won't train.")
     
     # Scaler for mixed precision
-    # NOTE: Disable scaler for BK-HyperSGD in dry run to avoid unscale issues
+    # Reverted: GradScaler back to normal operation
     use_scaler = config.use_mixed_precision and not config.dry_run
     scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
     if not use_scaler and config.dry_run:
@@ -1220,6 +1253,56 @@ def train_phase8():
     #         print(f"✔ Async Checkpoint Saver Enabled (background saving)")
     #     except Exception as e:
     #         print(f"⚠ Async Checkpoint Saver not available: {e}")
+    
+    # TSP Path Optimizer (Meta-optimizer for hyperparameter scheduling)
+    tsp_optimizer = None
+    tsp_current_city = None
+    print(f"[DEBUG] TSP check: _TSP_OPTIMIZER_AVAILABLE={_TSP_OPTIMIZER_AVAILABLE}, config.use_tsp_optimizer={config.use_tsp_optimizer}")
+    if _TSP_OPTIMIZER_AVAILABLE and config.use_tsp_optimizer:
+        try:
+            # Use Japanese LLM preset for Japanese tokenizer (32k vocab)
+            city_preset = "japanese_llm" if config.vocab_size >= 30000 else "default"
+            
+            tsp_optimizer = create_tsp_optimizer(
+                base_lr=config.learning_rate,
+                window_size=config.tsp_window_size,
+                eval_interval=config.tsp_eval_interval,
+                epsilon=config.tsp_epsilon,
+                city_preset=city_preset,
+                use_adaptive_epsilon=True,  # v2: 適応的ε減衰
+                epsilon_start=0.30,         # 初期: 30%探索
+                epsilon_end=0.05,           # 最終: 5%探索
+                epsilon_decay_steps=total_steps // 2,  # 半分のステップで減衰完了
+            )
+            # Override min_dwell_steps from config
+            tsp_optimizer.min_dwell_steps = config.tsp_min_dwell_steps
+            tsp_current_city = tsp_optimizer.current_city
+            
+            effective_eps = tsp_optimizer.get_effective_epsilon()
+            print(f"✔ TSP Path Optimizer Enabled (v2)")
+            print(f"  └─ Preset: {city_preset} ({len(tsp_optimizer.cities)} cities)")
+            print(f"  └─ Window: {config.tsp_window_size} steps | Eval: {config.tsp_eval_interval} steps")
+            print(f"  └─ ε-greedy: {effective_eps:.2f} (adaptive: 0.30→0.05)")
+            print(f"  └─ Min dwell: {config.tsp_min_dwell_steps} steps | Plateau detect: {tsp_optimizer.plateau_window_count} windows")
+            print(f"  └─ Initial city: {tsp_current_city.name} (stability={tsp_current_city.stability:.2f}, lr_scale={tsp_current_city.lr_scale})")
+            
+            # Restore TSP state from checkpoint if resuming
+            if config.resume_from and os.path.exists(config.resume_from):
+                try:
+                    ckpt = torch.load(config.resume_from, map_location=device)
+                    if 'tsp_optimizer_state_dict' in ckpt:
+                        tsp_optimizer.load_state_dict(ckpt['tsp_optimizer_state_dict'])
+                        tsp_current_city = tsp_optimizer.current_city
+                    else:
+                        print(f"  ℹ️ No TSP state in checkpoint - starting fresh")
+                    del ckpt  # Free memory
+                except Exception as e:
+                    print(f"  ⚠ Could not restore TSP state: {e}")
+        except Exception as e:
+            import traceback
+            print(f"⚠ TSP Path Optimizer not available: {e}")
+            traceback.print_exc()
+
     
     # JSON Log
     training_log = {
@@ -1478,65 +1561,15 @@ def train_phase8():
                     grad_norm_raw = 0.0
                     grad_norm = 0.0
                 else:
-                    if config.dry_run:
-                        # Let gradients flow freely in dry-run to observe real learning
-                        grad_norm = grad_norm_raw
-                    else:
-                        # === ADAPTIVE GRADIENT CONTROL (GradientFeederV2.1 Hybrid) ===
-                        # Hybrid control: threshold for explosion, scaling for vanishing
-                        if 'gradient_feeder' not in dir(train_phase8):
-                            if _GRADIENT_FEEDER_AVAILABLE:
-                                train_phase8.gradient_feeder = GradientFeederV2(
-                                    target_low=0.5,
-                                    target_high=3.0,
-                                    initial_threshold=50.0,
-                                    reaction_speed=0.4,
-                                )
-                                print("✔ GradientFeederV2.1 initialized (hybrid: threshold + scaling)")
-                            else:
-                                train_phase8.gradient_feeder = None
-                        
-                        feeder = getattr(train_phase8, 'gradient_feeder', None)
-                        if feeder is not None:
-                            # V2.1: Returns threshold, scale, and stats
-                            adaptive_threshold, scale_factor, feeder_stats = feeder.feed(grad_norm_raw)
-                            
-                            # Step 1: Apply emergency scaling if needed (vanishing prevention)
-                            if scale_factor > 1.0:
-                                feeder.apply_scaling(model, scale_factor)
-                            
-                            # Step 2: Apply clipping with adaptive threshold (explosion prevention)
-                            grad_norm = torch.nn.utils.clip_grad_norm_(
-                                model.parameters(), 
-                                max_norm=adaptive_threshold,
-                                error_if_nonfinite=False
-                            ).item()
-                            
-                            # Log feeder action (less frequently)
-                            if step % (config.log_interval * 5) == 0 and feeder_stats.action != 'hold':
-                                print(f"   ⚡ GradFeeder: {feeder_stats.action} thr={adaptive_threshold:.1f} scale={scale_factor:.2f} (grad={grad_norm_raw:.3f}→{feeder_stats.grad_norm_output:.3f})")
-                        else:
-                            # Fallback: static clipping
-                            max_grad_norm = 50.0
-                            grad_norm = torch.nn.utils.clip_grad_norm_(
-                                model.parameters(), 
-                                max_norm=max_grad_norm,
-                                error_if_nonfinite=False
-                            ).item()
-                        
-                        # Fallback if clip_grad_norm_ fails
-                        if math.isnan(grad_norm) or math.isinf(grad_norm):
-                            grad_norm = grad_norm_raw
+                    # 2025-12-16: Match dry-run behavior - let gradients flow freely
+                    # GradientFeeder DISABLED - was causing gradient suppression
+                    grad_norm = grad_norm_raw
                 
                 # Failsafe: Skip if raw norm is extremely large (gradient explosion)
-                # NOTE: For dry-run, we disable this entirely to test if model can learn
+                # Reverted: Enable skip to prevent 4億 gradient explosions
                 effective_skip_threshold = config.grad_skip_threshold
                 if config.dry_run:
-                    # Dry-run: disable skip entirely to see actual training behavior
-                    effective_skip_threshold = float('inf')
-                elif config.optimizer_type in ('muon', 'riemannian_muon'):
-                    # Muon/RiemannianMuonBit use orthogonalization which makes raw grad_norm misleading
-                    effective_skip_threshold = 10000.0
+                    effective_skip_threshold = float('inf')  # Disable skip for dry-run
                 
                 if grad_norm_raw > effective_skip_threshold:
                     # 初期ステップでデバッグ情報を出力
@@ -1788,6 +1821,39 @@ def train_phase8():
                 if stability_manager is not None:
                     stability_manager.step()
                 
+                # TSP Path Optimizer - Record metrics and evaluate transitions
+                if tsp_optimizer is not None:
+                    # Record current step's metrics
+                    tsp_optimizer.record(avg_loss, grad_norm)
+                    
+                    # Evaluate and potentially transition cities (returns TransitionEvent or None)
+                    # NOTE: Use global `step` not `optimizer_step` - the latter resets on resume
+                    evt = tsp_optimizer.evaluate_and_transition(step, optimizer)
+                    if evt is not None:
+                        tsp_current_city = tsp_optimizer.current_city
+                        
+                        # Apply all city settings
+                        # 1. Gradient clip (directly usable)
+                        config.grad_clip_train = tsp_current_city.clip_value
+                        
+                        # 2. Feeder & Ghost flags (for external modules / future use)
+                        tsp_feeder_enabled = tsp_current_city.feeder_enabled
+                        tsp_ghost_enabled = tsp_current_city.ghost_enabled
+                        
+                        # Log transition with TransitionEvent details
+                        print(f"  🏙️ TSP: {evt.from_city} → {evt.to_city}")
+                        print(f"      stability={tsp_current_city.stability:.2f}, lr={evt.effective_lr:.4f}, clip={tsp_current_city.clip_value}")
+                        print(f"      cv_loss={evt.metrics.cv_loss:.3f}, cv_grad={evt.metrics.cv_grad:.3f}, desired={evt.desired_stability:.2f}")
+                    
+                    # Show evaluation status based on internal record count (optimizer steps)
+                    # This fires when enough data has been collected for evaluation
+                    dwelled = tsp_optimizer.steps_in_city
+                    if dwelled % config.tsp_eval_interval == 0 and dwelled > 0:
+                        cfg = tsp_optimizer.get_current_config()
+                        min_dwell = config.tsp_min_dwell_steps
+                        status = "🔒 dwell" if dwelled < min_dwell else "✅ ready"
+                        print(f"  📊 TSP[{cfg.get('city', 'N/A')}] {status} ({dwelled}/{min_dwell}) | stability={cfg.get('stability', 0):.2f}, lr={cfg.get('effective_lr', 0):.4f}")
+                
                 current_lr = scheduler.get_last_lr()
                 if using_bootstrap:
                     current_lr = [config.bootstrap_lr]
@@ -1829,6 +1895,11 @@ def train_phase8():
                             print(f"  🔧 Muon [{muon_metrics.get('phase', 'N/A')}]: "
                                   f"AvgGrad={muon_metrics.get('avg_grad_norm', 0):.3f}, "
                                   f"NaN={muon_metrics.get('total_nan_count', 0)}")
+                
+                # Add TSP metrics to log
+                if tsp_optimizer is not None:
+                    tsp_metrics = tsp_optimizer.get_metrics_summary()
+                    step_log.update(tsp_metrics)
                 
                 # Add diagnostics (only if collected)
                 if diagnostics is not None:
@@ -1886,6 +1957,8 @@ def train_phase8():
                                                         for k, v in _ema_state.items()} if isinstance(_ema_state, dict) else _ema_state
                     if revolutionary_trainer is not None and hasattr(revolutionary_trainer, 'state_dict'):
                         _ckpt_data['revolutionary_trainer_state_dict'] = revolutionary_trainer.state_dict()
+                    if tsp_optimizer is not None and hasattr(tsp_optimizer, 'state_dict'):
+                        _ckpt_data['tsp_optimizer_state_dict'] = tsp_optimizer.state_dict()
                     
                     # Copy training log for background save
                     _training_log_copy = {

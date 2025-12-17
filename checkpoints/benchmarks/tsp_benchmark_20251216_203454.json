@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-12-16T20:34:54.419793",
+  "steps": 300,
+  "baseline_final_loss": 9.12734521651116,
+  "baseline_oscillation": 0.3726618764798184,
+  "tsp_final_loss": 9.12734521651116,
+  "tsp_oscillation": 0.3726618764798184,
+  "osc_improvement_pct": 0.0,
+  "loss_improvement": 0.0,
+  "transitions": 0
+}

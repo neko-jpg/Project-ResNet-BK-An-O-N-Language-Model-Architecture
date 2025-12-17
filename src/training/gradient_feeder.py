@@ -27,7 +27,9 @@ import math
 # Try to import C++ extension for maximum performance
 # Priority: Pre-built C++ extension (instant load) > JIT-compiled version > PyTorch fallback
 _CPP_FEEDER_AVAILABLE = False
+_CUDA_FEEDER_AVAILABLE = False  # Initialize to prevent NameError
 _cpp_ext = None
+_cuda_ext = None
 
 # 1. Try pre-built C++ extension first (NO startup delay!)
 try:

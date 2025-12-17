@@ -47,10 +47,8 @@ eps: 1.0e-8
 weight_decay: 0.01
 
 # === Learning Rate Scheduler ===
-# 2025-12-16: Post-phase-transition cooling strategy (Cosine Annealing)
-# - LR reduced from 1.8 to 0.3 for stable convergence
-# - Warmup added for smooth resume after checkpoint
-learning_rate: 0.001  # Reduced from 0.1 for finer convergence
+# 2025-12-16: Reduced LR from 1.0 to 0.05 for stable training
+learning_rate: 0.05  # 1.0 → 0.05
 min_lr: 1.0e-5      # Slightly higher floor for continued learning
 warmup_steps: 500   # Gradual warmup on resume
 
@@ -178,7 +176,17 @@ use_superposition_training: false  # Heavy, enable manually
 superposition_particles: 5
 
 # === Revolutionary Training (3 Safe Algorithms) ===
-# Using only the 3 algorithms that succeeded in dry-run
-use_revolutionary_training: true
+# 2025-12-16: DISABLED - 内部オプティマイザがBK-HyperSGDと競合し
+# 学習が「引き戻される」問題の主因と判明
+use_revolutionary_training: false  # true → false
 revolutionary_auto_schedule: true
 revolutionary_algorithms: "closed_form,zeta,holographic"
+
+# === TSP Path Optimizer (巡回セールスマン的学習経路最適化) ===
+# 学習の振動状態を検知し、最適なハイパーパラメータへ動的に遷移
+# 注意: すべてoptimizer step基準（16バッチ=1 optimizer step）
+use_tsp_optimizer: true  # ONで開始
+tsp_window_size: 10  # 評価ウィンドウ（10 optimizer steps = 160バッチ）
+tsp_eval_interval: 10  # 評価間隔（10 optimizer steps = 160バッチごと評価）
+tsp_epsilon: 0.10  # ε-greedy探索率（10%でランダム遷移）
+tsp_min_dwell_steps: 15  # 最低滞在ステップ（optimizer step基準、≈240バッチ）
