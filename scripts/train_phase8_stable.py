@@ -377,7 +377,7 @@ class Phase8TrainingConfig:
     batch_size: int = 1
     grad_accum_steps: int = 16
     epochs: int = 1
-    learning_rate: float = 0.02
+    learning_rate: float = 0.005  # Reduced from 0.02 for stability
     min_lr: float = 1e-6
     weight_decay: float = 0.01
     warmup_steps: int = 500  # Reduced from 2000
@@ -532,7 +532,7 @@ def parse_args() -> Phase8TrainingConfig:
     parser.add_argument("--grad-accum-steps", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=1)
     # NOTE: map `--lr` to `learning_rate` so CLI overrides work with YAML keys.
-    parser.add_argument("--lr", type=float, default=0.02, dest="learning_rate")
+    parser.add_argument("--lr", type=float, default=0.005, dest="learning_rate")
     parser.add_argument("--min-lr", type=float, default=1e-6)
     parser.add_argument("--warmup-steps", type=int, default=500)
     parser.add_argument("--max-steps", type=int, default=None)
@@ -1062,10 +1062,20 @@ def train_phase8():
             )
             # Update vocab_size if dataset has larger tokens
             # vocab is a dict with 'stoi', 'itos', 'vocab_size' keys
-            actual_vocab_size = vocab['vocab_size'] if isinstance(vocab, dict) else vocab
-            if actual_vocab_size != config.vocab_size:
-                print(f"[Model] Using dataset vocab_size: {actual_vocab_size} (config was {config.vocab_size})")
+            loaded_vocab_size = vocab['vocab_size'] if isinstance(vocab, dict) else vocab
+            
+            # Cubic Vocab Enforcement (Padding)
+            # If config has a specific size (e.g., 32768 for 32^3), keep it even if dataset is smaller (32000)
+            if config.vocab_size > loaded_vocab_size:
+                print(f"[Model] Enforcing cubic vocab_size: {config.vocab_size} (Dataset has {loaded_vocab_size}) - Padding active")
+                actual_vocab_size = config.vocab_size
+            elif loaded_vocab_size > config.vocab_size:
+                print(f"⚠ Dataset vocab ({loaded_vocab_size}) > Config vocab ({config.vocab_size}). Increasing model vocab.")
+                actual_vocab_size = loaded_vocab_size
                 config.vocab_size = actual_vocab_size
+            else:
+                actual_vocab_size = loaded_vocab_size
+                
             print(f"Dataset loaded. Steps per epoch: {steps_per_epoch}")
         except Exception as e:
             print(f"⚠ Failed to load dataset: {e}")
@@ -1955,7 +1965,12 @@ def train_phase8():
 
 
                 # Resonance-Adaptive Curvature step (Phase 8 optimization)
-                if resonance_curvature is not None and 'phase8' in (diagnostics or {}):
+                # Resonance Warmup: Freeze curvature for first 500 steps to prevent phase transition explosion
+                resonance_warmup_active = (step < 500)
+                if resonance_warmup_active and step % 100 == 0:
+                     print(f"  🔒 Resonance Warmup: Curvature updates FROZEN (step {step}/500)")
+
+                if resonance_curvature is not None and not resonance_warmup_active and 'phase8' in (diagnostics or {}):
                     phase8_diag = diagnostics.get('phase8', {})
                     if 'G_ii_mean' in phase8_diag:
                         # Create a dummy G_ii tensor from diagnostics

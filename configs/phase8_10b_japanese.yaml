@@ -11,7 +11,7 @@ htt_rank: 16
 hyperbolic_window_size: 64
 
 # === Japanese Tokenizer ===
-vocab_size: 32000
+vocab_size: 32768  # 32000 -> 32768 (Cubic: 32^3) for HTT
 tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
 
 # === Riemannian Resonant Tunneling ===
@@ -48,9 +48,9 @@ weight_decay: 0.1
 
 # === Learning Rate Scheduler ===
 # 2025-12-16: Reduced LR from 1.0 to 0.05 for stable training
-learning_rate: 0.0001  # 0.001 -> 0.0001 (1e-4)
+learning_rate: 0.005  # 0.001 -> 0.005 (Stable Plan)
 min_lr: 1.0e-6      # 1e-6
-warmup_steps: 200   # 1-5%
+warmup_steps: 500   # 200 -> 500 (Stable Plan)
 
 # === Bootstrap LR (Shock Therapy) ===
 # Use very high LR until loss decreases significantly

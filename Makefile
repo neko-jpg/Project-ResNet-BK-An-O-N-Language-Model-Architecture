@@ -106,13 +106,13 @@ prepare-japanese-data:
 	$(PYTHON) scripts/prepare_japanese_data.py --max-pretrain 100000 --max-instruct 20000
 
 train-japanese:
-	@echo "🇯🇵 Training Japanese 10B Model..."
+	@echo "🇯🇵 Training Japanese 10B Model (Stable Phase 8)..."
 	@bash -c '\
 		cleanup() { pkill -f "checkpoint-saver" 2>/dev/null; echo "🦀 Checkpoint saver stopped"; }; \
 		trap cleanup EXIT; \
 		echo "🦀 Starting Checkpoint Saver Daemon..."; \
 		(source ~/.cargo/env 2>/dev/null && cd checkpoint-saver && cargo run --release -q -- --config config.toml &) || echo "⚠ Checkpoint saver not available"; \
-		$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml; \
+		$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_10b_japanese.yaml; \
 	'
 
 start-japanese:
@@ -138,25 +138,22 @@ start-japanese:
 
 dry-run-japanese:
 	@echo "==========================================="
-	@echo "🧪 Dry Run: Japanese 10B Model (Stability Check)"
+	@echo "🧪 Dry Run: Japanese 10B Model (Stable Phase 8)"
 	@echo "==========================================="
 	@echo ""
 	@echo "📋 Expected Results (Stability Check):"
-	@echo "   ✅ NaN/Inf in gradients → 0"
-	@echo "   ✅ grad_norm in range 0.3〜2.0"
+	@echo "   ✅ Vocab Size = 32768 (Cubic)"
+	@echo "   ✅ Resonance Warmup: Active"
 	@echo "   ✅ Loss decreasing from initial"
 	@echo ""
-	@echo "❌ Failure Indicators:"
-	@echo "   ⚠ 'NaN/Inf in N parameter gradients'"
-	@echo "   ⚠ 'Grad norm X > 10.0, skipping step'"
-	@echo ""
 	@echo "-------------------------------------------"
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --dry-run
+	@bash -c '\
+		$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_10b_japanese.yaml --dry-run; \
+	'
 	@echo ""
 	@echo "==========================================="
 	@echo "🔍 Check the output above for:"
 	@echo "   - No 'NaN/Inf' warnings"
-	@echo "   - grad values in 0.3~2.0 range"
 	@echo "   - Loss decreasing each step"
 	@echo "==========================================="
 

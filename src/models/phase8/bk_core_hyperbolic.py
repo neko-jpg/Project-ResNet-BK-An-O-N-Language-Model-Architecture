@@ -227,11 +227,14 @@ class HybridGradientComputation(nn.Module):
         Returns:
             grad_input: 入力に対する勾配
         """
+        # 勾配爆発を防ぐための厳格なクリッピング
+        grad_output = torch.clamp(grad_output, -1.0, 1.0)
+        
         G_sq = G_ii ** 2
         
-        # 分母の安定化
+        # 分母の安定化 (Enhanced Stability for Phase 8)
         denom_mag = G_sq.abs()
-        min_denom = 1e-3
+        min_denom = 1e-2  # Increased from 1e-3 to prevent singularity explosion
         G_sq_stable = torch.where(
             denom_mag < min_denom,
             G_sq / (denom_mag + EPS) * min_denom,
@@ -241,8 +244,10 @@ class HybridGradientComputation(nn.Module):
         # 理論的勾配
         grad_theoretical = -(grad_output.conj() * G_sq).real
         
-        # Hypothesis-7勾配
-        grad_h7 = -(grad_output.conj() / (G_sq_stable + EPS)).real
+        # Hypothesis-7勾配 (Singularity Risk Management)
+        # Use safe division and clamping to handle resonance points
+        grad_h7_raw = -(grad_output.conj() / (G_sq_stable + EPS)).real
+        grad_h7 = torch.clamp(grad_h7_raw, -5.0, 5.0)  # Hard clamp to prevent infinite spikes
         
         # ブレンド
         grad = (1 - self.alpha) * grad_theoretical + self.alpha * grad_h7
