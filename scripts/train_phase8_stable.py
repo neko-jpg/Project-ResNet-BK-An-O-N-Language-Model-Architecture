@@ -300,6 +300,12 @@ class CosineWarmupScheduler:
     
     def get_lr(self, step: int) -> float:
         """Calculate learning rate for given step."""
+        if self.warmup_steps <= 0:
+            # No warmup: immediate peak or cosine decay
+            progress = step / max(1, self.total_steps)
+            progress = min(1.0, progress)
+            return self.min_lr + 0.5 * (self.peak_lr - self.min_lr) * (1 + math.cos(math.pi * progress))
+            
         if step < self.warmup_steps:
             # Linear warmup
             return self.peak_lr * step / max(1, self.warmup_steps)
@@ -445,6 +451,7 @@ class Phase8TrainingConfig:
     # Runtime
     dry_run: bool = False
     dataset_path: str = "configs/dataset_mixing.yaml"
+    dataset: str = "configs/dataset_mixing.yaml"  # Added to match CLI arg
     resume_from: Optional[str] = None
     compile: bool = False
     
@@ -1030,13 +1037,11 @@ def train_phase8():
         
         # CRITICAL: Skip warmup entirely and use config LR for dry-run
         config.warmup_steps = 0  # No warmup - start at peak LR immediately
-        # NOTE: learning_rate is now respected from config (no override)
         
         print(f"⚡ Dry-run LR: {config.learning_rate}")
         print("Dry Run: Using dummy data")
         
         # Downsize the model for fast feedback during dry-run
-        # Step 2 scale-up test: d_model=2048, n_layers=24
         if config.d_model > 4096:
             print(f"⚡ Dry-run d_model {config.d_model} → 4096")
             config.d_model = 4096
@@ -1049,23 +1054,41 @@ def train_phase8():
         if config.low_rank_rank > 64:
             print(f"⚡ Dry-run low_rank_rank {config.low_rank_rank} → 64")
             config.low_rank_rank = 64
+            
+        # Create Mock Dataset here so total_steps is valid
+        class MockDataset:
+            def __init__(self, vocab_size: int):
+                self.vocab_size = vocab_size
+            
+            def iter_epoch(self, epoch):
+                for _ in range(dry_run_steps):
+                    x = torch.randint(0, self.vocab_size, (config.batch_size, config.n_seq))
+                    targets = torch.zeros_like(x)
+                    yield x, targets.reshape(-1)
+        
+        dataset = MockDataset(config.vocab_size)
+        steps_per_epoch = dry_run_steps
+        
     else:
-        print(f"Loading dataset from {config.dataset_path}...")
+        # Use 'dataset' attribute if set (from CLI), fallback to 'dataset_path'
+        dataset_target = getattr(config, 'dataset', config.dataset_path)
+        print(f"Loading dataset from: {dataset_target}")
         try:
+            # Use data_limit from config
+            load_total_tokens = getattr(config, 'data_limit', 100_000_000)
+            
             dataset, vocab, steps_per_epoch = get_mixed_data_loader(
-                config.dataset_path,
+                dataset_target,
                 batch_size=config.batch_size,
                 n_seq=config.n_seq,
-                total_tokens=config.data_limit,
+                total_tokens=load_total_tokens,
                 seed=config.seed,
                 vocab_size=config.vocab_size
             )
             # Update vocab_size if dataset has larger tokens
-            # vocab is a dict with 'stoi', 'itos', 'vocab_size' keys
             loaded_vocab_size = vocab['vocab_size'] if isinstance(vocab, dict) else vocab
             
             # Cubic Vocab Enforcement (Padding)
-            # If config has a specific size (e.g., 32768 for 32^3), keep it even if dataset is smaller (32000)
             if config.vocab_size > loaded_vocab_size:
                 print(f"[Model] Enforcing cubic vocab_size: {config.vocab_size} (Dataset has {loaded_vocab_size}) - Padding active")
                 actual_vocab_size = config.vocab_size
@@ -1191,6 +1214,9 @@ def train_phase8():
     if ema:
         print(f"✔ EMA Enabled (decay={config.ema_decay})")
     
+    # Calculate total steps
+
+
     # Calculate total steps
     total_steps = config.max_steps if config.max_steps else steps_per_epoch * config.epochs
     
@@ -1447,53 +1473,10 @@ def train_phase8():
         'steps': [],
     }
     
-    # Dry run mock dataset
+    # Dataset already loaded above
     if config.dry_run:
-        # Reduce grad_accum_steps for faster iteration (more optimizer steps)
-        original_grad_accum = config.grad_accum_steps
-        # Run without accumulation to get more optimizer steps during the short dry-run
-        config.grad_accum_steps = 1
-        print(f"⚡ Dry-run: grad_accum_steps {original_grad_accum} → {config.grad_accum_steps}")
-        
-        # Disable features that cause NaN during dry-run (but keep safe revolutionary algos)
-        print("⚡ Dry-run: Adjusting features for stability...")
-        config.use_time_reversed = False
-        config.use_resonance_locked = False
-        config.use_gradient_teleportation = False
-        config.use_superposition_training = False
-        print("   - Time-Reversed Training: OFF")
-        print("   - Resonance-Locked Training: OFF")
-        
-        # Revolutionary Training: Enable ONLY safe algorithms for compression testing
-        # closed_form: doesn't rely on gradients (avoids compression gradient issues)
-        # zeta: finds important dimensions (efficient with limited info)
-        # holographic: FFT-based (averages out quantization noise)
-        if config.use_revolutionary_training:
-            config.revolutionary_algorithms = "closed_form,zeta,holographic"
-            print(f"   - Revolutionary Training: ON (safe algos only: {config.revolutionary_algorithms})")
-        else:
-            print("   - Revolutionary Training: OFF")
-        
-        # Run 250 steps for extended scale-up testing
-        steps_to_run = min(250, config.max_steps) if config.max_steps else 250
-        print(f"Dry Run: Running {steps_to_run} steps (grad_accum={config.grad_accum_steps})...")
-        
-        class MockDataset:
-            def __init__(self, vocab_size: int):
-                # Predict next token (shifted copy task) so loss should fall quickly
-                self.vocab_size = vocab_size
-            
-            def iter_epoch(self, epoch):
-                for _ in range(steps_to_run):
-                    x = torch.randint(0, self.vocab_size, (config.batch_size, config.n_seq))
-                    # Predict a fixed token (class 0) to guarantee a learnable signal
-                    targets = torch.zeros_like(x)
-                    yield x, targets.reshape(-1)
-        
-        dataset = MockDataset(config.vocab_size)
-        steps_per_epoch = steps_to_run
-        total_steps = steps_to_run
-        scheduler.total_steps = total_steps  # Align scheduler with shorter dry-run
+        # Dry-run specific scheduler adjustment
+        scheduler.total_steps = total_steps
     
     # Progress bar - use ABSOLUTE step counts for consistency with schedulers
     # This ensures pbar, LR scheduler, and revolutionary trainer all use the same step reference
@@ -1641,13 +1624,11 @@ def train_phase8():
             is_optimizer_step = (step % config.grad_accum_steps == 0)
             
             # Update progress bar every step with batch loss (shows activity)
-            # Reconstruct batch loss from scaled loss: loss was divided by grad_accum_steps at line 1602
             current_batch_loss = loss.item() * config.grad_accum_steps
-            pbar.set_postfix({
-                'loss': f'{current_batch_loss:.3f}', 
-                'lr': f'{optimizer.param_groups[0].get("lr", 0.0):.1e}',
-                'step': f'{step}'
-            })
+            # Get current LR (handle list or scalar)
+            current_lr_val = optimizer.param_groups[0].get("lr", 0.0)
+            
+            pbar.update(1)
             
             if is_optimizer_step:
                 optimizer_step += 1
@@ -1697,7 +1678,9 @@ def train_phase8():
                     ga_stats = gradient_aligner.maybe_align(optimizer_step)
                     
                     # ログ間隔でのみ詳細表示
-                    if step % config.log_interval == 0 and ga_stats.get('ga_aligned_tensors', 0) > 0:
+                # FAST-FEEDBACK: 初期1000ステップは頻繁にログを出す
+                current_log_interval = 1 if step < 1000 else config.log_interval
+                if step % current_log_interval == 0 and ga_stats.get('ga_aligned_tensors', 0) > 0:
                         warmup_status = "📊 warmup" if ga_stats.get('ga_warmup', 0) else "✅ active"
                         print(f"  🧭 Gradient Aligner [{warmup_status}]: "
                               f"neg_frac={ga_stats.get('ga_neg_frac', 0):.2%}, "
@@ -1726,15 +1709,18 @@ def train_phase8():
                         effective_clip = tsp_optimizer.current_city.clip_value
                     else:
                         effective_clip = getattr(config, 'grad_clip_train', 1.0)
-                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), effective_clip)
-                    if hasattr(grad_norm, 'item'):
-                        grad_norm = grad_norm.item()
+                    
+                    # Original clip_grad_norm_ returns the norm BEFORE clipping
+                    raw_norm_tmp = torch.nn.utils.clip_grad_norm_(model.parameters(), effective_clip)
+                    if hasattr(raw_norm_tmp, 'item'):
+                         # Use the min of raw norm and clip as the 'Clipped' display value
+                         grad_norm = min(float(raw_norm_tmp.item()), float(effective_clip))
+                    else:
+                         grad_norm = min(float(raw_norm_tmp), float(effective_clip))
                 
                 # Failsafe: Skip if raw norm is extremely large (gradient explosion)
-                # Reverted: Enable skip to prevent 4億 gradient explosions
-                effective_skip_threshold = config.grad_skip_threshold
-                if config.dry_run:
-                    effective_skip_threshold = float('inf')  # Disable skip for dry-run
+                # MODIFIED: Set to inf to allow Trust Region to handle spikes
+                effective_skip_threshold = float('inf') 
                 
                 if grad_norm_raw > effective_skip_threshold:
                     # 初期ステップでデバッグ情報を出力
@@ -2036,9 +2022,10 @@ def train_phase8():
                         print(f"      cv_loss={evt.metrics.cv_loss:.3f}, cv_grad={evt.metrics.cv_grad:.3f}, desired={evt.desired_stability:.2f}")
                     
                     # Show evaluation status based on internal record count (optimizer steps)
-                    # This fires when enough data has been collected for evaluation
                     dwelled = tsp_optimizer.steps_in_city
-                    if dwelled % config.tsp_eval_interval == 0 and dwelled > 0:
+                    # FAST-FEEDBACK: 初期1000ステップは頻繁に状況を表示
+                    current_tsp_interval = 1 if step < 1000 else config.tsp_eval_interval
+                    if dwelled % current_tsp_interval == 0 and dwelled > 0:
                         cfg = tsp_optimizer.get_current_config()
                         min_dwell = config.tsp_min_dwell_steps
                         status = "🔒 dwell" if dwelled < min_dwell else "✅ ready"
@@ -2106,15 +2093,25 @@ def train_phase8():
                             step_log[k] = v.item() if v.numel() == 1 else v.mean().item()
                         elif isinstance(v, (int, float)):
                             step_log[k] = v
-                    
-                    # Log to console (in case tqdm is disabled/hidden)
-                    if optimizer_step % config.log_interval == 0:
-                        print(f"  📉 Step {step} (Opt {optimizer_step}) | Loss: {avg_loss:.4f} | PPL: {ppl:.1f} | LR: {lr_value:.2e} | Grad: {grad_norm:.2f}")
+                
+                # Log to console (in case tqdm is disabled/hidden)
+                if optimizer_step % config.log_interval == 0:
+                    print(f"  📉 Step {step} (Opt {optimizer_step}) | Loss: {avg_loss:.4f} | PPL: {ppl:.1f} | LR: {lr_value:.2e} | gN: {grad_norm:.2f} | gR: {grad_norm_raw:.2f}")
+
+                # Update progress bar with metrics (every optimizer step)
+                pbar.set_postfix({
+                    'loss': f'{avg_loss:.3f}',
+                    'ppl': f'{ppl:.0f}',
+                    'lr': f'{lr_value:.1e}',
+                    'gN': f'{grad_norm:.2f}',
+                    'gR': f'{grad_norm_raw:.2f}',
+                })
                 
                 training_log['steps'].append(step_log)
                 
-                # Save checkpoint at save_interval
-                if optimizer_step > 0 and optimizer_step % (config.save_interval // config.grad_accum_steps) == 0:
+                # Save checkpoint at save_interval (optimizer-step based)
+                # Note: save_interval=500 means every 500 optimizer steps (not batch steps)
+                if optimizer_step > 0 and optimizer_step % config.save_interval == 0:
                     ckpt_path = os.path.join(config.save_dir, f"step_{step}.pt")
                     
                     # === ASYNC CHECKPOINT SAVE (Minimal Blocking) ===
