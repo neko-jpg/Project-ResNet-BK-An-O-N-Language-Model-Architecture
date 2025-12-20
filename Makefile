@@ -188,6 +188,29 @@ list-checkpoints:
 	@echo "💾 Checkpoints:"
 	@echo "Japanese:" && ls -lh checkpoints/phase8_10b_japanese/*.pt 2>/dev/null || echo "  (none)"
 	@echo "English:"  && ls -lh checkpoints/phase8_10b_rtx3080/*.pt 2>/dev/null || echo "  (none)"
+	@echo "300M Scaling:" && ls -lh checkpoints/phase8_300m_scaling/*.pt 2>/dev/null || echo "  (none)"
+
+# ==========================================
+# 📊 300M Scaling Law Experiment
+# ==========================================
+
+train-300m:
+	@echo "==========================================="
+	@echo "🔬 Training 300M Model for Scaling Laws"
+	@echo "==========================================="
+	@echo ""
+	@echo "📋 Configuration:"
+	@echo "   Model: 300M (d=1024, layers=24)"
+	@echo "   Batch: 4 x 8 = 32 effective"
+	@echo "   Save: checkpoints/phase8_300m_scaling/"
+	@echo ""
+	$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_scaling.yaml
+
+resume-300m:
+	@echo "==========================================="
+	@echo "🔬 Resuming 300M Scaling Experiment"
+	@echo "==========================================="
+	$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_scaling.yaml --resume-from checkpoints/phase8_300m_scaling/latest.pt
 
 # ==========================================
 # 💬 Chat & Export

@@ -213,14 +213,14 @@ class BKIsometryInitializer:
         with torch.no_grad():
             if weight.dim() == 2:
                 fan_in, fan_out = weight.shape[1], weight.shape[0]
-                # Modified Xavier
-                std = gain * math.sqrt(2.0 / (fan_in + fan_out))
+                # Modified Xavier - MUCH SMALLER for hyperbolic
+                std = gain * math.sqrt(2.0 / (fan_in + fan_out)) * 0.01  # 100x smaller
                 nn.init.normal_(weight, mean=0, std=std)
             else:
-                nn.init.normal_(weight, mean=0, std=0.02 * gain)
+                nn.init.normal_(weight, mean=0, std=0.001 * gain)  # 0.02 -> 0.001
     
     @staticmethod
-    def _init_embedding_poincare(weight: torch.Tensor, max_norm: float = 0.1):
+    def _init_embedding_poincare(weight: torch.Tensor, max_norm: float = 0.001):
         """
         Embedding をPoincaré ball内部に初期化.
         

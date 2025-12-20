@@ -1,0 +1,137 @@
+# Phase 8: 300M Japanese LLM - Scaling Law Experiment
+# ====================================================
+# 300Mモデルでスケーリング則を導出するための設定
+# RTX 3080 8GB で高速に学習可能
+
+# === Model Architecture (300M target) ===
+d_model: 1024
+n_layers: 24
+n_seq: 512
+num_heads: 16
+htt_rank: 16
+hyperbolic_window_size: 64
+
+# === Japanese Tokenizer ===
+vocab_size: 32768
+tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
+
+# === Riemannian Resonant Tunneling ===
+use_resonant_htt: true
+resonant_num_cores: 4
+use_zeta_init: true
+
+# === Performance Optimization ===
+compile: true
+
+# === Compression (lighter than 10B) ===
+low_rank_ffn: true
+low_rank_attention: true
+low_rank_rank: 32
+use_bitnet: false  # Keep simple for baseline
+
+# === Memory Optimization ===
+use_gradient_checkpointing: true
+gradient_checkpointing_segments: 6
+use_mixed_precision: true
+mixed_precision_dtype: bfloat16
+
+# === Training ===
+batch_size: 4  # Larger batch for 300M
+gradient_accumulation_steps: 8  # Faster updates
+effective_batch_size: 32
+
+# === Optimizer (BK-HyperSGD - same as 10B) ===
+optimizer_type: bk_hyper_sgd
+beta1: 0.9
+beta2: 0.95
+eps: 1.0e-8
+weight_decay: 0.1
+
+# === Learning Rate ===
+learning_rate: 3.0e-4  # Standard for 300M
+min_lr: 1.0e-5
+warmup_steps: 100  # Short warmup
+
+# === Gradient Control ===
+grad_clip_warmup: 1.0
+grad_clip_train: 1.0
+grad_skip_threshold: 1000.0
+
+# === EMA ===
+use_ema: true
+ema_decay: 0.999
+
+# === Regularization ===
+label_smoothing: 0.1
+dropout: 0.1
+attention_dropout: 0.1
+
+# === Phase 8 Components (Core features only) ===
+use_bk_hyperbolic: true
+use_ar_ssm_fusion: false  # Simpler for baseline
+enable_numerical_guards: true
+
+# Disable heavy components
+enable_entailment_cones: false
+enable_persistent_homology: false
+enable_sheaf_attention: false
+
+# === Phase 8 Optimizations ===
+use_fused_mobius: true
+use_green_function_cache: true
+green_function_cache_size: 256
+use_parallel_ssm_scan: false
+use_fused_scattering_gate: true
+use_batched_hyperbolic_distance: true
+use_resonance_adaptive_curvature: false
+use_ternary_mobius_matmul: false
+
+# === Triton Kernels ===
+use_triton_kernel: true
+triton_kernel_version: fast
+triton_use_safe_ops: true
+use_fused_kernels: true
+
+# === torch.compile ===
+use_torch_compile: false
+compile_mode: default
+
+# === Flash Attention 2 ===
+use_flash_attention_2: true
+
+# === DataLoader ===
+num_workers: 4
+pin_memory: true
+prefetch_factor: 2
+persistent_workers: true
+
+# === Logging (Detailed for scaling law) ===
+log_interval: 10
+save_interval: 1000
+eval_interval: 500
+save_dir: checkpoints/phase8_300m_scaling
+
+# === Numerical Stability ===
+max_norm: 0.99
+numerical_epsilon: 1.0e-8
+scale_epsilon: 1.0e-3
+
+# === Moonshot Optimizations (Minimal) ===
+use_green_function_lut: true
+green_function_lut_size: 512
+use_resonance_locked: false
+use_scattering_pruning: false
+use_hyperbolic_moe: false
+use_gradient_teleportation: false
+use_time_reversed: false
+use_holographic_kv_cache: false
+use_superposition_training: false
+
+# === Revolutionary Training (Disabled) ===
+use_revolutionary_training: false
+
+# === TSP Path Optimizer (Simple for baseline) ===
+use_tsp_optimizer: false  # Disable for clean baseline
+
+# === Gradient Aligner (Disabled for baseline) ===
+use_gradient_aligner: false

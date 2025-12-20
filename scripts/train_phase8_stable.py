@@ -510,7 +510,7 @@ class Phase8TrainingConfig:
     
     # Gradient Aligner (勾配方向整合器)
     # 逆向き勾配成分を除去し、全勾配をLoss減少方向に揃える
-    use_gradient_aligner: bool = True  # Master switch
+    use_gradient_aligner: bool = False  # Master switch (OFF by default for clean baseline)
     gradient_aligner_strength: float = 0.3  # 補正強度 (0.0-1.0)
     gradient_aligner_min_alignment: float = 0.0  # cos類似度下限 (0=逆向きのみ除去)
     gradient_aligner_warmup: int = 100  # 観測のみ期間
@@ -724,11 +724,8 @@ def parse_args() -> Phase8TrainingConfig:
 
 def init_weights(model: nn.Module):
     """
-    Initialize model weights with proper schemes.
-    - Attention: Xavier
-    - FFN: He (Kaiming)
-    - LayerNorm: gamma=1, beta=0
-    - Embedding: N(0, 0.02)
+    Initialize model weights for hyperbolic space.
+    Balance: small enough for ~10.4 loss, large enough for gradients.
     """
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -739,9 +736,8 @@ def init_weights(model: nn.Module):
             if 'adapter' in name:
                 continue
 
-            # Muon + Large Model (327M): 非常に保守的な初期化
-            nn.init.normal_(param, mean=0.0, std=0.001)  # 0.02 → 0.001 (BERT/GPT推奨値)
-            # 絶対値を±0.01に制限（勾配爆発防止）
+            # Balanced: small but not too small
+            nn.init.normal_(param, mean=0.0, std=0.001)  # 0.00001 -> 0.001
             with torch.no_grad():
                 param.data.clamp_(-0.01, 0.01)
         elif 'layernorm' in name.lower() or 'layer_norm' in name.lower():
@@ -751,12 +747,20 @@ def init_weights(model: nn.Module):
                 nn.init.zeros_(param)
         elif 'attn' in name.lower() or 'attention' in name.lower():
             if param.dim() >= 2:
+                # Xavier scaled down (but not too much)
                 nn.init.xavier_uniform_(param)
+                with torch.no_grad():
+                    param.data.mul_(0.1)  # 0.01 -> 0.1
         elif 'ffn' in name.lower() or 'mlp' in name.lower() or 'fc' in name.lower():
             if param.dim() >= 2:
+                # Kaiming scaled down
                 nn.init.kaiming_uniform_(param, a=math.sqrt(5))
+                with torch.no_grad():
+                    param.data.mul_(0.1)  # 0.01 -> 0.1
         elif param.dim() >= 2:
             nn.init.xavier_uniform_(param)
+            with torch.no_grad():
+                param.data.mul_(0.1)  # 0.01 -> 0.1
 
 
 def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.device) -> Phase8IntegratedModel:
@@ -794,10 +798,11 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
     model = Phase8IntegratedModel(model_config)
     
     # Apply weight initialization
-    # Use BK Isometry initialization if available (Phase 1: energy-preserving)
+    # BK Isometry is REQUIRED for proper gradient flow in this architecture
     if _BK_ISOMETRY_AVAILABLE:
-        print("🧬 Applying BK Isometry Initialization (energy-preserving)...")
-        stats = apply_bk_isometry_init(model, base_gain=1.0, curvature=-1.0, verbose=False)
+        print("🧬 Applying BK Isometry Initialization...")
+        # base_gain=0.1: balance between loss and gradients (was 1.0 = high loss, 0.01 = zero grad)
+        stats = apply_bk_isometry_init(model, base_gain=0.1, curvature=-1.0, verbose=False)
         print(f"   Unitary: {stats.get('unitary_count', 0)}, Hyperbolic: {stats.get('hyperbolic_count', 0)}, Euclidean: {stats.get('euclidean_count', 0)}")
     else:
         init_weights(model)
@@ -2123,19 +2128,23 @@ def train_phase8():
                     # Strategy: Quick copy to CPU dict, then background thread for disk I/O
                     import threading
                     
-                    def _async_save_checkpoint(path, checkpoint_data, save_dir, training_log_copy):
+                    def _async_save_checkpoint(path, checkpoint_data, save_dir, training_log_copy, training_all_log_copy):
                         """Background thread: save checkpoint and cleanup old ones"""
                         try:
                             # Save checkpoint (all data already on CPU)
                             torch.save(checkpoint_data, path)
-                            print(f"\n  � Checkpoint saved: {path}")
+                            print(f"\n  💾 Checkpoint saved: {path}")
                             
                             # Cleanup old checkpoints in background
                             cleanup_old_checkpoints(save_dir, max_keep=2)
                             
-                            # Save training log
+                            # Save training log (last 1000 steps for quick viewing)
                             log_path = os.path.join(save_dir, "training_log.json")
                             save_training_log(training_log_copy, log_path)
+                            
+                            # Save complete training log (ALL steps for scaling law analysis)
+                            all_log_path = os.path.join(save_dir, "training_all_log.json")
+                            save_training_log(training_all_log_copy, all_log_path)
                         except Exception as e:
                             print(f"\n  ⚠ Checkpoint save failed: {e}")
                     
@@ -2165,15 +2174,21 @@ def train_phase8():
                         _ckpt_data['tsp_optimizer_state_dict'] = tsp_optimizer.state_dict()
                     
                     # Copy training log for background save
+                    # training_log.json: last 1000 steps (quick viewing)
+                    # training_all_log.json: ALL steps (scaling law analysis)
                     _training_log_copy = {
                         'last_update': datetime.now().isoformat(),
                         'steps': training_log['steps'][-1000:] if len(training_log['steps']) > 1000 else training_log['steps'][:],
+                    }
+                    _training_all_log_copy = {
+                        'last_update': datetime.now().isoformat(),
+                        'steps': training_log['steps'][:],  # ALL steps
                     }
                     
                     # Launch background thread for disk I/O (non-blocking)
                     _save_thread = threading.Thread(
                         target=_async_save_checkpoint,
-                        args=(ckpt_path, _ckpt_data, config.save_dir, _training_log_copy),
+                        args=(ckpt_path, _ckpt_data, config.save_dir, _training_log_copy, _training_all_log_copy),
                         daemon=True
                     )
                     _save_thread.start()
