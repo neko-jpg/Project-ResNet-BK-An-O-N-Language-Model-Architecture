@@ -825,7 +825,7 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
         if param.requires_grad:
             param.register_hook(create_sanitize_hook(name))
             num_hooks += 1
-    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (NaN→1e-6, no clamp)")
+    print(f"✔ Gradient sanitization hooks applied to {num_hooks} parameters (NaN→1e-6, clamp ±10)")
     
     model = model.to(device)
     
@@ -939,6 +939,7 @@ def load_checkpoint(
     ema: Optional[EMA],
     device: torch.device,
     revolutionary_trainer: Optional['RevolutionaryTrainer'] = None,
+    tsp_optimizer: Optional['TSPPathOptimizer'] = None,
 ) -> Tuple[int, int, float]:
     """Load checkpoint and return (step, epoch, loss)."""
     print(f"Loading checkpoint from {path}...")
@@ -974,6 +975,10 @@ def load_checkpoint(
     # This ensures phase-based scheduling continues correctly
     if revolutionary_trainer is not None and 'revolutionary_trainer_state_dict' in checkpoint:
         revolutionary_trainer.load_state_dict(checkpoint['revolutionary_trainer_state_dict'])
+    
+    # Load TSP Path Optimizer state for proper resume
+    if tsp_optimizer is not None and 'tsp_optimizer_state_dict' in checkpoint:
+        tsp_optimizer.load_state_dict(checkpoint['tsp_optimizer_state_dict'])
     
     step = checkpoint.get('step', 0)
     epoch = checkpoint.get('epoch', 0)
@@ -2109,9 +2114,9 @@ def train_phase8():
                 
                 training_log['steps'].append(step_log)
                 
-                # Save checkpoint at save_interval (optimizer-step based)
-                # Note: save_interval=500 means every 500 optimizer steps (not batch steps)
-                if optimizer_step > 0 and optimizer_step % config.save_interval == 0:
+                # Save checkpoint at save_interval (batch-step based)
+                # Note: save_interval=500 means every 500 batch steps (matches progress bar)
+                if step > 0 and step % config.save_interval == 0:
                     ckpt_path = os.path.join(config.save_dir, f"step_{step}.pt")
                     
                     # === ASYNC CHECKPOINT SAVE (Minimal Blocking) ===
@@ -2175,8 +2180,7 @@ def train_phase8():
                     
                     # Update tracking (no memory cleanup - let Python GC handle it naturally)
                     _last_checkpoint_step = step
-                
-                total_loss = 0.0
+
             
             # === STEP TIMING END === (DISABLED for speed)
             # NOTE: Step timing logging disabled - removes ~100ms overhead per step
@@ -2185,9 +2189,6 @@ def train_phase8():
             # _step_timings['total'] = _step_total_ms
             # _step_timings['mode'] = 'POST-CKPT' if (step > _last_checkpoint_step and step <= _last_checkpoint_step + 34) else 'NORMAL'
             # _log_step_timing(step, _step_timings['mode'], _step_timings)
-            pass
-            
-            pbar.update(1)
             
             if config.max_steps and step >= config.max_steps:
                 break

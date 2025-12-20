@@ -133,7 +133,7 @@ start-japanese:
 		echo "Step 5: Starting Checkpoint Saver Daemon..."; \
 		(source ~/.cargo/env 2>/dev/null && cd checkpoint-saver && cargo run --release -q -- --config config.toml &) || echo "⚠ Checkpoint saver not available"; \
 		echo "Step 6: Starting training with revolutionary algorithms..."; \
-		$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml ; \
+		$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_10b_japanese.yaml ; \
 	'
 
 dry-run-japanese:
@@ -171,7 +171,7 @@ resume-japanese:
 		LATEST=$$(ls -t checkpoints/phase8_10b_japanese/step_*.pt 2>/dev/null | head -1); \
 		if [ -n "$$LATEST" ]; then \
 			echo "Found: $$LATEST"; \
-			$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from "$$LATEST" ; \
+			$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_10b_japanese.yaml --resume-from "$$LATEST" ; \
 		else \
 			echo "❌ No checkpoint. Run make start-japanese first."; \
 		fi; \
@@ -179,7 +179,7 @@ resume-japanese:
 
 resume:
 ifdef CHECKPOINT
-	$(PYTHON) scripts/train_phase8.py --config configs/phase8_10b_japanese.yaml --resume-from $(CHECKPOINT) 
+	$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_10b_japanese.yaml --resume-from $(CHECKPOINT) 
 else
 	@echo "Usage: make resume CHECKPOINT=checkpoints/phase8_10b_japanese/step_500.pt"
 endif
