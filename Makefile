@@ -210,7 +210,13 @@ resume-300m:
 	@echo "==========================================="
 	@echo "🔬 Resuming 300M Scaling Experiment"
 	@echo "==========================================="
-	$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_scaling.yaml --resume-from checkpoints/phase8_300m_scaling/latest.pt
+	@LATEST=$$(ls -t checkpoints/phase8_300m_scaling/step_*.pt 2>/dev/null | head -1); \
+	if [ -n "$$LATEST" ]; then \
+		echo "Found: $$LATEST"; \
+		$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_scaling.yaml --resume-from "$$LATEST"; \
+	else \
+		echo "❌ No checkpoint found. Run make train-300m first."; \
+	fi
 
 # ==========================================
 # 💬 Chat & Export

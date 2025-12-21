@@ -46,8 +46,6 @@ class ChatConfig:
 
 def load_model_phase8(checkpoint_path: str, device: str = "cuda"):
     """Phase 8 モデルをロード"""
-    from src.models.resnet_bk import LanguageModel
-    from src.models.config import ResNetBKConfig
     
     print(f"📂 Loading checkpoint: {checkpoint_path}")
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
@@ -56,28 +54,59 @@ def load_model_phase8(checkpoint_path: str, device: str = "cuda"):
     if 'config' in ckpt:
         config_dict = ckpt['config']
         if isinstance(config_dict, dict):
-            # Filter out unknown keys that aren't in ResNetBKConfig
-            import dataclasses
-            valid_fields = {f.name for f in dataclasses.fields(ResNetBKConfig)}
-            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_fields}
-            config = ResNetBKConfig(**filtered_dict)
-        else:
             config = config_dict
+        else:
+            config = vars(config_dict) if hasattr(config_dict, '__dict__') else {}
     else:
-        # デフォルト設定
-        config = ResNetBKConfig(
-            d_model=4096,
-            n_layers=48,
-            n_seq=512,
-            vocab_size=32000,  # Japanese tokenizer
-        )
+        config = {
+            'd_model': 1024,
+            'n_layers': 24,
+            'n_seq': 512,
+            'vocab_size': 50256,
+        }
     
-    # モデル作成
-    model = LanguageModel(config).to(device)
+    # Phase8IntegratedModel を試す (推奨)
+    try:
+        from src.models.phase8.integrated_model import Phase8IntegratedModel
+        from src.models.phase8.config import Phase8Config
+        
+        # Phase8Config を作成
+        phase8_config = Phase8Config(
+            d_model=config.get('d_model', 1024),
+            n_layers=config.get('n_layers', 24),
+            n_seq=config.get('n_seq', 512),
+            vocab_size=config.get('vocab_size', 50256),
+            num_heads=config.get('num_heads', 16),
+            htt_rank=config.get('htt_rank', 16),
+            use_resonant_htt=config.get('use_resonant_htt', True),
+            resonant_num_cores=config.get('resonant_num_cores', 4),
+            use_zeta_init=config.get('use_zeta_init', True),
+            low_rank_ffn=config.get('low_rank_ffn', True),
+            low_rank_attention=config.get('low_rank_attention', True),
+            low_rank_rank=config.get('low_rank_rank', 32),
+            use_bk_hyperbolic=config.get('use_bk_hyperbolic', True),
+        )
+        
+        model = Phase8IntegratedModel(phase8_config).to(device)
+        print("✓ Using Phase8IntegratedModel")
+        
+    except ImportError:
+        # フォールバック: 旧LanguageModel
+        from src.models.resnet_bk import LanguageModel
+        from src.models.config import ResNetBKConfig
+        
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(ResNetBKConfig)}
+        filtered_dict = {k: v for k, v in config.items() if k in valid_fields}
+        model_config = ResNetBKConfig(**filtered_dict)
+        model = LanguageModel(model_config).to(device)
+        print("✓ Using LanguageModel (fallback)")
     
     # 重みをロード
     if 'model_state_dict' in ckpt:
         model.load_state_dict(ckpt['model_state_dict'], strict=False)
+    elif 'state_dict' in ckpt:
+        model.load_state_dict(ckpt['state_dict'], strict=False)
     else:
         model.load_state_dict(ckpt, strict=False)
     
@@ -87,7 +116,7 @@ def load_model_phase8(checkpoint_path: str, device: str = "cuda"):
     total_params = sum(p.numel() for p in model.parameters())
     
     print(f"✓ Model loaded successfully!")
-    print(f"  d_model: {config.d_model}, n_layers: {config.n_layers}")
+    print(f"  d_model: {config.get('d_model', '?')}, n_layers: {config.get('n_layers', '?')}")
     print(f"  Parameters: {total_params / 1e6:.1f}M")
     
     return model, config
@@ -151,28 +180,97 @@ def generate(
     config: ChatConfig,
     device: str = "cuda",
     stream: bool = True,
+    n_seq: int = 512,  # シーケンス長 (モデルの固定長)
 ):
     """テキスト生成（ストリーミング対応）"""
     
-    # エンコード
-    if hasattr(tokenizer, '__call__'):
-        input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
-    else:
-        input_ids = torch.tensor([tokenizer.encode(prompt)], device=device)
+    # パッドトークンID
+    pad_token_id = getattr(tokenizer, 'pad_token_id', 0) or 0
+    
+    # エンコード - トークナイザーによって出力形式が異なる
+    input_ids = None
+    
+    # 方法1: tokenizer(prompt) を試す
+    try:
+        encoded = tokenizer(prompt, return_tensors="pt")
+        if hasattr(encoded, 'input_ids'):
+            input_ids = encoded.input_ids.to(device)
+        elif isinstance(encoded, dict) and 'input_ids' in encoded:
+            input_ids = encoded['input_ids'].to(device)
+        elif isinstance(encoded, torch.Tensor):
+            input_ids = encoded.to(device)
+    except Exception as e:
+        pass
+    
+    # 方法2: tokenizer.encode(prompt) を試す
+    if input_ids is None:
+        try:
+            encoded = tokenizer.encode(prompt, return_tensors="pt")
+            if isinstance(encoded, torch.Tensor):
+                input_ids = encoded.to(device)
+                if input_ids.dim() == 1:
+                    input_ids = input_ids.unsqueeze(0)
+            elif hasattr(encoded, 'input_ids'):
+                input_ids = encoded.input_ids.to(device)
+            elif isinstance(encoded, dict) and 'input_ids' in encoded:
+                input_ids = encoded['input_ids'].to(device)
+        except Exception as e:
+            pass
+    
+    # 方法3: tokenizer.encode(prompt) でリストを取得
+    if input_ids is None:
+        try:
+            encoded = tokenizer.encode(prompt)
+            # タプルの場合は最初の要素を使用 (input_ids, attention_mask など)
+            if isinstance(encoded, tuple):
+                ids = encoded[0]
+            elif isinstance(encoded, list):
+                ids = encoded
+            elif isinstance(encoded, torch.Tensor):
+                ids = encoded.tolist()
+            else:
+                ids = list(encoded)
+            
+            # ネストされたリストの場合は展開
+            if isinstance(ids, list) and len(ids) > 0 and isinstance(ids[0], list):
+                ids = ids[0]
+            
+            input_ids = torch.tensor([ids], dtype=torch.long, device=device)
+        except Exception as e:
+            pass
+    
+    # 方法4: UTF-8バイトエンコード（最終手段）
+    if input_ids is None:
+        ids = list(prompt.encode('utf-8'))
+        input_ids = torch.tensor([ids], dtype=torch.long, device=device)
     
     generated = input_ids.clone()
     past_tokens = set(input_ids[0].tolist())
     
     for step in range(config.max_new_tokens):
-        # シーケンス長制限
-        if generated.shape[1] > model.n_seq:
-            context = generated[:, -model.n_seq:]
+        # 現在のシーケンス長
+        current_len = generated.shape[1]
+        
+        # n_seq より長い場合は切り詰め
+        if current_len > n_seq:
+            context = generated[:, -n_seq:]
+            actual_len = n_seq
         else:
+            # n_seq に満たない場合は左パディング
             context = generated
+            actual_len = current_len
+            if current_len < n_seq:
+                padding = torch.full((1, n_seq - current_len), pad_token_id, dtype=torch.long, device=device)
+                context = torch.cat([padding, context], dim=1)
         
         # Forward pass
         with torch.cuda.amp.autocast(enabled=device=="cuda"):
-            logits = model(context)
+            output = model(context)
+            # Phase8IntegratedModel returns (logits, diagnostics) tuple
+            if isinstance(output, tuple):
+                logits = output[0]
+            else:
+                logits = output
         
         # 最後のトークンのlogits
         next_logits = logits[:, -1, :].float() / config.temperature
@@ -225,6 +323,7 @@ def generate(
 def find_latest_checkpoint():
     """最新のチェックポイントを探す"""
     search_dirs = [
+        "checkpoints/phase8_300m_scaling",  # 300M scaling experiment
         "checkpoints/phase8_10b_japanese",
         "checkpoints/phase8_10b_rtx3080",
         "checkpoints/phase8",

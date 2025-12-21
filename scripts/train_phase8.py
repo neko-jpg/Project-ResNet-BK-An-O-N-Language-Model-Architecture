@@ -65,14 +65,20 @@ except ImportError:
     BKHyperSGD = None
     create_bk_hyper_sgd = None
 
-# Import BK Isometry Initialization (Phase 1: Energy-preserving init)
+# Import BK Isometry / Cayley Ortho Initialization (Phase 1: Energy-preserving init)
+# 2025-12-21: Cayley Ortho Init is now the default (stable for BitNet + Hyperbolic)
 try:
-    from src.models.phase8.bk_isometry_init import BKIsometryInitializer, apply_bk_isometry_init
+    from src.models.phase8.bk_isometry_init import (
+        BKIsometryInitializer, 
+        apply_bk_isometry_init,
+        apply_cayley_ortho_init,  # NEW: stable initialization
+    )
     _BK_ISOMETRY_AVAILABLE = True
 except ImportError:
     _BK_ISOMETRY_AVAILABLE = False
     BKIsometryInitializer = None
     apply_bk_isometry_init = None
+    apply_cayley_ortho_init = None
 
 # Lazy import for data_utils (requires datasets library)
 def get_mixed_data_loader(*args, **kwargs):
@@ -787,10 +793,16 @@ def create_model(config: Phase8TrainingConfig, vocab_size: int, device: torch.de
     model = Phase8IntegratedModel(model_config)
     
     # Apply weight initialization
-    # Use BK Isometry initialization if available (Phase 1: energy-preserving)
-    if _BK_ISOMETRY_AVAILABLE:
-        print("🧬 Applying BK Isometry Initialization (energy-preserving)...")
-        stats = apply_bk_isometry_init(model, base_gain=1.0, curvature=-1.0, verbose=False)
+    # 2025-12-21: Use Cayley Ortho Init (stable for BitNet + Hyperbolic)
+    # BK Isometry Init (gain=1.0) was too aggressive and caused NaN at step 0
+    if _BK_ISOMETRY_AVAILABLE and apply_cayley_ortho_init is not None:
+        print("🧬 Applying Cayley Orthogonal Initialization (gain=0.001)...")
+        stats = apply_cayley_ortho_init(model, gain=0.001, verbose=False)
+        print(f"   Cayley: {stats.get('cayley_count', 0)}, Euclidean: {stats.get('euclidean_count', 0)}, Embedding: {stats.get('embedding_count', 0)}")
+    elif _BK_ISOMETRY_AVAILABLE:
+        # Fallback to BK Isometry with conservative gain
+        print("🧬 Applying BK Isometry Initialization (gain=0.001)...")
+        stats = apply_bk_isometry_init(model, base_gain=0.001, curvature=-1.0, verbose=False)
         print(f"   Unitary: {stats.get('unitary_count', 0)}, Hyperbolic: {stats.get('hyperbolic_count', 0)}, Euclidean: {stats.get('euclidean_count', 0)}")
     else:
         init_weights(model)

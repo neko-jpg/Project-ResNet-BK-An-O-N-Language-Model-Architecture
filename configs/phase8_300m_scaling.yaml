@@ -50,7 +50,7 @@ weight_decay: 0.1
 # === Learning Rate ===
 learning_rate: 3.0e-4  # Standard for 300M
 min_lr: 1.0e-5
-warmup_steps: 100  # Short warmup
+warmup_steps: 0  # No warmup - start with full LR (init is already conservative)
 
 # === Gradient Control ===
 grad_clip_warmup: 1.0

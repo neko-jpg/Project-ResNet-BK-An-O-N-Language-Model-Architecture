@@ -161,10 +161,9 @@ class HolographicTTEmbedding(nn.Module):
         #
         # 物理的直観: 各コアは「局所的な量子状態」を表現
         # ランク次元は「もつれ結合」の強さを制御
-        # CRITICAL: Use very small init to prevent gradient explosion
-        # Original 0.02 caused 222M NaN values - using 0.01 for balance
-        # (0.001 was too small - killed learning signal)
-        scale_factor = init_scale * 0.01 / (rank ** 0.5)  # Balanced init
+        # CRITICAL: Use small init to prevent gradient explosion
+        # 2025-12-21: RESTORED to 0.01 for learning signal
+        scale_factor = init_scale * 0.01 / (rank ** 0.5)
         self.core1 = nn.Parameter(
             torch.randn(self.v1, 1, rank, self.d1) * scale_factor
         )

@@ -312,7 +312,8 @@ class ResonantHTTEmbedding(nn.Module):
                         # Wigner semicircle scaling
                         # 標準偏差を sqrt(2/N) に設定
                         N = max(v_k, d_k)
-                        # Base scale - increased from 0.5 to 1.0 for stronger gradient signal
+                        # Base scale - RESTORED to 1.0 for learning signal
+                        # 2025-12-21: 0.5 had weak gradients, 1.0 enables learning
                         base_scale = math.sqrt(2.0 / N) * 1.0
                         
                         # Vocab-size dependent boost: larger vocab needs MUCH larger scale
@@ -342,8 +343,7 @@ class ResonantHTTEmbedding(nn.Module):
                             slice_2d.copy_(H * scale)
         
         # 最終スケーリング: 4コア縮約後のlogits分散を適切に
-        # FIXED: 過度なスケーリングを削除（vanishing logits の原因だった）
-        # 代わりに軽いスケーリングのみ
+        # 2025-12-21: RESTORED to 1.0 for learning signal
         scale_factor = 1.0 / math.sqrt(self.num_cores)  # ≈0.5 for 4 cores
         for core in self.cores:
             core.data *= scale_factor

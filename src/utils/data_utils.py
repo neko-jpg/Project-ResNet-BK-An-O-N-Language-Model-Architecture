@@ -395,11 +395,26 @@ class MixedBinaryDataset:
             # Log update (optional, print for now)
             print(f"[Curriculum] Updated weights: {dict(zip(self.dataset_names, [f'{w:.2f}' for w in self.weights]))}")
 
-    def iter_epoch(self, epoch: int) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
-        """Yield batches for one epoch."""
+    def iter_epoch(self, epoch: int, start_step: int = 0) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
+        """Yield batches for one epoch.
+        
+        Args:
+            epoch: Current epoch number (used for RNG seed)
+            start_step: Step to start from within this epoch (for resume support)
+        """
         rng = random.Random(self.seed + epoch)
         choices = list(range(len(self.datasets)))
-        for _ in range(self.steps_per_epoch):
+        
+        # Skip steps that were already processed (for resume)
+        # We need to advance the RNG to maintain reproducibility
+        for _ in range(start_step):
+            # Consume RNG the same number of times as a normal step would
+            for _ in range(self.batch_size * 2):  # Approximate RNG consumption per batch
+                rng.choices(choices, weights=self.weights, k=1)
+                rng.randrange(1000000)  # Consume for sample_sequence calls
+        
+        # Continue from start_step
+        for step in range(start_step, self.steps_per_epoch):
             x_list: List[np.ndarray] = []
             y_list: List[np.ndarray] = []
             while len(x_list) < self.batch_size:

@@ -337,6 +337,152 @@ class BKIsometryInitializer:
 
 
 # =============================================================================
+# Cayley Ortho Initialization (NEW - 2025-12-21)
+# =============================================================================
+
+def cayley_orthogonal_init_(
+    tensor: torch.Tensor,
+    gain: float = 0.01,
+) -> None:
+    """
+    Cayley Orthogonal Initialization.
+    
+    Creates a perfect orthogonal matrix that is close to identity:
+        Q = (I - A)(I + A)^{-1}, where A is skew-symmetric (A^T = -A)
+    
+    Key Properties:
+    - Mathematically perfect orthogonal matrix (Q^T Q = I)
+    - Eigenvalues lie exactly on the unit circle (|λ| = 1)
+    - With small gain, Q ≈ I - 2A ≈ I (almost identity)
+    - Gradients can flow infinitely (no vanishing/exploding)
+    
+    Why this fixes training:
+    - BK Isometry Init (gain=1.0) was too aggressive for BitNet/hyperbolic
+    - Large random rotations caused immediate NaN at step 0
+    - Cayley with gain=0.01: "perfect geometry" + "near-identity values"
+    
+    Args:
+        tensor: Weight tensor (must be 2D for Cayley, else fallback)
+        gain: Scale for skew-symmetric matrix A (smaller = closer to I)
+              Default 0.01 makes Q ≈ I - 0.02*A (almost identity)
+    """
+    if tensor.ndim != 2:
+        nn.init.orthogonal_(tensor, gain=1.0)
+        return
+    
+    rows, cols = tensor.shape
+    min_dim = min(rows, cols)
+    max_dim = max(rows, cols)
+    
+    with torch.no_grad():
+        # 1. Create skew-symmetric matrix A (A^T = -A)
+        # Random upper triangular, then A = upper - upper^T
+        upper = torch.randn(min_dim, min_dim, device=tensor.device, dtype=tensor.dtype)
+        upper = torch.triu(upper, diagonal=1)  # Strictly upper triangular
+        A = (upper - upper.T) * gain  # Scale to control deviation from I
+        
+        # 2. Cayley transform: Q = (I - A)(I + A)^{-1}
+        I = torch.eye(min_dim, device=tensor.device, dtype=tensor.dtype)
+        I_plus_A = I + A
+        I_minus_A = I - A
+        
+        # Solve (I + A) @ Q = (I - A) for Q
+        # Q = (I + A)^{-1} @ (I - A)
+        try:
+            Q = torch.linalg.solve(I_plus_A, I_minus_A)
+        except:
+            # Fallback to standard orthogonal if solve fails
+            Q = torch.empty(min_dim, min_dim, device=tensor.device, dtype=tensor.dtype)
+            nn.init.orthogonal_(Q)
+        
+        # 3. Expand to full size if non-square
+        if rows == cols:
+            tensor.copy_(Q)
+        elif rows > cols:
+            # Tall matrix: Q on top, zeros below (or extend orthogonally)
+            tensor.zero_()
+            tensor[:min_dim, :] = Q
+        else:
+            # Wide matrix: Q on left, zeros right
+            tensor.zero_()
+            tensor[:, :min_dim] = Q
+
+
+def apply_cayley_ortho_init(
+    model: nn.Module,
+    gain: float = 0.01,
+    verbose: bool = True,
+) -> Dict[str, Any]:
+    """
+    Apply Cayley Orthogonal Initialization to model.
+    
+    This is the recommended initialization for BitNet + Hyperbolic models.
+    Replaces BK Isometry Init for stable training start.
+    
+    Args:
+        model: Model to initialize
+        gain: Cayley gain (0.01 recommended for stability)
+        verbose: Print initialization details
+    
+    Returns:
+        Initialization statistics
+    """
+    if verbose:
+        print("=" * 60)
+        print("Applying Cayley Orthogonal Initialization (gain={:.4f})".format(gain))
+        print("=" * 60)
+    
+    stats = {
+        'cayley_count': 0,
+        'euclidean_count': 0,
+        'embedding_count': 0,
+    }
+    
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            w = module.weight
+            if w.dim() == 2:
+                # Cayley for attention projections and BK-Core
+                if any(key in name.lower() for key in [
+                    'q_proj', 'k_proj', 'v_proj', 'output_proj', 
+                    'bk_core', 'bk_scale', 'hyperbolic', 'lorentz'
+                ]):
+                    cayley_orthogonal_init_(w, gain=gain)
+                    stats['cayley_count'] += 1
+                    if verbose:
+                        print(f"  [Cayley] {name}")
+                else:
+                    # Standard Xavier for FFN layers
+                    fan_in, fan_out = w.shape[1], w.shape[0]
+                    std = math.sqrt(2.0 / (fan_in + fan_out)) * 0.1  # Conservative
+                    nn.init.normal_(w, mean=0, std=std)
+                    stats['euclidean_count'] += 1
+            
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        
+        elif isinstance(module, nn.Embedding):
+            # Poincaré ball initialization
+            BKIsometryInitializer._init_embedding_poincare(module.weight, max_norm=0.001)
+            stats['embedding_count'] += 1
+            if verbose:
+                print(f"  [Embedding] {name}")
+        
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+    
+    if verbose:
+        print("-" * 60)
+        print(f"Cayley layers: {stats['cayley_count']}")
+        print(f"Euclidean layers: {stats['euclidean_count']}")
+        print(f"Embedding layers: {stats['embedding_count']}")
+        print("=" * 60)
+    
+    return stats
+
+
+# =============================================================================
 # BK-Core Specific Initialization
 # =============================================================================
 

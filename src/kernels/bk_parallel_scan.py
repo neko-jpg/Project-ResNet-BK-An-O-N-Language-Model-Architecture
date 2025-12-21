@@ -279,7 +279,7 @@ def bk_parallel_theta_torch(
     a_c = a.to(torch.complex128)
     b_c = b.to(torch.complex128)
     c_c = c.to(torch.complex128)
-    z_c = torch.tensor(z, dtype=torch.complex128, device=device)
+    z_c = z if isinstance(z, torch.Tensor) else torch.tensor(z, dtype=torch.complex128, device=device)
     
     # a_shifted = a - z
     a_shifted = a_c - z_c

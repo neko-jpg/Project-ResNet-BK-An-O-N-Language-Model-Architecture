@@ -192,9 +192,9 @@ tsp_epsilon: 0.10  # ε-greedy探索率（10%でランダム遷移）
 tsp_min_dwell_steps: 15  # 最低滞在ステップ（optimizer step基準、≈240バッチ）
 
 # === Gradient Aligner (勾配方向整合器) ===
-# 逆向き勾配成分を除去し、全勾配をLoss減少方向に揃える
-# VRAM +0: optimizer state (exp_avg) を参照方向として再利用
-use_gradient_aligner: true
+# 2025-12-21: 廃止 - ga_energy_removed (5-9%喪失) が示すように、
+# 学習に必要な「健全な変化」まで削ぎ落としていた (過剰補正)
+use_gradient_aligner: false  # DISABLED - removes healthy gradient energy
 gradient_aligner_strength: 0.3  # 補正強度 (0.0-1.0, 0.1から開始推奨)
 gradient_aligner_min_alignment: 0.0  # cos類似度下限 (0=逆向きのみ除去)
 gradient_aligner_warmup: 100  # 観測のみ期間（optimizer steps）
