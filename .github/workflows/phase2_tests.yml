@@ -747,7 +747,7 @@ jobs:
           path: phase2_summary.md
       
       - name: Comment PR with summary
-        uses: actions/github-script@v6
+        uses: actions/github-script@v8
         if: github.event_name == 'pull_request'
         with:
           script: |
@@ -771,7 +771,7 @@ jobs:
     
     steps:
       - name: Create issue on failure
-        uses: actions/github-script@v6
+        uses: actions/github-script@v8
         with:
           script: |
             github.rest.issues.create({
