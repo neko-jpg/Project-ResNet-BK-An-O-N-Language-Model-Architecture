@@ -34,7 +34,7 @@ jobs:
         python benchmarks/phase8_hierarchical.py --json results/benchmarks/phase8_ci_result.json
 
     - name: Upload Benchmark Results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v6
       with:
         name: benchmark-results
         path: results/benchmarks/phase8_ci_result.json
