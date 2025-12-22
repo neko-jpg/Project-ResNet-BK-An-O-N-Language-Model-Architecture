@@ -488,7 +488,7 @@ jobs:
           name: phase2-integration
       
       - name: Upload integration test report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: phase2-integration-report
           path: results/benchmarks/PHASE2_INTEGRATION_TEST_REPORT.md
@@ -534,7 +534,7 @@ jobs:
           python scripts/benchmark_bk_triton.py --quick
       
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: phase2-benchmark-results
           path: |
@@ -586,7 +586,7 @@ jobs:
         timeout-minutes: 30
       
       - name: Upload long context results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: long-context-results
           path: |
@@ -679,7 +679,7 @@ jobs:
           python scripts/verify_phase2_docstrings.py
       
       - name: Upload docstring report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: docstring-report
           path: results/benchmarks/TASK17_DOCSTRING_COMPLETION_REPORT.md
@@ -741,7 +741,7 @@ jobs:
           cat phase2_summary.md
       
       - name: Upload summary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: phase2-test-summary
           path: phase2_summary.md

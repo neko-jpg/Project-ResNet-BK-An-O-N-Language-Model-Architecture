@@ -134,7 +134,7 @@ jobs:
           python scripts/mamba_vs_bk_benchmark.py --quick
       
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-results
           path: results/*.json
@@ -162,7 +162,7 @@ jobs:
           make html
       
       - name: Upload docs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v6
         with:
           name: documentation
           path: docs/_build/html/
