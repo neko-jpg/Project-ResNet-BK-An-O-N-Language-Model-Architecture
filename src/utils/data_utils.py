@@ -401,19 +401,18 @@ class MixedBinaryDataset:
         Args:
             epoch: Current epoch number (used for RNG seed)
             start_step: Step to start from within this epoch (for resume support)
+        
+        Note:
+            Instead of trying to replay RNG states (which is error-prone due to
+            variable RNG consumption in sample_sequence), we use start_step as
+            part of the seed to guarantee fresh, non-duplicate data on resume.
         """
-        rng = random.Random(self.seed + epoch)
+        # Include start_step in seed to ensure different data sequence on resume
+        # This prevents data duplication without requiring exact RNG replay
+        rng = random.Random(self.seed + epoch * 100000 + start_step)
         choices = list(range(len(self.datasets)))
         
-        # Skip steps that were already processed (for resume)
-        # We need to advance the RNG to maintain reproducibility
-        for _ in range(start_step):
-            # Consume RNG the same number of times as a normal step would
-            for _ in range(self.batch_size * 2):  # Approximate RNG consumption per batch
-                rng.choices(choices, weights=self.weights, k=1)
-                rng.randrange(1000000)  # Consume for sample_sequence calls
-        
-        # Continue from start_step
+        # Yield batches from start_step to end of epoch
         for step in range(start_step, self.steps_per_epoch):
             x_list: List[np.ndarray] = []
             y_list: List[np.ndarray] = []

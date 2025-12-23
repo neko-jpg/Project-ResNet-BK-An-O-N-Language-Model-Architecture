@@ -122,27 +122,40 @@ def load_model_phase8(checkpoint_path: str, device: str = "cuda"):
     return model, config
 
 
-def load_tokenizer(tokenizer_name: str = "rinna/japanese-gpt-neox-3.6b"):
-    """トークナイザーをロード（日本語対応）"""
+def load_tokenizer(tokenizer_name: str = None, vocab_size: int = 50256):
+    """トークナイザーをロード（モデルに合わせて自動選択）"""
+    
+    # Auto-detect tokenizer based on vocab_size if not specified
+    if tokenizer_name is None or tokenizer_name == "auto":
+        if vocab_size >= 30000 and vocab_size <= 33000:
+            # Japanese model (rinna) - 32768 vocab
+            tokenizer_name = "rinna/japanese-gpt-neox-3.6b"
+            print(f"  Auto-detected Japanese tokenizer (vocab_size={vocab_size})")
+        else:
+            # English model (GPT-2) - 50256 vocab  
+            tokenizer_name = "gpt2"
+            print(f"  Auto-detected GPT-2 tokenizer (vocab_size={vocab_size})")
+    
     try:
         from transformers import AutoTokenizer
         
-        # 日本語トークナイザーを試す
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
-            print(f"✓ Japanese tokenizer loaded: {tokenizer_name}")
-        except:
-            # フォールバック: GPT-2
-            tokenizer = AutoTokenizer.from_pretrained("gpt2")
-            print("✓ GPT-2 tokenizer loaded (fallback)")
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        print(f"✓ Tokenizer loaded: {tokenizer_name}")
         
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         
+        # Store vocab_size for clipping
+        tokenizer._model_vocab_size = vocab_size
+        
         return tokenizer
     except ImportError:
         print("⚠ transformers not installed. Using simple tokenizer.")
-        return SimpleTokenizer()
+        return SimpleTokenizer(vocab_size)
+    except Exception as e:
+        print(f"⚠ Could not load tokenizer {tokenizer_name}: {e}")
+        print("  Falling back to simple tokenizer.")
+        return SimpleTokenizer(vocab_size)
 
 
 class SimpleTokenizer:
@@ -181,11 +194,13 @@ def generate(
     device: str = "cuda",
     stream: bool = True,
     n_seq: int = 512,  # シーケンス長 (モデルの固定長)
+    vocab_size: int = 50256,  # モデルのvocab_size（クリッピング用）
 ):
     """テキスト生成（ストリーミング対応）"""
     
-    # パッドトークンID
+    # パッドトークンID (vocab_size以下に制限)
     pad_token_id = getattr(tokenizer, 'pad_token_id', 0) or 0
+    pad_token_id = min(pad_token_id, vocab_size - 1)
     
     # エンコード - トークナイザーによって出力形式が異なる
     input_ids = None
@@ -244,6 +259,9 @@ def generate(
         ids = list(prompt.encode('utf-8'))
         input_ids = torch.tensor([ids], dtype=torch.long, device=device)
     
+    # トークンIDをvocab_size以下にクリップ（CUDA OOBエラー防止）
+    input_ids = torch.clamp(input_ids, 0, vocab_size - 1)
+    
     generated = input_ids.clone()
     past_tokens = set(input_ids[0].tolist())
     
@@ -251,20 +269,21 @@ def generate(
         # 現在のシーケンス長
         current_len = generated.shape[1]
         
-        # n_seq より長い場合は切り詰め
+        # n_seq より長い場合は切り詰め（最後のn_seqトークンを使用）
         if current_len > n_seq:
             context = generated[:, -n_seq:]
-            actual_len = n_seq
+            prompt_end_idx = n_seq - 1  # 最後の位置
         else:
-            # n_seq に満たない場合は左パディング
-            context = generated
-            actual_len = current_len
+            # n_seq に満たない場合は右パディング（プロンプトをPosition 0に配置）
+            # これは訓練時と同じ配置を維持するため重要
+            context = generated.clone()
+            prompt_end_idx = current_len - 1  # 実際のプロンプト末尾位置
             if current_len < n_seq:
                 padding = torch.full((1, n_seq - current_len), pad_token_id, dtype=torch.long, device=device)
-                context = torch.cat([padding, context], dim=1)
+                context = torch.cat([context, padding], dim=1)  # 右パディング
         
         # Forward pass
-        with torch.cuda.amp.autocast(enabled=device=="cuda"):
+        with torch.cuda.amp.autocast(enabled=device=="cuda", dtype=torch.bfloat16):
             output = model(context)
             # Phase8IntegratedModel returns (logits, diagnostics) tuple
             if isinstance(output, tuple):
@@ -272,8 +291,8 @@ def generate(
             else:
                 logits = output
         
-        # 最後のトークンのlogits
-        next_logits = logits[:, -1, :].float() / config.temperature
+        # プロンプト末尾位置のlogitsを取得（右パディングの場合、prompt_end_idxを使用）
+        next_logits = logits[:, prompt_end_idx, :].float() / config.temperature
         
         # Repetition penalty
         if config.repetition_penalty != 1.0:
@@ -349,8 +368,15 @@ def find_latest_checkpoint():
     return None
 
 
-def interactive_chat(model, tokenizer, config: ChatConfig, device: str = "cuda"):
+def interactive_chat(model, tokenizer, config: ChatConfig, device: str = "cuda", model_config: dict = None):
     """インタラクティブチャットモード"""
+    
+    # Get vocab_size from model config
+    vocab_size = 50256
+    n_seq = 512
+    if model_config:
+        vocab_size = model_config.get('vocab_size', 50256)
+        n_seq = model_config.get('n_seq', 512)
     
     print("\n" + "=" * 60)
     print("🤖 MUSE Chat AI - Phase 8 Japanese/English")
@@ -410,14 +436,9 @@ def interactive_chat(model, tokenizer, config: ChatConfig, device: str = "cuda")
                 print(f"❌ 不明なコマンド: {cmd}")
                 continue
         
-        # プロンプト構築（日本語チャット形式）
-        prompt = f"### システム:\n{system_prompt}\n\n"
-        
-        # 履歴（直近3ターン）
-        for h in history[-3:]:
-            prompt += f"### ユーザー:\n{h['user']}\n\n### アシスタント:\n{h['assistant']}\n\n"
-        
-        prompt += f"### ユーザー:\n{user_input}\n\n### アシスタント:\n"
+        # プロンプト構築（訓練データの形式に合わせる: ### 指示: / ### 回答:）
+        # 訓練データは「### 指示:」「### 入力:」「### 回答:」形式
+        prompt = f"### 指示:\n{user_input}\n\n### 回答:\n"
         
         # 生成
         print("AI: ", end="", flush=True)
@@ -427,6 +448,8 @@ def interactive_chat(model, tokenizer, config: ChatConfig, device: str = "cuda")
                 config=config,
                 device=device,
                 stream=True,
+                n_seq=n_seq,
+                vocab_size=vocab_size,
             )
             
             # プロンプト部分を除去
@@ -456,8 +479,8 @@ def main():
                         help="Maximum tokens to generate")
     parser.add_argument("--temperature", type=float, default=0.8,
                         help="Sampling temperature")
-    parser.add_argument("--tokenizer", type=str, default="rinna/japanese-gpt-neox-3.6b",
-                        help="Tokenizer name")
+    parser.add_argument("--tokenizer", type=str, default="auto",
+                        help="Tokenizer name (default: auto - detect from vocab_size)")
     parser.add_argument("--device", type=str, default="auto",
                         help="Device (cuda/cpu/auto)")
     args = parser.parse_args()
@@ -486,8 +509,10 @@ def main():
     # モデルロード
     model, model_config = load_model_phase8(checkpoint, device)
     
-    # トークナイザー
-    tokenizer = load_tokenizer(args.tokenizer)
+    # トークナイザー（vocab_sizeに基づいて自動選択）
+    vocab_size = model_config.get('vocab_size', 50256)
+    tokenizer_name = model_config.get('tokenizer_name', args.tokenizer)  # Use config tokenizer if available
+    tokenizer = load_tokenizer(tokenizer_name, vocab_size=vocab_size)
     
     # チャット設定
     chat_config = ChatConfig(
@@ -505,10 +530,12 @@ def main():
             config=chat_config,
             device=device,
             stream=True,
+            n_seq=model_config.get('n_seq', 512),
+            vocab_size=vocab_size,
         )
     else:
         # インタラクティブモード
-        interactive_chat(model, tokenizer, chat_config, device)
+        interactive_chat(model, tokenizer, chat_config, device, model_config=model_config)
 
 
 if __name__ == "__main__":

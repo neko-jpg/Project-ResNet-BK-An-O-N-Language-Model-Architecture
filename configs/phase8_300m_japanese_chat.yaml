@@ -1,0 +1,121 @@
+# Phase 8: 300M 日本語チャット最適化モデル
+# =========================================
+# 日本語会話能力を最大化するための設定
+# RTX 3080 8GB で高速に学習可能
+
+# === Model Architecture (300M) ===
+d_model: 1024
+n_layers: 24
+n_seq: 512
+num_heads: 16
+htt_rank: 16
+hyperbolic_window_size: 64
+
+# === Japanese Tokenizer (重要: 訓練・推論で同じものを使用) ===
+vocab_size: 32768
+tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
+
+# === Dataset (日本語チャット最適化) ===
+dataset_path: "configs/dataset_japanese_chat_optimized.yaml"
+
+# === Riemannian Resonant Tunneling ===
+use_resonant_htt: true
+resonant_num_cores: 4
+use_zeta_init: true
+
+# === Compression ===
+low_rank_ffn: true
+low_rank_attention: true
+low_rank_rank: 32
+use_bitnet: false
+
+# === Memory Optimization ===
+use_gradient_checkpointing: true
+gradient_checkpointing_segments: 6
+use_mixed_precision: true
+mixed_precision_dtype: bfloat16
+
+# === Training ===
+batch_size: 4
+gradient_accumulation_steps: 8
+effective_batch_size: 32
+
+# === Optimizer (BK-HyperSGD with stability fixes) ===
+optimizer_type: bk_hyper_sgd
+beta1: 0.9
+beta2: 0.95
+eps: 1.0e-8
+weight_decay: 0.1
+
+# === Learning Rate ===
+# 2025-12-23: 発散防止のため保守的な値に調整
+learning_rate: 1.5e-4  # 停滞解消のため 1.0e-4 → 1.5e-4 に引き上げ
+min_lr: 1.0e-5
+warmup_steps: 62  # optimizer step単位 (62 × 8 = 496 実ステップ)
+
+# === Gradient Control ===
+grad_clip_warmup: 1.0
+grad_clip_train: 1.0
+grad_skip_threshold: 50.0  # 1000 → 50 (スパイク早期検出)
+
+# === EMA ===
+use_ema: true
+ema_decay: 0.999
+
+# === Regularization ===
+label_smoothing: 0.1
+dropout: 0.1
+attention_dropout: 0.1
+
+# === Phase 8 Components ===
+use_bk_hyperbolic: true
+use_ar_ssm_fusion: false
+enable_numerical_guards: true
+
+# === Optimizations ===
+use_fused_mobius: true
+use_green_function_cache: true
+green_function_cache_size: 256
+use_fused_scattering_gate: true
+use_batched_hyperbolic_distance: true
+
+# === Triton Kernels ===
+use_triton_kernel: true
+triton_kernel_version: fast
+triton_use_safe_ops: true
+use_fused_kernels: true
+
+# === Flash Attention 2 ===
+use_flash_attention_2: true
+
+# === DataLoader ===
+num_workers: 4
+pin_memory: true
+prefetch_factor: 2
+persistent_workers: true
+
+# === Logging ===
+log_interval: 10
+save_interval: 1000
+eval_interval: 500
+save_dir: checkpoints/phase8_300m_japanese_chat
+
+# === Numerical Stability ===
+max_norm: 0.99
+numerical_epsilon: 1.0e-8
+scale_epsilon: 1.0e-3
+
+# === Disabled Features (シンプルに保つ) ===
+use_green_function_lut: true
+green_function_lut_size: 512
+use_resonance_locked: false
+use_scattering_pruning: false
+use_hyperbolic_moe: false
+use_gradient_teleportation: false
+use_time_reversed: false
+use_holographic_kv_cache: false
+use_superposition_training: false
+use_revolutionary_training: false
+use_tsp_optimizer: false
+use_gradient_aligner: false
+compile: true

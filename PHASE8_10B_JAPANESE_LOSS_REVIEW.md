@@ -119,7 +119,7 @@
 
 ### 3.5 TSPの評価周期が “optimizer step” ではなく “micro step” と混ざっている
 
-`scripts/train_phase8.py` では TSP の `evaluate_and_transition(step, ...)` に **globalの `step`**（= micro step）を渡しています。
+` に **globalの `step`**（= micro step）を渡しています。
 一方で `record()` は optimizer update ごとにしか呼ばれないため、`tsp_eval_interval` の意味が `grad_accum_steps` と混ざって変質します。
 
 これにより:

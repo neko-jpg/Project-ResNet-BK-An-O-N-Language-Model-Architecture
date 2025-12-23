@@ -1,4 +1,4 @@
-.PHONY: help setup install clean recipe chat start-japanese train-japanese prepare-japanese-data dry-run-japanese resume-japanese resume list-checkpoints test benchmark export-model
+.PHONY: help setup install clean recipe chat start-japanese train-japanese prepare-japanese-data dry-run-japanese resume-japanese resume list-checkpoints test benchmark export-model train-300m resume-300m train-japanese-chat resume-japanese-chat
 
 # WSL Configuration
 # All training commands run inside WSL Ubuntu
@@ -23,6 +23,14 @@ help:
 	@echo "  make start-japanese      🎯 Full: Download data + Train 10B Japanese"
 	@echo "  make train-japanese      🚀 Fast: Skip data download (Train only)"
 	@echo "  make dry-run-japanese    Test model config (no training)"
+	@echo ""
+	@echo "🇯🇵 Japanese Chat 300M (日本語特化):"
+	@echo "  make train-japanese-chat   🗣️ Train 300M Japanese Chat Model"
+	@echo "  make resume-japanese-chat  🔄 Resume Japanese Chat training"
+	@echo ""
+	@echo "📊 300M Scaling Experiments:"
+	@echo "  make train-300m          Train 300M model"
+	@echo "  make resume-300m         Resume 300M training"
 	@echo ""
 	@echo "💾 Resume & Checkpoints:"
 	@echo "  make resume-japanese     Resume from latest checkpoint"
@@ -189,6 +197,7 @@ list-checkpoints:
 	@echo "Japanese:" && ls -lh checkpoints/phase8_10b_japanese/*.pt 2>/dev/null || echo "  (none)"
 	@echo "English:"  && ls -lh checkpoints/phase8_10b_rtx3080/*.pt 2>/dev/null || echo "  (none)"
 	@echo "300M Scaling:" && ls -lh checkpoints/phase8_300m_scaling/*.pt 2>/dev/null || echo "  (none)"
+	@echo "300M Japanese Chat:" && ls -lh checkpoints/phase8_300m_japanese_chat/*.pt 2>/dev/null || echo "  (none)"
 
 # ==========================================
 # 📊 300M Scaling Law Experiment
@@ -216,6 +225,35 @@ resume-300m:
 		$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_scaling.yaml --resume-from "$$LATEST"; \
 	else \
 		echo "❌ No checkpoint found. Run make train-300m first."; \
+	fi
+
+# ==========================================
+# 🇯🇵 Japanese Chat 300M (日本語特化)
+# ==========================================
+
+train-japanese-chat:
+	@echo "==========================================="
+	@echo "🇯🇵 Training 300M Japanese Chat Model"
+	@echo "==========================================="
+	@echo ""
+	@echo "📋 Configuration:"
+	@echo "   Model: 300M (d=1024, layers=24)"
+	@echo "   Dataset: 80%+ Japanese (chat optimized)"
+	@echo "   Tokenizer: rinna/japanese-gpt-neox-3.6b"
+	@echo "   Save: checkpoints/phase8_300m_japanese_chat/"
+	@echo ""
+	$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_japanese_chat.yaml
+
+resume-japanese-chat:
+	@echo "==========================================="
+	@echo "🇯🇵 Resuming 300M Japanese Chat Training"
+	@echo "==========================================="
+	@LATEST=$$(ls -t checkpoints/phase8_300m_japanese_chat/step_*.pt 2>/dev/null | head -1); \
+	if [ -n "$$LATEST" ]; then \
+		echo "Found: $$LATEST"; \
+		$(PYTHON) scripts/train_phase8_stable.py --config configs/phase8_300m_japanese_chat.yaml --resume-from "$$LATEST"; \
+	else \
+		echo "❌ No checkpoint found. Run make train-japanese-chat first."; \
 	fi
 
 # ==========================================

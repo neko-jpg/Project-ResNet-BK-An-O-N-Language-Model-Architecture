@@ -1,0 +1,41 @@
+Could not import cythonised chelpers, using Python alternative. This will give the same result, but is slower.
+Loading checkpoint...
+Config: d_model=1024, vocab_size=50256
+Using device: cuda
+Phase 8: 🔮 Vocab Diagnosis: Moderate overhead (23.3%). Consider using ResonantHTT.
+Phase 8: Activating ResonantHTTEmbedding (Riemannian Resonant Tunneling)...
+📐 Resonant HTT: 50,256 → 65,536 (+15,280 ghost tokens, 23.3% overhead)
+   Vocab factors: 16 × 16 × 16 × 16 = 65536
+   D_model factors: 8 × 8 × 4 × 4 = 1024
+   🧬 Applying Iso-Spectral Zeta Initialization...
+   Compression: 0.10% (52,240 / 51,462,144)
+Phase 8: ✔ ResonantHTT active - Condition number κ≈1 guaranteed
+Phase 8: ✔ HyperbolicRMSNorm enabled for embedding stabilization
+Model loaded!
+EOS ID: 50256, Token: |'<|endoftext|>'|
+
+Input: ### 指示:
+こんにちはと挨拶して
+
+### 回答:
+
+Token IDs: [21017, 10545, 234, 229, 163, 97, 118, 25, 198, 46036, 22174, 28618, 2515, 94, 31676, 30201, 162, 234, 101, 162, 233, 114, 22180, 28134, 198, 198, 21017, 10263, 249, 252, 163, 18433, 25, 198]
+
+=== Test 1: Right-Padding (Prompt at Position 0) ===
+Logits at last prompt token (index 33):
+  1. ID=    0, prob=0.0433, token=|'!'|
+  2. ID=  198, prob=0.0120, token=|'\n'|
+  3. ID=16764, prob=0.0010, token=|'。'|
+  4. ID=  169, prob=0.0008, token=|'�'|
+  5. ID=  107, prob=0.0006, token=|'�'|
+
+=== Test 2: Left-Padding (Prompt at the End) ===
+Logits at last prompt token (index 511):
+  1. ID= 3563, prob=0.0006, token=|' ST'|
+  2. ID=  149, prob=0.0005, token=|'�'|
+  3. ID=  281, prob=0.0005, token=|' an'|
+  4. ID=19673, prob=0.0005, token=|'lords'|
+  5. ID= 1273, prob=0.0005, token=|'St'|
+
+=== Test 3: Short sequence (No Padding) ===
+Model failed short sequence: n_seq mismatch: expected 512, got 34

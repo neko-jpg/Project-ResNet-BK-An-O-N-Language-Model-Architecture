@@ -1,0 +1,30 @@
+# Phase 8: 日本語チャット最適化データセット設定
+# ===============================================
+# 日本語会話能力を最大化するための重み調整
+# 
+# 戦略:
+#   1. 日本語データ100%
+#   2. 指示追従データを優先（チャット形式）
+
+datasets:
+  # === 日本語データ（100%） ===
+  
+  # 日本語指示追従データ (チャット形式)
+  japanese_instruct:
+    path: ./data/japanese_instruct
+    weight: 0.25  # 25%
+  
+  # Dolly日本語 (新規追加 - 15K高品質指示データ)
+  dolly_ja:
+    path: ./data/dolly_ja
+    weight: 0.30  # 30% - 高品質指示追従
+  
+  # 日本語Wikipedia (知識ベース)
+  wiki_ja:
+    path: ./data/wiki_ja
+    weight: 0.25  # 25% - 知識と語彙の習得
+  
+  # mC4日本語 (ウェブテキスト)
+  mc4_ja:
+    path: ./data/mc4_ja
+    weight: 0.20  # 20% - 自然な日本語表現

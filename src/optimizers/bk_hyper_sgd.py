@@ -74,7 +74,7 @@ class BKHyperSGD(Optimizer):
         lr: float = 0.01,
         momentum: float = 0.9,
         curvature: float = -1.0,
-        trust_radius: float = 0.1,  # New: Trust Region Radius
+        trust_radius: float = 0.1,  # Trust Region Radius
         unitarity_strength: float = 0.1,
         green_function_reg: float = 0.01,
         use_cayley: bool = True,
@@ -82,6 +82,8 @@ class BKHyperSGD(Optimizer):
         max_grad_norm: Optional[float] = None,
         eps: float = 1e-8,
         weight_decay: float = 0.0,
+        poincare_boundary_eps: float = 1e-4,  # Safety margin for Poincaré ball boundary
+        cayley_max_A_norm: float = 10.0,  # Max norm for skew-symmetric matrix A
     ):
         if lr < 0.0:
             raise ValueError(f"Invalid learning rate: {lr}")
@@ -105,6 +107,10 @@ class BKHyperSGD(Optimizer):
         )
         super().__init__(params, defaults)
         
+        # Stability parameters
+        self.poincare_boundary_eps = poincare_boundary_eps
+        self.cayley_max_A_norm = cayley_max_A_norm
+        
         # Classify parameters by their geometric type
         self._param_types: Dict[int, str] = {}
         self._classify_parameters()
@@ -112,6 +118,11 @@ class BKHyperSGD(Optimizer):
         # Statistics for monitoring
         self.step_count = 0
         self.grad_norms: Dict[str, float] = {}
+        
+        # Stability counters (for debugging)
+        self._cayley_fallback_count = 0
+        self._cayley_normalized_count = 0
+        self._poincare_projection_count = 0
     
     def _classify_parameters(self):
         """
@@ -213,7 +224,8 @@ class BKHyperSGD(Optimizer):
                 state = self.state[p]
                 if len(state) == 0:
                     state['step'] = 0
-                    state['momentum_buffer'] = torch.zeros_like(p)
+                    # CRITICAL: Always use fp32 for momentum buffer to prevent precision loss
+                    state['momentum_buffer'] = torch.zeros_like(p, dtype=torch.float32)
                 
                 state['step'] += 1
                 
@@ -270,19 +282,22 @@ class BKHyperSGD(Optimizer):
         Cayley retraction update for unitary/orthogonal parameters.
         
         Robust implementation with:
-        - Support for non-square matrices (m x n)
-        - Safe fallback to Euclidean update on failure
+        - fp32 computation for numerical stability
+        - Matrix A normalization to prevent singular systems
+        - Safe fallback with 1% LR on failure
         - NaN/Inf checking
         """
         buf = state['momentum_buffer']
-        buf.mul_(momentum).add_(grad, alpha=1 - momentum)
+        # Accumulate in fp32
+        grad_f32 = grad.float()
+        buf.mul_(momentum).add_(grad_f32, alpha=1 - momentum)
         
         W = p.data
         
         # Only apply Cayley for 2D tensors with reasonable aspect ratio
         if W.dim() != 2:
             # Fallback to Euclidean for non-2D
-            p.data.add_(buf, alpha=-lr)
+            p.data.add_(buf.to(p.dtype), alpha=-lr)
             return
         
         m, n = W.shape
@@ -292,53 +307,81 @@ class BKHyperSGD(Optimizer):
         aspect_ratio = max(m, n) / max(min(m, n), 1)
         if aspect_ratio > 4.0:
             # Use scaled Euclidean update instead
-            p.data.add_(buf, alpha=-lr * 0.1)  # Smaller LR for safety
+            p.data.add_(buf.to(p.dtype), alpha=-lr * 0.1)  # Smaller LR for safety
             return
         
         try:
+            # CRITICAL: Force fp32 for all Cayley computations
+            W_f32 = W.float()
+            buf_f32 = buf  # Already fp32
+            
             # Construct skew-symmetric matrix A = grad @ W^T - W @ grad^T
             # For non-square W, we work on the smaller dimension
             if m <= n:
                 # A is m x m
-                A = buf @ W.T - W @ buf.T
+                A = buf_f32 @ W_f32.T - W_f32 @ buf_f32.T
             else:
                 # A is n x n  
-                A = buf.T @ W - W.T @ buf
+                A = buf_f32.T @ W_f32 - W_f32.T @ buf_f32
             
             # Ensure skew-symmetry (numerical precision)
             A = 0.5 * (A - A.T)
             
             # Check for NaN/Inf in A
             if not torch.isfinite(A).all():
-                p.data.add_(buf, alpha=-lr)
+                self._cayley_fallback_count += 1
+                p.data.add_(buf.to(p.dtype), alpha=-lr * 0.01)  # 1% LR fallback
                 return
             
+            # NEW: Normalize A if too large to prevent singular matrix
+            A_norm = A.norm()
+            effective_lr = lr
+            if A_norm > self.cayley_max_A_norm:
+                scale = self.cayley_max_A_norm / A_norm
+                A = A * scale
+                effective_lr = lr / scale  # Compensate with LR
+                self._cayley_normalized_count += 1
+            
             k = A.shape[0]
-            I = torch.eye(k, device=W.device, dtype=W.dtype)
-            half_eta_A = (lr / 2) * A
+            I = torch.eye(k, device=W.device, dtype=torch.float32)
+            half_eta_A = (effective_lr / 2) * A
             
             # Cayley transform: W_new = (I + η/2·A)^(-1) · (I - η/2·A) · W
             lhs = I + half_eta_A
-            rhs = (I - half_eta_A) @ (W if m <= n else W.T)
+            rhs = (I - half_eta_A) @ (W_f32 if m <= n else W_f32.T)
             
-            # Use solve for numerical stability
+            # Use solve for numerical stability (already in fp32)
             W_new = torch.linalg.solve(lhs, rhs)
             
             # Validate result
             if not torch.isfinite(W_new).all():
-                p.data.add_(buf, alpha=-lr)
+                self._cayley_fallback_count += 1
+                p.data.add_(buf.to(p.dtype), alpha=-lr * 0.01)  # 1% LR fallback
                 return
             
-            # Apply update
+            # Apply update (cast back to original dtype)
             if m <= n:
-                p.data.copy_(W_new)
+                p.data.copy_(W_new.to(W.dtype))
             else:
-                p.data.copy_(W_new.T)
+                p.data.copy_(W_new.T.to(W.dtype))
                 
         except (RuntimeError, torch.linalg.LinAlgError):
-            # Fallback to Euclidean on any linear algebra error
-            p.data.add_(buf, alpha=-lr)
+            # Safe fallback: 1% LR instead of full LR
+            self._cayley_fallback_count += 1
+            p.data.add_(buf.to(p.dtype), alpha=-lr * 0.01)
 
+    def _is_true_hyperbolic_param(self, p: torch.Tensor) -> bool:
+        """
+        Check if parameter is a true hyperbolic embedding (not just in a hyperbolic layer).
+        Only these should have Poincaré ball boundary projection applied.
+        """
+        name = getattr(p, '_param_name', '').lower()
+        # Only actual embedding weights need Poincaré projection
+        return any(k in name for k in [
+            'hyperbolic_embed', 'poincare_embed', 'lorentz_embed',
+            'hyperbolic_weight', 'mobius_weight'
+        ])
+    
     def _lorentz_trust_region_update(
         self,
         p: torch.Tensor,
@@ -356,9 +399,10 @@ class BKHyperSGD(Optimizer):
         Implements the design spec:
         1. Compute Conformal Factor lambda_x
         2. Compute Riemannian Gradient g_R = g_E / lambda_x^2
-        3. Update Momentum (Approximated)
+        3. Update Momentum (Approximated) in fp32
         4. Trust Region Clipping: Enforce eta * ||m_t||_g <= Delta
         5. Update via Retraction/ExpMap
+        6. Boundary Projection (only for true hyperbolic embeddings)
         """
         x = p.data
         c = abs(curvature)
@@ -374,17 +418,12 @@ class BKHyperSGD(Optimizer):
         
         # 2. Riemannian Gradient
         # g_R = g_E / lambda_x^2
-        # Note: We use 1/lambda_x^2 scaling.
-        # However, for momentum stability, we often scale the update, not just grad.
-        # Let's scale grad first.
         riem_grad = grad / (lambda_x ** 2)
         
-        # 3. Momentum
-        # Ideally: Parallel transport.
-        # Practical Approximation: Accumulate in tangent space or scaled Euclidean
-        # Here we accumulate the Riemannian gradient directly.
+        # 3. Momentum (in fp32 for precision)
         buf = state['momentum_buffer']
-        buf.mul_(momentum).add_(riem_grad, alpha=1 - momentum)
+        riem_grad_f32 = riem_grad.float()
+        buf.mul_(momentum).add_(riem_grad_f32, alpha=1 - momentum)
         m_t = buf
         
         # 4. Trust Region Clipping
@@ -393,43 +432,32 @@ class BKHyperSGD(Optimizer):
         # So: lr * lambda_x * ||m_t||_2 <= trust_radius
         
         m_t_norm = m_t.norm(dim=-1, keepdim=True)
-        step_riem_len = lr * lambda_x * m_t_norm
+        step_riem_len = lr * lambda_x.float() * m_t_norm
         
         # Calculate scaling factor alpha
         # alpha = min(1, Delta / step_riem_len)
-        # Avoid division by zero
         scale_factor = torch.clamp(trust_radius / (step_riem_len + eps), max=1.0)
         
-        # Apply scaling to the EFFECTIVE step, not just the buffer
-        # actual_step = -lr * m_t * scale_factor
+        # Apply scaling to the EFFECTIVE step
         effective_lr = lr * scale_factor
         
         # 5. Update (Retraction / ExpMap approximation)
-        # For Poincare Ball, typical retraction is:
-        # x_new = (x + v) / (1 + ...) -> Möbius addition
-        # But simpler "add in tangent, then retract" is often robust enough with Trust Region.
-        # Or we can use the proper ExpMap formula.
-        # Let's use a robust approximation: x <- x + v, then project back.
-        # Since we scaled the step to be small (Trust Region), Euclidean addition + Projection is often stable locally.
-        # HOWEVER, for correct geometry, let's use the explicit conformal scaling on the Euclidean update.
-        # The update v in Euclidean space corresponds to Riemannian update v_R.
-        # v_E = v_R / lambda_x^2? No.
-        # Let's stick to the definition: We computed a step vector `v = - effective_lr * m_t`.
-        # This `v` is in the coordinate basis.
-        # We just apply it and project.
+        # Standard SGD update with clipped step: x_new = x - effective_lr * m_t
+        p.data.addcmul_(m_t.to(p.dtype), effective_lr.to(p.dtype), value=-1.0)
         
-        # Standard SGD update with clipped step
-        # x_new = x - effective_lr * m_t
-        p.data.addcmul_(m_t, effective_lr, value=-1.0)
-        
-        # 6. Boundary Projection (Safe)
-        # Ensure ||x|| <= (1 - eps) / sqrt(c)
-        max_norm = (1.0 - 1e-5) / sqrt_c
-        current_norm = p.data.norm(dim=-1, keepdim=True).clamp(min=eps)
-        
-        # Project points outside boundary back inside
-        scale = torch.clamp(max_norm / current_norm, max=1.0)
-        p.data.mul_(scale)
+        # 6. Boundary Projection (Only for true hyperbolic embeddings)
+        # Skip projection for regular Linear layer weights in hyperbolic modules
+        if self._is_true_hyperbolic_param(p):
+            # Use configurable safety margin
+            max_norm = (1.0 - self.poincare_boundary_eps) / sqrt_c
+            current_norm = p.data.norm(dim=-1, keepdim=True).clamp(min=eps)
+            
+            # Project points outside boundary back inside
+            needs_projection = (current_norm > max_norm).any()
+            if needs_projection:
+                scale = torch.clamp(max_norm / current_norm, max=1.0)
+                p.data.mul_(scale)
+                self._poincare_projection_count += 1
         
         # Final NaN/Inf safety check
         if not torch.isfinite(p.data).all():
@@ -452,15 +480,18 @@ class BKHyperSGD(Optimizer):
     ):
         """Symplectic update for Hamiltonian parameters."""
         buf = state['momentum_buffer']
-        buf.mul_(momentum).add_(grad, alpha=1 - momentum)
+        # Accumulate in fp32
+        grad_f32 = grad.float()
+        buf.mul_(momentum).add_(grad_f32, alpha=1 - momentum)
         
         if p.dim() >= 1 and p.shape[-1] % 2 == 0:
             d_half = p.shape[-1] // 2
             q_part = p.data[..., :d_half]
             p_part = p.data[..., d_half:]
             
-            grad_q = buf[..., :d_half]
-            grad_p = buf[..., d_half:]
+            # Cast buf slices to param dtype for update
+            grad_q = buf[..., :d_half].to(p.dtype)
+            grad_p = buf[..., d_half:].to(p.dtype)
             
             q_new = q_part - lr * grad_p
             p_new = p_part - lr * grad_q
@@ -468,7 +499,7 @@ class BKHyperSGD(Optimizer):
             p.data[..., :d_half] = q_new
             p.data[..., d_half:] = p_new
         else:
-            p.data.add_(buf, alpha=-lr)
+            p.data.add_(buf.to(p.dtype), alpha=-lr)
     
     def _euclidean_update(
         self,
@@ -480,8 +511,11 @@ class BKHyperSGD(Optimizer):
     ):
         """Standard momentum SGD for Euclidean parameters."""
         buf = state['momentum_buffer']
-        buf.mul_(momentum).add_(grad, alpha=1 - momentum)
-        p.data.add_(buf, alpha=-lr)
+        # Accumulate in fp32
+        grad_f32 = grad.float()
+        buf.mul_(momentum).add_(grad_f32, alpha=1 - momentum)
+        # Cast to param dtype for update
+        p.data.add_(buf.to(p.dtype), alpha=-lr)
     
     @staticmethod
     def _project_to_hyperboloid(
@@ -502,6 +536,10 @@ class BKHyperSGD(Optimizer):
         stats = {
             'step_count': self.step_count,
             'param_type_counts': {},
+            # Stability counters
+            'cayley_fallback_count': self._cayley_fallback_count,
+            'cayley_normalized_count': self._cayley_normalized_count,
+            'poincare_projection_count': self._poincare_projection_count,
         }
         
         # Count parameters by type

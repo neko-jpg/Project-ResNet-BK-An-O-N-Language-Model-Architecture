@@ -626,15 +626,35 @@ def parse_args() -> Phase8TrainingConfig:
         with open(args.config, 'r', encoding='utf-8') as f:
             yaml_config = yaml.safe_load(f)
     
-    # Helper to get config value (CLI > YAML > default)
+    # Helper to get config value (Explicit CLI > YAML > CLI default > function default)
+    # IMPORTANT: We prioritize YAML over CLI *defaults* to avoid argparse defaults
+    # overriding config files. Only explicitly set CLI args should override YAML.
     def get_val(name, default):
         cli_val = getattr(args, name, None)
         yaml_val = yaml_config.get(name, yaml_config.get(name.replace('_', '-'), None))
-        if cli_val is not None and cli_val != default:
-            return cli_val
+        
+        # DEBUG: Show where learning_rate comes from
+        if name == 'learning_rate':
+            print(f"[DEBUG] learning_rate sources: CLI={cli_val}, YAML={yaml_val}, default={default}")
+        
+        # Priority 1: If YAML has a value, use it (unless CLI was *explicitly* set)
+        # We can't easily detect "explicit CLI" vs "CLI default", so we use a heuristic:
+        # If yaml_val exists and is different from both cli_val and default, prefer YAML.
         if yaml_val is not None:
+            if name == 'learning_rate':
+                print(f"[DEBUG] → Using YAML value: {yaml_val}")
             return yaml_val
-        return default if cli_val is None else cli_val
+        
+        # Priority 2: CLI value (either explicit or default)
+        if cli_val is not None:
+            if name == 'learning_rate':
+                print(f"[DEBUG] → Using CLI value: {cli_val}")
+            return cli_val
+        
+        # Priority 3: Function default
+        if name == 'learning_rate':
+            print(f"[DEBUG] → Using function default: {default}")
+        return default
     
     # Extreme Compression Logic
     if args.extreme_compression:
@@ -975,9 +995,10 @@ def load_checkpoint(
         except Exception as e:
             print(f"⚠ Could not load optimizer state: {e}")
     
-    # Load scheduler
-    if 'scheduler_state_dict' in checkpoint:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    # [FIX] Do NOT load scheduler state dict from checkpoint
+    # We want to always use the NEW configuration from config file
+    # if 'scheduler_state_dict' in checkpoint:
+    #     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
     
     # Load Scaler (PyTorch 2.2 uses cuda.amp)
     if 'scaler_state_dict' in checkpoint:
@@ -1237,20 +1258,21 @@ def train_phase8():
         print(f"✔ EMA Enabled (decay={config.ema_decay})")
     
     # Calculate total steps
-
-
-    # Calculate total steps
-    total_steps = config.max_steps if config.max_steps else steps_per_epoch * config.epochs
+    # NOTE: total_steps is in REAL steps (batch iterations)
+    # But scheduler.step() is called per OPTIMIZER step (every grad_accum_steps)
+    # So we need to convert for the scheduler
+    total_steps_real = config.max_steps if config.max_steps else steps_per_epoch * config.epochs
+    total_steps_optimizer = total_steps_real // config.grad_accum_steps
     
-    # LR Scheduler
+    # LR Scheduler - uses OPTIMIZER steps
     scheduler = CosineWarmupScheduler(
         optimizer=optimizer,
-        warmup_steps=config.warmup_steps,
-        total_steps=total_steps,
+        warmup_steps=config.warmup_steps,  # Already in optimizer steps
+        total_steps=total_steps_optimizer,  # FIXED: Use optimizer steps
         peak_lr=config.learning_rate,
         min_lr=config.min_lr
     )
-    print(f"✔ LR Scheduler: Warmup {config.warmup_steps} steps, Cosine decay to {config.min_lr}")
+    print(f"✔ LR Scheduler: Warmup {config.warmup_steps} optimizer steps, Cosine decay over {total_steps_optimizer} optimizer steps")
     
     # Resume from checkpoint if specified
     start_step = 0
@@ -1259,21 +1281,31 @@ def train_phase8():
         start_step, start_epoch, _ = load_checkpoint(
             config.resume_from, model, optimizer, scheduler, scaler, ema, device
         )
-        # Force LR from config (allows changing LR on resume) while preserving
-        # per-param-group LR ratios (geometry-aware groups).
-        old_peak_lr = float(getattr(scheduler, "peak_lr", config.learning_rate))
-        new_peak_lr = float(config.learning_rate)
-        if old_peak_lr > 0 and abs(new_peak_lr - old_peak_lr) > 0:
-            ratio = new_peak_lr / old_peak_lr
-            if hasattr(scheduler, "base_lrs") and isinstance(scheduler.base_lrs, list):
-                scheduler.base_lrs = [float(x) * ratio for x in scheduler.base_lrs]
-            scheduler.peak_lr = new_peak_lr
-            # Re-apply LR at the current scheduler step under the new peak.
-            if hasattr(scheduler, "_apply_lr"):
-                scheduler._apply_lr(scheduler.get_lr(scheduler.current_step))
-            print(f"  → LR rescaled on resume: peak {old_peak_lr} → {new_peak_lr}")
-        else:
-            print(f"  → LR kept on resume: {new_peak_lr}")
+        # [CRITICAL FIX] Force scheduler internal state to match config
+        # Even though we didn't load scheduler state dict in load_checkpoint,
+        # we need to ensure scheduler parameters match the config
+        scheduler.peak_lr = config.learning_rate
+        scheduler.warmup_steps = config.warmup_steps
+        scheduler.total_steps = total_steps_optimizer
+        scheduler.min_lr = config.min_lr
+        print(f"  → Scheduler params forced: peak_lr={scheduler.peak_lr}, warmup={scheduler.warmup_steps}, total={scheduler.total_steps}")
+        
+        # Manually sync scheduler step to current optimizer step (NOT total!)
+        # start_step is the dataloader step (batch iteration number)
+        # Scheduler uses optimizer steps, so divide by grad_accum_steps
+        current_optimizer_step = start_step // config.grad_accum_steps
+        scheduler.current_step = current_optimizer_step
+        print(f"  → Scheduler reset to config settings. Current step synced to: {current_optimizer_step} (start_step={start_step}, total={total_steps_optimizer})")
+
+        # Force optimizer LRs to match what the scheduler expects (Apply step 0 or current)
+        # This overwrites the old LRs loaded by optimizer.load_state_dict
+        current_lr = scheduler.get_lr(scheduler.current_step)
+        scheduler._apply_lr(current_lr)
+        print(f"  → Applied Corrected LR: {current_lr:.6e} (Base: {config.learning_rate})")
+        
+        # Debug info
+        actual_opt_lr = optimizer.param_groups[0].get("lr", 0)
+        print(f"  → Actual Optimizer LR check: {actual_opt_lr:.6e}")
     
     # Training state
     model.train()
@@ -1346,7 +1378,7 @@ def train_phase8():
                 log_interval=config.log_interval,
                 # CRITICAL: Pass total_steps for phase-based scheduling
                 # This ensures proper resume from checkpoints
-                total_steps=total_steps,
+                total_steps=total_steps_real,  # Use REAL steps for phase calculation
             )
             revolutionary_trainer = RevolutionaryTrainer(model, rev_config, device)
             # Start in warmup mode - weight modifications disabled until warmup completes
@@ -1438,7 +1470,7 @@ def train_phase8():
                 use_adaptive_epsilon=True,  # v2: 適応的ε減衰
                 epsilon_start=0.30,         # 初期: 30%探索
                 epsilon_end=0.05,           # 最終: 5%探索
-                epsilon_decay_steps=total_steps // 2,  # 半分のステップで減衰完了
+                epsilon_decay_steps=total_steps_real // 2,  # 半分のステップで減衰完了
             )
             # Override min_dwell_steps from config
             tsp_optimizer.min_dwell_steps = config.tsp_min_dwell_steps
@@ -1487,7 +1519,7 @@ def train_phase8():
         except Exception as e:
             print(f"⚠ Gradient Aligner not available: {e}")
     
-    # JSON Log
+    # JSON Log - Load existing log on resume to preserve full training history
     training_log = {
         'config': asdict(config),
         'start_time': datetime.now().isoformat(),
@@ -1495,15 +1527,36 @@ def train_phase8():
         'steps': [],
     }
     
+    # Resume: Load existing training_all_log.json to continue from previous history
+    if config.resume_from and start_step > 0:
+        existing_all_log_path = os.path.join(config.save_dir, "training_all_log.json")
+        if os.path.exists(existing_all_log_path):
+            try:
+                with open(existing_all_log_path, 'r', encoding='utf-8') as f:
+                    existing_log = json.load(f)
+                if 'steps' in existing_log and isinstance(existing_log['steps'], list):
+                    # Filter out entries after start_step to avoid duplicates on resume
+                    original_count = len(existing_log['steps'])
+                    training_log['steps'] = [
+                        s for s in existing_log['steps'] 
+                        if s.get('step', 0) <= start_step
+                    ]
+                    filtered_count = original_count - len(training_log['steps'])
+                    print(f"📊 Loaded {len(training_log['steps'])} steps from existing training_all_log.json")
+                    if filtered_count > 0:
+                        print(f"  └─ Removed {filtered_count} entries after step {start_step} (avoiding duplicates)")
+            except Exception as e:
+                print(f"⚠ Could not load existing training log: {e}")
+    
     # Dataset already loaded above
     if config.dry_run:
         # Dry-run specific scheduler adjustment
-        scheduler.total_steps = total_steps
+        scheduler.total_steps = total_steps_optimizer
     
     # Progress bar - use ABSOLUTE step counts for consistency with schedulers
     # This ensures pbar, LR scheduler, and revolutionary trainer all use the same step reference
     pbar = tqdm(
-        total=total_steps,  # FIXED: Use absolute total (195312), not remaining
+        total=total_steps_real,  # Use REAL steps for progress bar
         initial=start_step,  # FIXED: Start from resume point (2480), not 0
         disable=not TQDM_AVAILABLE,
         desc="Training"
@@ -1750,8 +1803,8 @@ def train_phase8():
                          grad_norm = min(float(raw_norm_tmp), float(effective_clip))
                 
                 # Failsafe: Skip if raw norm is extremely large (gradient explosion)
-                # MODIFIED: Set to inf to allow Trust Region to handle spikes
-                effective_skip_threshold = float('inf') 
+                # Use config value to allow gradient explosion protection
+                effective_skip_threshold = getattr(config, 'grad_skip_threshold', 50.0)
                 
                 if grad_norm_raw > effective_skip_threshold:
                     # 初期ステップでデバッグ情報を出力
@@ -2157,7 +2210,8 @@ def train_phase8():
                             print(f"\n  💾 Checkpoint saved: {path}")
                             
                             # Cleanup old checkpoints in background
-                            cleanup_old_checkpoints(save_dir, max_keep=2)
+                            # NOTE: max_keep=100 to preserve many checkpoints for long training runs
+                            cleanup_old_checkpoints(save_dir, max_keep=100)
                             
                             # Save training log (last 1000 steps for quick viewing)
                             log_path = os.path.join(save_dir, "training_log.json")
