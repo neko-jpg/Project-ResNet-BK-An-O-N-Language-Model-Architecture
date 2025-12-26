@@ -604,7 +604,10 @@ def parse_args() -> Phase8TrainingConfig:
     # Config file support
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--dataset", type=str, default=None)
-    parser.add_argument("--resume-from", type=str, default=None)
+    parser.add_argument("--resume-from", type=str, default=None,
+                        help="Path to specific checkpoint to resume from")
+    parser.add_argument("--resume", action="store_true", default=False,
+                        help="Auto-detect and resume from latest checkpoint in save_dir")
     parser.add_argument("--save-dir", type=str, default=None)
     parser.add_argument("--save-interval", type=int, default=500)
 
@@ -729,7 +732,8 @@ def parse_args() -> Phase8TrainingConfig:
         save_dir=get_val('save_dir', 'checkpoints/phase8'),
         dry_run=args.dry_run,
         dataset_path=args.dataset if args.dataset else get_val('dataset_path', 'configs/dataset_mixing.yaml'),
-        resume_from=args.resume_from,
+        dataset=args.dataset if args.dataset else get_val('dataset', get_val('dataset_path', 'configs/dataset_mixing.yaml')),
+        resume_from=args.resume_from,  # Will be updated below if --resume flag is set
         compile=args.compile,
         use_revolutionary_training=get_val('use_revolutionary_training', True),
         revolutionary_auto_schedule=get_val('revolutionary_auto_schedule', True),
@@ -744,6 +748,23 @@ def parse_args() -> Phase8TrainingConfig:
         tsp_epsilon=get_val('tsp_epsilon', 0.10),
         tsp_min_dwell_steps=get_val('tsp_min_dwell_steps', 200),
     )
+    
+    # Auto-detect latest checkpoint if --resume flag is set (without explicit --resume-from)
+    if args.resume and not args.resume_from:
+        import glob
+        import re
+        checkpoint_pattern = os.path.join(config.save_dir, "step_*.pt")
+        checkpoints = glob.glob(checkpoint_pattern)
+        if checkpoints:
+            # Extract step numbers and find the latest
+            def extract_step(path):
+                match = re.search(r'step_(\d+)\.pt$', path)
+                return int(match.group(1)) if match else 0
+            latest_ckpt = max(checkpoints, key=extract_step)
+            config.resume_from = latest_ckpt
+            print(f"🔄 Auto-detected latest checkpoint: {latest_ckpt}")
+        else:
+            print(f"⚠ No checkpoints found in {config.save_dir}, starting fresh training")
     
     return config
 

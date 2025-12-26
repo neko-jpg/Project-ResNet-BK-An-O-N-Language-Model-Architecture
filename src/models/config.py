@@ -9,6 +9,7 @@ class ResNetBKConfig:
     """
     Configuration for the ResNet-BK Language Model.
     """
+    model_type: str = "standard"  # 'standard', 'koopman', etc.
     vocab_size: int = 50257 # Default to GPT-2 vocab size
     d_model: int = 64
     n_layers: int = 4

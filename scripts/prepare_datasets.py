@@ -94,12 +94,12 @@ class BinaryWriter:
 class DatasetPreparator:
     """Handles downloading and preprocessing of benchmark datasets."""
     
-    def __init__(self, output_dir: str = "./data", tokenizer_name: str = "gpt2"):
+    def __init__(self, output_dir: str = "./data", tokenizer_name: str = "gpt2", token: str = None):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Loading tokenizer: {tokenizer_name}")
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, token=token)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
@@ -143,6 +143,13 @@ class DatasetPreparator:
                 'splits': ['train'],
                 'text_col': 'special_dolly'
             },
+            
+            # Dolly Japanese (別名: 会話データとして別フォーマットで保存)
+            'dolly_ja': {
+                'hf_name': 'kunishou/databricks-dolly-15k-ja',
+                'splits': ['train'],
+                'text_col': 'special_dolly_conversation'  # 会話形式でフォーマット
+            },
 
             # --- Legacy / Supplementary ---
             'wikitext103': {
@@ -167,7 +174,13 @@ class DatasetPreparator:
             }
         }
 
-    def _process_dataset(self, key: str, max_samples: Optional[int] = None, val_ratio: float = 0.0) -> Optional[Dict[str, str]]:
+    def _process_dataset(
+        self,
+        key: str,
+        max_samples: Optional[int] = None,
+        val_ratio: float = 0.0,
+        max_tokens: Optional[int] = None,
+    ) -> Optional[Dict[str, str]]:
         """Generic processing logic with streaming and batching."""
         config = self.dataset_configs[key]
         dataset_name = config['hf_name']
@@ -176,6 +189,7 @@ class DatasetPreparator:
         output_dir = self.output_dir / key
         output_dir.mkdir(exist_ok=True)
         output_paths = {}
+        token_counts: Dict[str, int] = {}
         
         try:
             # Check if we need to artificially create a validation split
@@ -226,6 +240,10 @@ class DatasetPreparator:
                 batch_size = 1000
                 count = 0
                 val_count = 0
+                train_token_count = 0
+                val_token_count = 0
+                reached_max_tokens = False
+                token_target = max_tokens if split == "train" else None
                 
                 iterator = ds
                 if not config.get('streaming'):
@@ -236,6 +254,9 @@ class DatasetPreparator:
 
                 for item in iterator:
                     if max_samples and count >= max_samples:
+                        break
+                    if token_target and train_token_count >= token_target:
+                        reached_max_tokens = True
                         break
 
                     # Filter for Stack V2 if needed
@@ -267,6 +288,17 @@ class DatasetPreparator:
                         response = item.get('response', '')
                         text = f"Instruction: {instruction}\nResponse: {response}"
 
+                    elif text_col == 'special_dolly_conversation':
+                        # Dolly Japanese: Human/Assistant conversation format
+                        instruction = item.get('instruction', '')
+                        input_text = item.get('input', item.get('context', ''))
+                        output_text = item.get('output', item.get('response', ''))
+                        # Format as conversation
+                        if input_text:
+                            text = f"Human: {instruction}\n{input_text}\n\nAssistant: {output_text}"
+                        else:
+                            text = f"Human: {instruction}\n\nAssistant: {output_text}"
+
                     else:
                         text = item.get(text_col, "")
 
@@ -278,9 +310,13 @@ class DatasetPreparator:
                         if val_writer and rng.random() < val_ratio:
                             val_batch_tokens.append(ids)
                             val_count += 1
+                            val_token_count += len(ids)
                         else:
                             batch_tokens.append(ids)
                             count += 1
+                            train_token_count += len(ids)
+                            if token_target and train_token_count >= token_target:
+                                reached_max_tokens = True
 
                     # Flush Batch (Train)
                     if len(batch_tokens) >= batch_size:
@@ -293,6 +329,9 @@ class DatasetPreparator:
                     if val_writer and len(val_batch_tokens) >= batch_size:
                         val_writer.append(val_batch_tokens)
                         val_batch_tokens = []
+                    
+                    if reached_max_tokens:
+                        break
 
                 # Flush remaining
                 if batch_tokens:
@@ -301,9 +340,17 @@ class DatasetPreparator:
                     val_writer.append(val_batch_tokens)
 
                 output_paths[f"{split}_bin"] = writer.close()
+                token_counts[f"{split}_tokens"] = writer.current_offset
                 if val_writer:
                     output_paths["validation_bin"] = val_writer.close()
+                    token_counts["validation_tokens"] = val_writer.current_offset
                     logger.info(f"    Created validation split with {val_count} samples.")
+                
+                if token_target and train_token_count < token_target:
+                    logger.warning(
+                        f"    Reached dataset end before max_tokens for {key}/{split}: "
+                        f"{train_token_count:,} < {token_target:,}"
+                    )
                 
         except Exception as e:
             logger.error(f"Failed to process {key}: {e}")
@@ -315,16 +362,22 @@ class DatasetPreparator:
                 'dataset': key,
                 'hf_name': dataset_name,
                 'paths': output_paths,
-                'doc_count': count
+                'doc_count': count,
+                'token_counts': token_counts,
             }, f, indent=2)
 
         return output_paths
 
-    def prepare_all(self, max_samples: int = 10000, val_ratio: float = 0.05):
+    def prepare_all(
+        self,
+        max_samples: int = 10000,
+        val_ratio: float = 0.05,
+        max_tokens: Optional[int] = None,
+    ):
         """Prepare all datasets."""
         results = {}
         for key in self.dataset_configs:
-            results[key] = self._process_dataset(key, max_samples, val_ratio)
+            results[key] = self._process_dataset(key, max_samples, val_ratio, max_tokens)
         
         with open(self.output_dir / 'summary.json', 'w') as f:
             json.dump(results, f, indent=2)
@@ -334,21 +387,23 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_dir', default='./data')
     parser.add_argument('--max_samples', type=int, default=5000)
+    parser.add_argument('--max_tokens', type=int, default=None, help='Max tokens for training split per dataset')
     parser.add_argument('--val_ratio', type=float, default=0.05, help='Ratio of training data to use for validation if no split exists')
     parser.add_argument('--tokenizer', default='gpt2')
+    parser.add_argument('--token', default=None, help='HuggingFace API token for gated models')
     parser.add_argument('--datasets', nargs='+', help='Specific datasets to prepare')
     args = parser.parse_args()
     
-    prep = DatasetPreparator(args.output_dir, args.tokenizer)
+    prep = DatasetPreparator(args.output_dir, args.tokenizer, token=args.token)
     
     if args.datasets:
         for ds in args.datasets:
             if ds in prep.dataset_configs:
-                prep._process_dataset(ds, args.max_samples, args.val_ratio)
+                prep._process_dataset(ds, args.max_samples, args.val_ratio, args.max_tokens)
             else:
                 logger.warning(f"Dataset {ds} not found in config.")
     else:
-        prep.prepare_all(args.max_samples, args.val_ratio)
+        prep.prepare_all(args.max_samples, args.val_ratio, args.max_tokens)
 
 if __name__ == '__main__':
     main()

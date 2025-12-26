@@ -12,11 +12,12 @@ htt_rank: 16
 hyperbolic_window_size: 64
 
 # === Japanese Tokenizer (重要: 訓練・推論で同じものを使用) ===
-vocab_size: 32768
-tokenizer_name: "rinna/japanese-gpt-neox-3.6b"
+vocab_size: 32000
+tokenizer_name: "rinna/japanese-gpt-neox-3.6b-instruction-sft-v2"
 
 # === Dataset (日本語チャット最適化) ===
 dataset_path: "configs/dataset_japanese_chat_optimized.yaml"
+data_limit: 1109164032
 
 # === Riemannian Resonant Tunneling ===
 use_resonant_htt: true

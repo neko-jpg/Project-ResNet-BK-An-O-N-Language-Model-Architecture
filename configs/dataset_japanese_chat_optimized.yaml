@@ -12,19 +12,19 @@ datasets:
   # 日本語指示追従データ (チャット形式)
   japanese_instruct:
     path: ./data/japanese_instruct
-    weight: 0.25  # 25%
+    weight: 0.2083  # 20.83%
   
-  # Dolly日本語 (新規追加 - 15K高品質指示データ)
+  # Dolly日本語 (復元済み - japanese_instructからコピー)
   dolly_ja:
     path: ./data/dolly_ja
-    weight: 0.30  # 30% - 高品質指示追従
+    weight: 0.25  # 25% - 高品質指示追従
   
   # 日本語Wikipedia (知識ベース)
   wiki_ja:
     path: ./data/wiki_ja
-    weight: 0.25  # 25% - 知識と語彙の習得
+    weight: 0.2917  # 増加: 29.17% - 知識と語彙の習得
   
   # mC4日本語 (ウェブテキスト)
   mc4_ja:
     path: ./data/mc4_ja
-    weight: 0.20  # 20% - 自然な日本語表現
+    weight: 0.25  # 増加: 25% - 自然な日本語表現

@@ -275,7 +275,12 @@ class BinaryIndexedDataset:
         return self.index.shape[0]
 
     def sample_sequence(self, seq_len: int, rng: random.Random) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """Sample a (input, target) pair of length seq_len from a random doc."""
+        """Sample a (input, target) pair of length seq_len.
+        
+        If a single document is long enough, sample from it directly.
+        Otherwise, concatenate multiple short documents to reach seq_len.
+        This ensures conversation datasets with short documents are usable.
+        """
         if self.use_rust:
             # Use Rust implementation
             # Note: Rust implementation uses its own internal RNG for now.
@@ -287,22 +292,51 @@ class BinaryIndexedDataset:
             # Rust returns numpy arrays (via pyo3-numpy)
             return x, y
 
-        for _ in range(8):  # retry a few times for short docs
+        seq_len = int(seq_len)
+        
+        # First, try to find a single document that's long enough (fast path)
+        for _ in range(4):
             doc_id = rng.randrange(self.num_docs)
             offset, length = self.index[doc_id]
-            # Cast to Python int for downstream random ranges
             offset = int(offset)
             length = int(length)
-            seq_len = int(seq_len)
-            if length <= seq_len:
-                continue
-            start = rng.randrange(0, length - seq_len)
-            end = start + seq_len + 1  # +1 for target shift
-            slice_tokens = self.tokens[offset + start : offset + end]
-            x = slice_tokens[:-1]
-            y = slice_tokens[1:]
-            return x, y
-        return None
+            if length > seq_len:
+                start = rng.randrange(0, length - seq_len)
+                end = start + seq_len + 1  # +1 for target shift
+                slice_tokens = self.tokens[offset + start : offset + end]
+                x = slice_tokens[:-1]
+                y = slice_tokens[1:]
+                return x, y
+        
+        # Fallback: concatenate multiple short documents
+        tokens = []
+        max_attempts = 30
+        attempts = 0
+        
+        while len(tokens) < seq_len + 1 and attempts < max_attempts:
+            doc_id = rng.randrange(self.num_docs)
+            offset, length = self.index[doc_id]
+            offset = int(offset)
+            length = int(length)
+            
+            # Read the entire document
+            doc_tokens = self.tokens[offset : offset + length]
+            tokens.extend(doc_tokens.tolist())
+            attempts += 1
+        
+        if len(tokens) < seq_len + 1:
+            return None
+        
+        # Sample a random starting position within the concatenated tokens
+        max_start = len(tokens) - seq_len - 1
+        if max_start <= 0:
+            start = 0
+        else:
+            start = rng.randrange(max_start)
+        
+        x = np.array(tokens[start : start + seq_len], dtype=np.int64)
+        y = np.array(tokens[start + 1 : start + seq_len + 1], dtype=np.int64)
+        return x, y
 
 
 class MixedBinaryDataset:

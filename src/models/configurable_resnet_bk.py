@@ -365,13 +365,14 @@ class ConfigurableResNetBK(nn.Module):
             self.model = KoopmanBKModel(k_config)
         else:
             # Create base model (LanguageModel)
-            self.model = LanguageModel(
+            # Convert configurable_resnet_bk.ResNetBKConfig to resnet_bk.ResNetBKConfig
+            from .config import ResNetBKConfig as BaseConfig
+            base_config = BaseConfig(
                 vocab_size=config.vocab_size,
                 d_model=config.d_model,
                 n_layers=config.n_layers,
                 n_seq=config.n_seq,
                 num_experts=config.num_experts,
-                top_k=config.top_k,
                 dropout_p=config.dropout_p,
                 prime_bump_init=config.prime_bump_init,
                 prime_bump_scale=config.prime_bump_scale,
@@ -392,6 +393,7 @@ class ConfigurableResNetBK(nn.Module):
                 hyperbolic_window_size=config.hyperbolic_window_size,
                 num_heads=config.num_heads,
             )
+            self.model = LanguageModel(base_config)
         
         # Apply configuration to model components
         self._apply_config()
@@ -415,9 +417,9 @@ class ConfigurableResNetBK(nn.Module):
                     layer = block.bk_layer
 
                 # Routing proxy settings
-                if isinstance(layer.moe_ffn, SparseMoELayer):
-                    layer.moe_ffn.use_scattering_router = self.config.use_scattering_router
-                    layer.moe_ffn.scattering_scale = self.config.scattering_scale
+                if hasattr(layer, 'ffn') and isinstance(layer.ffn, SparseMoELayer):
+                    layer.ffn.use_scattering_router = self.config.use_scattering_router
+                    layer.ffn.scattering_scale = self.config.scattering_scale
 
                 # Apply numerical stability settings
                 layer.v_max = self.config.v_max
